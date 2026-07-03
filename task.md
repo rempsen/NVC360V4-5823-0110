@@ -1,3 +1,34 @@
+# BMD Materials blank zones map — FIXED (Jul 3, 2026)
+
+Root cause found and fixed (previously "on hold", couldn't reproduce): tiles
+were actually loading fine (200s, correctly positioned `leaflet-tile-loaded`
+imgs) but stuck at `opacity: 0` forever. Leaflet's fade-in relies on a tile's
+`load` event to flip opacity 0->1; when a tile is served from browser cache
+(complete before Leaflet's listener attaches), `load` never fires, so the
+tile stays invisible even though it's fully loaded. Confirmed by forcing
+opacity:1 on the stuck tiles in-browser — map appeared instantly.
+
+Why BMD hit it: their company address geocodes to the same Winnipeg fallback
+coordinates as other tenants, so switching tenants right before opening zones
+reused already-cached identical tile URLs — exactly the race condition.
+
+Fix: added `fadeAnimation: false` to the Leaflet map init options in all 4
+places using this tile pattern (not just the one reported):
+- packages/web/src/web/pages/admin/zones.tsx
+- packages/web/src/web/components/fleet-map.tsx
+- packages/web/src/web/components/live-map.tsx
+- packages/web/src/web/components/mini-map.tsx
+
+Verified: tsc clean, build clean, live-tested via browser — switched
+tenant away from and back to BMD Materials (the exact repro scenario),
+map rendered fully with street tiles both times. Drew a real triangle
+zone end-to-end for BMD (their first zone ever) successfully, then
+cleaned up the test zone from the DB.
+
+PENDING: user must re-publish to ship this fix.
+
+---
+
 # Open-items audit — Jul 3, 2026
 
 Publish confirmed working (login TDZ crash fixed 0da76e9, cross-tenant messaging

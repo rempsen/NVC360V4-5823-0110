@@ -89,10 +89,14 @@ export function LiveMap({ rider, destination, route, etaMins, className }: LiveM
   useEffect(() => {
     if (!elRef.current || mapRef.current) return;
     const center = destination ?? rider ?? { lat: 43.6532, lng: -79.3832 };
+    // fadeAnimation: false — avoids a Leaflet bug where cached tiles never
+    // fire `load` (already `complete` before the listener attaches), leaving
+    // the tile stuck at opacity:0 forever (blank map). See zones.tsx for detail.
     const map = L.map(elRef.current, {
       zoomControl: true,
       attributionControl: false,
       zoomAnimation: true,
+      fadeAnimation: false,
     }).setView([center.lat, center.lng], 13);
     L.tileLayer(
       "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",

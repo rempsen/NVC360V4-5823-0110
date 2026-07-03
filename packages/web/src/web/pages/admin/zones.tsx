@@ -127,7 +127,15 @@ export default function AdminZones() {
       return FALLBACK_CENTER;
     })();
 
-    const map = L.map(el, { zoomControl: true, attributionControl: false }).setView(center, 11);
+    // fadeAnimation: false — Leaflet's tile fade-in relies on a tile's `load`
+    // event to flip its opacity 0->1. When a tile is served from the browser
+    // cache (e.g. switching tenants that resolve to the same/nearby fallback
+    // coordinates), `complete` can already be true before Leaflet attaches its
+    // listener, so `load` never fires and the tile stays invisible forever —
+    // a blank map even though tiles are fully loaded and positioned correctly.
+    // Disabling the fade removes the opacity transition entirely so a tile is
+    // visible immediately regardless of cache timing.
+    const map = L.map(el, { zoomControl: true, attributionControl: false, fadeAnimation: false }).setView(center, 11);
     L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", { maxZoom: 19 }).addTo(map);
 
     map.on("click", (e: L.LeafletMouseEvent) => {

@@ -171,9 +171,13 @@ export function FleetMap({
 
   useEffect(() => {
     if (!elRef.current || mapRef.current) return;
+    // fadeAnimation: false — avoids a Leaflet bug where cached tiles never
+    // fire `load` (already `complete` before the listener attaches), leaving
+    // the tile stuck at opacity:0 forever (blank map). See zones.tsx for detail.
     const map = L.map(elRef.current, {
       zoomControl: true,
       attributionControl: false,
+      fadeAnimation: false,
     }).setView([43.6532, -79.3832], 12);
     L.tileLayer(
       "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",

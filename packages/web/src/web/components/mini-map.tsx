@@ -29,11 +29,15 @@ export function MiniMap({
 
   useEffect(() => {
     if (!elRef.current || mapRef.current) return;
+    // fadeAnimation: false — avoids a Leaflet bug where cached tiles never
+    // fire `load` (already `complete` before the listener attaches), leaving
+    // the tile stuck at opacity:0 forever (blank map). See zones.tsx for detail.
     const map = L.map(elRef.current, {
       zoomControl: false,
       attributionControl: false,
       dragging: true,
       scrollWheelZoom: false,
+      fadeAnimation: false,
     }).setView([lat ?? 49.8951, lng ?? -97.1384], zoom);
     L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
       maxZoom: 19,
