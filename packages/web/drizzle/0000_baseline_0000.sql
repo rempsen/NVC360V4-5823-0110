@@ -5,6 +5,9 @@ CREATE TABLE `api_keys` (
 	`hashed_key` text NOT NULL,
 	`prefix` text DEFAULT '' NOT NULL,
 	`scopes` text DEFAULT '' NOT NULL,
+	`key_type` text DEFAULT 'secret' NOT NULL,
+	`public_key` text DEFAULT '' NOT NULL,
+	`allowed_origins` text DEFAULT '' NOT NULL,
 	`created_by` text DEFAULT '' NOT NULL,
 	`created_by_name` text DEFAULT '' NOT NULL,
 	`last_used_at` integer,
@@ -78,6 +81,8 @@ CREATE TABLE `bookings` (
 	`lat` real DEFAULT 43.6532 NOT NULL,
 	`lng` real DEFAULT -79.3832 NOT NULL,
 	`notes` text DEFAULT '' NOT NULL,
+	`staff_notes` text DEFAULT '' NOT NULL,
+	`driver_notes` text DEFAULT '' NOT NULL,
 	`field_data` text DEFAULT '{}' NOT NULL,
 	`checklist_state` text DEFAULT '[]' NOT NULL,
 	`price` real DEFAULT 0 NOT NULL,
@@ -96,6 +101,7 @@ CREATE TABLE `bookings` (
 	`started_at` integer,
 	`finished_at` integer,
 	`on_site_minutes` real DEFAULT 0 NOT NULL,
+	`transit_minutes` real DEFAULT 0 NOT NULL,
 	`clock_state` text DEFAULT 'idle' NOT NULL,
 	`accumulated_ms` integer DEFAULT 0 NOT NULL,
 	`last_resume_at` integer,
@@ -114,6 +120,8 @@ CREATE TABLE `bookings` (
 	`assigned_at` integer,
 	`accepted_at` integer,
 	`decline_reason` text DEFAULT '' NOT NULL,
+	`required_skill_class` text DEFAULT '' NOT NULL,
+	`required_skills` text DEFAULT '' NOT NULL,
 	`deleted_at` integer,
 	`created_at` integer DEFAULT (cast(unixepoch('subsecond') * 1000 as integer)) NOT NULL,
 	FOREIGN KEY (`customer_id`) REFERENCES `user`(`id`) ON UPDATE no action ON DELETE cascade,
@@ -162,6 +170,7 @@ CREATE TABLE `companies` (
 	`contact_email` text DEFAULT '' NOT NULL,
 	`phone` text DEFAULT '' NOT NULL,
 	`plan` text DEFAULT 'starter' NOT NULL,
+	`industry` text DEFAULT '' NOT NULL,
 	`status` text DEFAULT 'active' NOT NULL,
 	`created_by` text DEFAULT '' NOT NULL,
 	`updated_at` integer,
@@ -185,8 +194,16 @@ CREATE TABLE `company_settings` (
 	`default_region` text DEFAULT 'MB' NOT NULL,
 	`auto_tax_by_region` integer DEFAULT true NOT NULL,
 	`logo` text DEFAULT '' NOT NULL,
+	`logo_source_url` text DEFAULT '' NOT NULL,
 	`brand_color` text DEFAULT '#06B6D4' NOT NULL,
-	`geofence_radius_m` integer DEFAULT 20 NOT NULL,
+	`accent_color` text DEFAULT '' NOT NULL,
+	`worker_noun` text DEFAULT 'Technician' NOT NULL,
+	`worker_noun_plural` text DEFAULT 'Technicians' NOT NULL,
+	`tagline` text DEFAULT '' NOT NULL,
+	`hours` text DEFAULT '' NOT NULL,
+	`services` text DEFAULT '' NOT NULL,
+	`socials` text DEFAULT '' NOT NULL,
+	`geofence_radius_m` integer DEFAULT 150 NOT NULL,
 	`website` text DEFAULT '' NOT NULL,
 	`updated_at` integer,
 	`created_at` integer DEFAULT (cast(unixepoch('subsecond') * 1000 as integer)) NOT NULL
@@ -246,6 +263,15 @@ CREATE TABLE `entity_tags` (
 );
 --> statement-breakpoint
 CREATE INDEX `etags_company_idx` ON `entity_tags` (`company_id`);--> statement-breakpoint
+CREATE TABLE `form_categories` (
+	`id` text PRIMARY KEY NOT NULL,
+	`company_id` text DEFAULT 'default' NOT NULL,
+	`name` text NOT NULL,
+	`sort_order` integer DEFAULT 0 NOT NULL,
+	`created_at` integer DEFAULT (cast(unixepoch('subsecond') * 1000 as integer)) NOT NULL
+);
+--> statement-breakpoint
+CREATE INDEX `form_categories_company_idx` ON `form_categories` (`company_id`);--> statement-breakpoint
 CREATE TABLE `idempotency_keys` (
 	`key` text PRIMARY KEY NOT NULL,
 	`scope` text DEFAULT 'payment' NOT NULL,
@@ -254,6 +280,46 @@ CREATE TABLE `idempotency_keys` (
 	`created_at` integer DEFAULT (cast(unixepoch('subsecond') * 1000 as integer)) NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE `intake_forms` (
+	`id` text PRIMARY KEY NOT NULL,
+	`company_id` text DEFAULT 'default' NOT NULL,
+	`slug` text NOT NULL,
+	`title` text DEFAULT 'Request Service' NOT NULL,
+	`intro` text DEFAULT '' NOT NULL,
+	`fields` text DEFAULT '[]' NOT NULL,
+	`sections` text DEFAULT '[]' NOT NULL,
+	`recipient_name` text DEFAULT '' NOT NULL,
+	`recipient_email` text DEFAULT '' NOT NULL,
+	`public_key_id` text DEFAULT '' NOT NULL,
+	`brand_color` text DEFAULT '#06b6d4' NOT NULL,
+	`logo_url` text DEFAULT '' NOT NULL,
+	`success_message` text DEFAULT 'Thanks! We''ve received your request and will reach out shortly.' NOT NULL,
+	`default_service_id` text DEFAULT '' NOT NULL,
+	`active` integer DEFAULT true NOT NULL,
+	`submit_count` integer DEFAULT 0 NOT NULL,
+	`created_by` text DEFAULT '' NOT NULL,
+	`form_type` text DEFAULT 'lead' NOT NULL,
+	`access_code` text DEFAULT '' NOT NULL,
+	`allow_tech_assign` integer DEFAULT true NOT NULL,
+	`updated_at` integer,
+	`created_at` integer DEFAULT (cast(unixepoch('subsecond') * 1000 as integer)) NOT NULL
+);
+--> statement-breakpoint
+CREATE INDEX `intake_company_idx` ON `intake_forms` (`company_id`);--> statement-breakpoint
+CREATE INDEX `intake_slug_idx` ON `intake_forms` (`company_id`,`slug`);--> statement-breakpoint
+CREATE TABLE `intake_submissions` (
+	`id` text PRIMARY KEY NOT NULL,
+	`company_id` text DEFAULT 'default' NOT NULL,
+	`form_id` text DEFAULT '' NOT NULL,
+	`booking_id` text DEFAULT '' NOT NULL,
+	`payload` text DEFAULT '{}' NOT NULL,
+	`ip_hash` text DEFAULT '' NOT NULL,
+	`origin` text DEFAULT '' NOT NULL,
+	`created_at` integer DEFAULT (cast(unixepoch('subsecond') * 1000 as integer)) NOT NULL
+);
+--> statement-breakpoint
+CREATE INDEX `intakesub_company_idx` ON `intake_submissions` (`company_id`);--> statement-breakpoint
+CREATE INDEX `intakesub_form_idx` ON `intake_submissions` (`form_id`);--> statement-breakpoint
 CREATE TABLE `integrations` (
 	`id` text PRIMARY KEY NOT NULL,
 	`company_id` text DEFAULT 'default' NOT NULL,
@@ -399,6 +465,16 @@ CREATE TABLE `notifications` (
 );
 --> statement-breakpoint
 CREATE INDEX `notif_company_idx` ON `notifications` (`company_id`);--> statement-breakpoint
+CREATE TABLE `oauth_app_credentials` (
+	`provider` text PRIMARY KEY NOT NULL,
+	`client_id` text DEFAULT '' NOT NULL,
+	`client_secret` text DEFAULT '' NOT NULL,
+	`enabled` integer DEFAULT true NOT NULL,
+	`updated_by` text DEFAULT '' NOT NULL,
+	`updated_at` integer,
+	`created_at` integer DEFAULT (cast(unixepoch('subsecond') * 1000 as integer)) NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE `payment_ledger` (
 	`id` text PRIMARY KEY NOT NULL,
 	`company_id` text DEFAULT 'default' NOT NULL,
@@ -435,6 +511,20 @@ CREATE TABLE `payouts` (
 );
 --> statement-breakpoint
 CREATE INDEX `payout_company_idx` ON `payouts` (`company_id`);--> statement-breakpoint
+CREATE TABLE `push_tokens` (
+	`id` text PRIMARY KEY NOT NULL,
+	`company_id` text DEFAULT 'default' NOT NULL,
+	`user_id` text NOT NULL,
+	`token` text NOT NULL,
+	`platform` text DEFAULT 'ios' NOT NULL,
+	`device_name` text DEFAULT '' NOT NULL,
+	`last_seen_at` integer,
+	`created_at` integer DEFAULT (cast(unixepoch('subsecond') * 1000 as integer)) NOT NULL,
+	FOREIGN KEY (`user_id`) REFERENCES `user`(`id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `push_tokens_token_unique` ON `push_tokens` (`token`);--> statement-breakpoint
+CREATE INDEX `push_tokens_user_idx` ON `push_tokens` (`user_id`);--> statement-breakpoint
 CREATE TABLE `reviews` (
 	`id` text PRIMARY KEY NOT NULL,
 	`company_id` text DEFAULT 'default' NOT NULL,
@@ -462,6 +552,7 @@ CREATE TABLE `riders` (
 	`skill_class` text DEFAULT 'General' NOT NULL,
 	`color` text DEFAULT '#0ea5e9' NOT NULL,
 	`photo_url` text DEFAULT '' NOT NULL,
+	`photo_key` text DEFAULT '' NOT NULL,
 	`phone` text DEFAULT '' NOT NULL,
 	`license_plate` text DEFAULT '' NOT NULL,
 	`license_number` text DEFAULT '' NOT NULL,
@@ -582,6 +673,20 @@ CREATE TABLE `tech_shifts` (
 );
 --> statement-breakpoint
 CREATE INDEX `shift_company_idx` ON `tech_shifts` (`company_id`);--> statement-breakpoint
+CREATE TABLE `tenant_email_domains` (
+	`id` text PRIMARY KEY NOT NULL,
+	`company_id` text DEFAULT 'default' NOT NULL,
+	`domain` text NOT NULL,
+	`resend_domain_id` text,
+	`status` text DEFAULT 'pending' NOT NULL,
+	`region` text DEFAULT 'eu-west-1' NOT NULL,
+	`records` text DEFAULT '[]' NOT NULL,
+	`last_checked_at` integer,
+	`created_by` text DEFAULT '' NOT NULL,
+	`created_at` integer DEFAULT (cast(unixepoch('subsecond') * 1000 as integer)) NOT NULL
+);
+--> statement-breakpoint
+CREATE INDEX `ted_company_idx` ON `tenant_email_domains` (`company_id`);--> statement-breakpoint
 CREATE TABLE `tracking_pings` (
 	`id` text PRIMARY KEY NOT NULL,
 	`company_id` text DEFAULT 'default' NOT NULL,

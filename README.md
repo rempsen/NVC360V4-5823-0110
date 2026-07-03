@@ -56,10 +56,21 @@ Dev servers are started and managed automatically — no need to run them manual
 
 ## Database
 
+Schema changes are tracked via **committed migrations** in `packages/web/drizzle/`
+(baselined 2026-07-03 from the live production schema — do not delete/regenerate
+the baseline). Workflow for any schema.ts change:
+
 ```sh
 cd packages/web
-bun run db:push        # Push schema to database
-bun run db:generate    # Generate migration files
-bun run db:migrate     # Run migrations
+bun run db:generate    # 1. Generate a new migration file from schema.ts changes
+                        #    (review + commit the new drizzle/000X_*.sql + meta/)
+bun run db:migrate     # 2. Apply committed migrations to the database
 bun run db:studio      # Open Drizzle Studio
 ```
+
+CI fails the build if `schema.ts` changed without a matching committed migration
+(`drizzle-kit generate` produces a diff against `drizzle/`).
+
+`bun run db:push` still exists for quick local iteration only — never use it
+against the production database; it applies unreviewed, uncommitted schema
+diffs directly and bypasses the migration history.

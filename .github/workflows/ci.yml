@@ -40,15 +40,21 @@ jobs:
         working-directory: packages/web
         run: bun test src/shared/__tests__ src/api/lib/__tests__ src/api/routes/__tests__ src/services/__tests__
 
-      - name: Migration dry-run (schema must compile to valid SQL)
+      - name: Migration drift check (schema.ts must match committed drizzle/ migrations)
         working-directory: packages/web
         env:
           # `generate` does not open a connection; placeholders satisfy the loader.
           DATABASE_URL: "libsql://placeholder.invalid"
           DATABASE_AUTH_TOKEN: "placeholder"
         run: |
-          # This repo deploys schema via `db:push`, so migrations are not committed.
-          # We still gate on the schema being able to produce valid SQL — a syntax
-          # or relation error here means the schema is broken before it ships.
-          bunx drizzle-kit generate --name ci_dryrun
-          rm -rf drizzle  # discard the throwaway artifact; push-based deploy
+          # Migration history is committed under packages/web/drizzle/ (baselined
+          # 2026-07-03). If schema.ts drifts from the committed migrations without
+          # a new migration being generated and committed, this fails the build —
+          # forcing `bun run db:generate` before merge instead of silent db:push.
+          cp -r drizzle /tmp/drizzle-committed
+          bunx drizzle-kit generate --name ci_drift_check
+          if ! diff -rq /tmp/drizzle-committed drizzle >/dev/null 2>&1; then
+            echo "::error::Schema changed but no migration was committed. Run 'bun run db:generate' in packages/web, commit the new drizzle/*.sql file, then push."
+            diff -rq /tmp/drizzle-committed drizzle || true
+            exit 1
+          fi

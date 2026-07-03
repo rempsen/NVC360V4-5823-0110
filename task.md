@@ -1,52 +1,43 @@
-# Messaging cross-tenant fix — DONE (Jul 3, 2026)
+# Open-items audit — Jul 3, 2026
 
-## Fixed
-packages/web/src/api/routes/messages.ts:
-- Added `officeUsersForNotify(companyId)` helper — scopes admin/superadmin
-  lookup to ONE tenant (mirrors existing correct pattern `officeUsers()` in
-  services/dispatch.ts).
-- POST /direct (tech -> dispatch): now uses `officeUsersForNotify(tenantId(c))`
-  instead of unscoped `inArray(schema.user.role, ["admin","superadmin"])`.
-- POST /:bookingId (customer -> tech/dispatch, job thread): now uses
-  `officeUsersForNotify(b.companyId)` (the booking's own tenant) instead of
-  the same unscoped query.
+Publish confirmed working (login TDZ crash fixed 0da76e9, cross-tenant messaging
+leak fixed e399a54). Went through every task-*.md/*.md tracker file + spot-checked
+code for each claimed-done item. Status below.
 
-## Verified
-- tsc clean, 112/112 tests pass, build succeeds.
-- Real HTTP round-trip test (minted a session, POSTed to the live
-  /api/messages/direct endpoint): only the 3 admins/superadmins belonging to
-  the `default` tenant received a notifications row. Acme HVAC, Bolt
-  Plumbing, Precon Builders, and BMD Materials admins were correctly
-  excluded — confirmed by querying the notifications table after the real
-  request.
-- Isolated logic check also confirmed bmd-materials vs acme-hvac
-  officeUsersForNotify() results have zero overlap.
+## Confirmed DONE, verified again just now
+- tsc clean, 98/98 backend tests pass.
+- Geofence auto-arrive/pause/resume: code correct (tracking.ts ping handler +
+  booking-status.ts pauseClock/resumeClock), radii set per-tenant in DB
+  (default 20m, others 50-150m). Mobile FLOW/ACTIVE_PING logic matches (Start
+  Driving -> enroute; auto-arrives via GPS ping; Complete Job manual only).
+- Driver on/off-duty toggle (profile.tsx): logic reads right (onShift = status
+  !== "offline", busy states keep toggle ON). No bug found live in code.
+- Per-tenant "send-from" email: fully built — tenant_email_domains table,
+  self-serve submit/verify UI, dispatch.ts only honors a custom From address
+  once its domain is Resend-VERIFIED (else safely falls back). Code complete.
+- Tracking link (/t/:token): route + token resolution all correct; the one
+  link user flagged (a88aea389c0d) points to a real, existing, non-expired
+  completed booking — loads fine now. If it showed "wrong location" it was
+  likely a stale/expired token from an old test, not a routing bug.
+- Stripe webhook: code already fails closed in prod (rejects unsigned events
+  with 400) — this part of blocker #2 is DONE in code.
 
-## Already-correct (re-verified, no changes needed)
-- GET/POST /dispatch/threads, /dispatch/:techId(/mark-read), /direct/unread,
-  /direct/mark-read, broadcast, tags/skill-classes/skills — all properly
-  scoped via tx(c) or explicit companyId filters.
-- fleet.ts direct-thread endpoints — all via tx(c), already tenant-safe.
-- mcp.ts message tool handlers — receive pre-scoped TenantDb, already safe.
+## Real open items (need action, not just code)
+1. **STRIPE_WEBHOOK_SECRET is not set** in .env. Code is ready; needs a
+   webhook endpoint created in the Stripe dashboard (pointing at
+   https://uberize.ai/api/payments/webhook) and the signing secret pasted in.
+   I can't create this myself — needs you or me with dashboard access.
+2. **SENTRY_DSN unset** — no error aggregation in prod yet. Optional; needs a
+   Sentry project + DSN.
+3. **Migrations not baselined** — schema changes still go out via raw SQL /
+   db:push instead of a committed drizzle migration history. Pure tech debt,
+   no user-facing impact; can do without new secrets.
+4. **Multi-tenancy**: 5 foundation tables fully enforced (bookings, invoices,
+   riders, messages, payment_ledger) + tdb() helper now covers many more
+   (confirmed via tenant.test.ts - invoices/messages/api_keys/company_settings
+   all isolated). Remaining ungoverned tables are lower-risk single-tenant-safe
+   items. Not urgent unless onboarding more paying tenants soon.
 
-## Data quality note (found during testing, NOT part of this fix — flagged for user)
-Some rider rows have a companyId that doesn't match their linked user's
-companyId (e.g. BMD Materials' seed rider "Mr Floor Install"
-contact@bmdmaterials.com has riders.company_id = bmd-materials but
-user.company_id = default). This is a pre-existing data inconsistency
-unrelated to the messaging fix — did not touch it, but worth a cleanup pass
-if it's not intentional multi-tenant staff sharing.
-
-## Committed
-Pending commit + push (see below).
-
----
-
-# Service Zones blank map (BMD Materials) — ON HOLD per user
-
-User asked to hold this fix. Live-tested on both dev sandbox and production
-(uberize.ai) as superadmin acting as BMD Materials — map rendered correctly
-with visible tiles in both cases, could not reproduce the reported blank-map
-issue. No code changes made. User will retest on their Mac/Chrome test
-machine and report back with specifics (console errors, whether hard refresh
-helps, etc.).
+## Next
+Picking off #3 (migration baseline) now since it needs no external input.
+Will flag #1/#2 to user for the missing secrets/dashboard step.
