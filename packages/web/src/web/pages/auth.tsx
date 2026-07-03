@@ -52,13 +52,20 @@ export default function AuthPage({ mode }: { mode: "sign-in" | "sign-up" }) {
         );
         if (error) throw new Error(error.message);
       } else {
-        const { data, error } = await authClient.signIn.email(
+        // IMPORTANT: read the signed-in user from `ctx.data` (the onSuccess
+        // callback's own argument), NOT from the outer `const { data }`
+        // destructured below. better-auth invokes onSuccess as part of this
+        // same call, before the outer `const` assignment finishes — closing
+        // over the outer `data` here throws a TDZ ReferenceError in
+        // production ("Cannot access '<minified data>' before
+        // initialization"), because `data` is still uninitialized when
+        // onSuccess runs.
+        const { error } = await authClient.signIn.email(
           { email, password },
           {
             onSuccess: (ctx) => {
               captureToken(ctx);
-              // role comes from the outer data closure (resolved before onSuccess fires)
-              const r = ((data?.user as any)?.role ?? "customer") as Role;
+              const r = ((ctx.data?.user as any)?.role ?? "customer") as Role;
               window.location.assign(dest(r));
             },
           },

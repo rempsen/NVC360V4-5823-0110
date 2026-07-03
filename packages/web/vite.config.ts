@@ -18,13 +18,14 @@ export default defineConfig(({ mode }) => {
 				"@": path.resolve(__dirname, "./src/web"),
 			},
 		},
-		// Pre-bundle better-auth packages with esbuild rather than letting Rollup
-		// handle them. Rollup's ESM evaluation order for packages that lazily init
-		// their exports (only when the first method is called, not on import) can
-		// produce TDZ errors like "Cannot access 'b' before initialization" in the
-		// minified vendor chunk — even though no circular dep shows in madge.
-		// esbuild converts these ESM packages to CJS-style IIFE internally, which
-		// evaluates top-to-bottom and is immune to TDZ ordering issues.
+		// NOTE: optimizeDeps only affects the dev server's esbuild pre-bundle
+		// cache — it has ZERO effect on the production build, which is built by
+		// Rollup. Keeping the include list below for faster dev cold-starts, but
+		// it is NOT what prevents the production TDZ bug. The real fix is the
+		// dedicated manualChunks entry for better-auth below (isolates it into
+		// its own chunk instead of interleaving with the generic `vendor` chunk),
+		// which is what actually resolves "Cannot access 'b' before
+		// initialization" in production. See manualChunks() for the fix.
 		optimizeDeps: {
 			include: [
 				"better-auth/react",
@@ -56,6 +57,16 @@ export default defineConfig(({ mode }) => {
 						if (id.includes("leaflet")) return "vendor-maps";
 						if (id.includes("recharts") || id.includes("d3-")) return "vendor-charts";
 						if (id.includes("pdf-lib")) return "vendor-pdf";
+						// better-auth lazily initializes its exports (only on first
+						// method call, not on import). When Rollup interleaves it
+						// with unrelated deps in the generic `vendor` chunk, the
+						// cross-module init order it produces can throw a TDZ error
+						// at runtime: "Cannot access 'b' before initialization"
+						// (minified var name varies per build). Isolating it into
+						// its own chunk gives it a deterministic, self-contained
+						// top-to-bottom init order and eliminates the ordering
+						// hazard entirely.
+						if (id.includes("better-auth") || id.includes("better-call")) return "vendor-auth";
 						return "vendor";
 					},
 				},
