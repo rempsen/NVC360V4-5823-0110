@@ -2,10 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AddressAutocomplete } from "../components/address-autocomplete";
 import {
   buildLineItem, buildUnitLineItem, sumLineItems, normalizeCatalogItem,
-  itemUnitPrice, type CatalogItem, type LineItem,
+  type CatalogItem, type LineItem,
 } from "../../shared/catalog";
 import { lookupTax, regionFromAddress } from "../../shared/tax";
 import { ChargesEditor, chargesSummary, type Charge } from "../components/charges-editor";
+import { CatalogLineItems } from "../components/catalog-line-items";
+import { UnitLineItems } from "../components/unit-line-items";
 import { money } from "../lib/utils";
 
 /**
@@ -26,7 +28,7 @@ type SectionCfg = { id: string; title: string; description?: string };
 type FormCfg = {
   title: string; intro: string; fields: FieldCfg[]; sections: SectionCfg[];
   brandColor: string; logoUrl: string; successMessage: string; companyName: string;
-  hasPublicKey: boolean; formType: string; allowTechAssign: boolean;
+  hasPublicKey: boolean; formType: string; allowTechAssign: boolean; workerNoun?: string;
 };
 type Service = { id: string; name: string; category: string };
 type Client = { id: string; name: string; email: string; phone: string; address: string };
@@ -187,39 +189,59 @@ function WorkOrderBuilder({ companyId, slug, cfg, services, brand, publicKey }: 
   }, []);
   const byId = useMemo(() => new Map(catalog.map((i) => [i.id, i])), [catalog]);
   const lookup = (id: string) => byId.get(id);
+  // Single lineItems array holds BOTH catalog lines (kind: service/product/
+  // assembly) and ad-hoc per-unit lines (kind: "unit") — identical shape and
+  // handler logic to the admin work-order modal, so a job priced here bills
+  // exactly the same as one priced in the office.
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
-  const [picking, setPicking] = useState(false);
-  const [catQ, setCatQ] = useState("");
-  const [adhocOpen, setAdhocOpen] = useState(false);
-  const [adhoc, setAdhoc] = useState({ name: "", unit: "each", qty: 1, unitPrice: 0 });
 
-  const addCatalogItem = (item: CatalogItem) => {
-    setLineItems((cur) => {
-      const existing = cur.find((l) => l.itemId === item.id);
-      if (existing) return cur.map((l) => l.itemId === item.id ? buildLineItem(item, l.qty + 1, lookup) : l);
-      return [...cur, buildLineItem(item, 1, lookup)];
+  function addCatalogItem(item: CatalogItem, qty: number) {
+    const li = buildLineItem(item, qty, lookup);
+    setLineItems((prev) => {
+      const idx = prev.findIndex((p) => p.itemId === li.itemId);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = buildLineItem(item, (prev[idx].qty || 0) + qty, lookup);
+        return next;
+      }
+      return [...prev, li];
     });
-  };
-  const setQty = (itemId: string, qty: number) => {
-    setLineItems((cur) => cur.map((l) => {
-      if (l.itemId !== itemId) return l;
-      const item = lookup(itemId);
-      return item ? buildLineItem(item, qty, lookup) : { ...l, qty };
-    }));
-  };
-  const removeLine = (itemId: string) => setLineItems((cur) => cur.filter((l) => l.itemId !== itemId));
-  const addAdhoc = () => {
-    if (!adhoc.name.trim() || adhoc.qty <= 0) return;
-    setLineItems((cur) => [...cur, buildUnitLineItem({ name: adhoc.name, unit: adhoc.unit, qty: adhoc.qty, unitPrice: adhoc.unitPrice, unitPayRate: 0 })]);
-    setAdhoc({ name: "", unit: "each", qty: 1, unitPrice: 0 });
-    setAdhocOpen(false);
-  };
-  const totals = sumLineItems(lineItems);
-  const filteredCatalog = catalog.filter((i) => {
-    if (!catQ) return true;
-    const s = catQ.toLowerCase();
-    return i.name.toLowerCase().includes(s) || i.sku.toLowerCase().includes(s) || i.category.toLowerCase().includes(s);
-  });
+  }
+  function setLineQty(itemId: string, qty: number) {
+    setLineItems((prev) =>
+      prev.map((p) => {
+        if (p.itemId !== itemId) return p;
+        const item = lookup(itemId);
+        if (item) return buildLineItem(item, qty, lookup);
+        return { ...p, qty, cost: Math.round(p.unitCost * qty * 100) / 100, price: Math.round(p.unitPrice * qty * 100) / 100 };
+      }),
+    );
+  }
+  function removeLine(itemId: string) {
+    setLineItems((prev) => prev.filter((p) => p.itemId !== itemId));
+  }
+  function addUnitLine() {
+    const li = buildUnitLineItem({ name: "", unit: "sq/ft", qty: 0, unitPrice: 0, unitPayRate: 0 });
+    setLineItems((prev) => [...prev, li]);
+  }
+  function changeUnitLine(itemId: string, patch: Partial<{ name: string; unit: string; qty: number; unitPrice: number; unitPayRate: number; taxable: boolean }>) {
+    setLineItems((prev) =>
+      prev.map((l) => {
+        if (l.itemId !== itemId) return l;
+        const next = { ...l };
+        if (patch.name !== undefined) next.name = patch.name;
+        if (patch.unit !== undefined) next.unit = patch.unit;
+        if (patch.qty !== undefined) { next.qty = patch.qty; next.price = Math.round((next.unitPrice || 0) * patch.qty * 100) / 100; next.cost = Math.round((next.unitCost || 0) * patch.qty * 100) / 100; }
+        if (patch.unitPrice !== undefined) { next.unitPrice = patch.unitPrice; next.price = Math.round(patch.unitPrice * (next.qty || 0) * 100) / 100; }
+        if (patch.unitPayRate !== undefined) { next.unitCost = patch.unitPayRate; next.cost = Math.round(patch.unitPayRate * (next.qty || 0) * 100) / 100; }
+        if (patch.taxable !== undefined) next.taxable = patch.taxable;
+        return next;
+      }),
+    );
+  }
+  function removeUnitLine(itemId: string) {
+    setLineItems((prev) => prev.filter((p) => p.itemId !== itemId));
+  }
 
   // ---- charges: flat fee / hourly / per-unit — same builder + math as the
   // admin work-order modal, so a job priced from this form and one priced in
@@ -235,7 +257,12 @@ function WorkOrderBuilder({ companyId, slug, cfg, services, brand, publicKey }: 
       return s;
     }, 0);
 
-    const cat = sumLineItems(lineItems);
+    // catalog line items (from service catalog) — per-unit ("unit" kind)
+    // lines are excluded from this subtotal/tax/total, exactly like the
+    // admin work-order modal's quote calc (they show their own running
+    // total inside the UnitLineItems widget itself).
+    const catalogLines = lineItems.filter((l) => l.kind !== "unit");
+    const cat = sumLineItems(catalogLines);
     const subtotal = Math.round((chargesKnown + cat.price) * 100) / 100;
     const tax = lookupTax(region);
     const taxRate = tax?.rate ?? 0;
@@ -478,67 +505,34 @@ function WorkOrderBuilder({ companyId, slug, cfg, services, brand, publicKey }: 
             </section>
           )}
 
-          {/* ---- catalog line items ---- */}
+          {/* ---- catalog line items + per-unit lines ----
+              Same shared components + handler logic as the admin work-order
+              modal (CatalogLineItems / UnitLineItems), so a job priced here
+              bills identically to one priced in the office. Both are built
+              for the app's dark theme — render in a dark card rather than
+              fighting their styling with overrides, same pattern already
+              used below for ChargesEditor. */}
           <section className="space-y-3">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-              <h2 className="text-sm font-bold text-slate-800">Line items</h2>
-              <div className="flex gap-2">
-                <button type="button" onClick={() => setAdhocOpen((v) => !v)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">+ Custom line</button>
-                <button type="button" onClick={() => setPicking((v) => !v)} className="rounded-lg px-2.5 py-1.5 text-xs font-semibold text-white" style={{ background: brand }}>+ Add from catalog</button>
-              </div>
+            <h2 className="border-b border-slate-100 pb-2 text-sm font-bold text-slate-800">Line items</h2>
+            <div className="rounded-xl bg-[#0b1220] p-3">
+              <CatalogLineItems
+                items={catalog}
+                lineItems={lineItems.filter((l) => l.kind !== "unit")}
+                lookup={lookup}
+                onAdd={addCatalogItem}
+                onQty={setLineQty}
+                onRemove={removeLine}
+              />
             </div>
-
-            {adhocOpen && (
-              <div className="grid gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:grid-cols-5">
-                <input aria-label="Custom line name" className={`${inputCls} sm:col-span-2`} placeholder="Description" value={adhoc.name} onChange={(e) => setAdhoc((v) => ({ ...v, name: e.target.value }))} />
-                <input aria-label="Unit" className={inputCls} placeholder="Unit" value={adhoc.unit} onChange={(e) => setAdhoc((v) => ({ ...v, unit: e.target.value }))} />
-                <input aria-label="Qty" type="number" className={inputCls} placeholder="Qty" value={adhoc.qty} onChange={(e) => setAdhoc((v) => ({ ...v, qty: Number(e.target.value) || 0 }))} />
-                <div className="flex gap-1.5">
-                  <input aria-label="Unit price" type="number" className={inputCls} placeholder="$/unit" value={adhoc.unitPrice} onChange={(e) => setAdhoc((v) => ({ ...v, unitPrice: Number(e.target.value) || 0 }))} />
-                  <button type="button" onClick={addAdhoc} className="shrink-0 rounded-lg px-3 py-2 text-xs font-bold text-white" style={{ background: brand }}>Add</button>
-                </div>
-              </div>
-            )}
-
-            {picking && (
-              <div className="rounded-lg border border-slate-200 p-2">
-                <input aria-label="Search catalog" className={`${inputCls} mb-2`} placeholder="Search products, services, assemblies…" value={catQ} onChange={(e) => setCatQ(e.target.value)} />
-                <div className="max-h-52 space-y-1 overflow-y-auto">
-                  {filteredCatalog.map((i) => (
-                    <button type="button" key={i.id} onClick={() => { addCatalogItem(i); setPicking(false); setCatQ(""); }}
-                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-slate-50">
-                      <span className="min-w-0 flex-1 truncate text-sm text-slate-700">{i.name}</span>
-                      <span className="shrink-0 text-xs text-slate-500">{money(itemUnitPrice(i, lookup))}/{i.unit}</span>
-                    </button>
-                  ))}
-                  {filteredCatalog.length === 0 && <p className="px-2 py-3 text-center text-xs text-slate-400">No items found.</p>}
-                </div>
-              </div>
-            )}
-
-            {lineItems.length === 0 ? (
-              <p className="text-xs text-slate-400">No line items added yet.</p>
-            ) : (
-              <div className="space-y-1.5">
-                {lineItems.map((li) => (
-                  <div key={li.itemId} className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium text-slate-800">{li.name}</div>
-                      <div className="text-[11px] text-slate-500">{money(li.unitPrice)}/{li.unit}</div>
-                    </div>
-                    <input aria-label={`Quantity for ${li.name}`} type="number" min={0} step="any" value={li.qty}
-                      onChange={(e) => setQty(li.itemId, Math.max(0, Number(e.target.value) || 0))}
-                      className="w-16 rounded-md border border-slate-300 bg-white px-2 py-1 text-sm outline-none" />
-                    <span className="w-20 shrink-0 text-right text-sm font-semibold text-slate-800">{money(li.price)}</span>
-                    <button type="button" onClick={() => removeLine(li.itemId)} className="text-slate-400 hover:text-red-500">✕</button>
-                  </div>
-                ))}
-                <div className="flex items-center justify-between border-t border-slate-200 pt-2 text-sm">
-                  <span className="text-slate-500">{lineItems.length} item{lineItems.length > 1 ? "s" : ""}</span>
-                  <span className="font-bold text-slate-800">{money(totals.price)}</span>
-                </div>
-              </div>
-            )}
+            <div className="rounded-xl bg-[#0b1220] p-3">
+              <UnitLineItems
+                lines={lineItems.filter((l) => l.kind === "unit")}
+                workerNoun={cfg.workerNoun || "Technician"}
+                onAdd={addUnitLine}
+                onChange={changeUnitLine}
+                onRemove={removeUnitLine}
+              />
+            </div>
           </section>
 
           {/* ---- charges: flat fee / hourly / per-unit ---- */}

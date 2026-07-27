@@ -199,6 +199,11 @@ export const publicFormsRoutes = new Hono()
       .from(schema.companies)
       .where(eq(schema.companies.id, companyId))
       .limit(1);
+    // tenant's brand vocabulary for their field worker (e.g. "Installer" for
+    // BMD Materials) — same source the admin work-order modal reads via
+    // useWorkerNoun(), so the public work-order form's per-unit pay labels
+    // match ("pay the Installer" instead of a hardcoded "Technician").
+    const cs = await t.selectOne(schema.companySettings);
     // active services for the "service type" dropdown
     const services = (await t.select(schema.services, eq(schema.services.active, true)))
       .map((s) => ({ id: s.id, name: s.name, category: s.category }));
@@ -229,6 +234,7 @@ export const publicFormsRoutes = new Hono()
         hasPublicKey: !!publicKey,
         formType: form.formType || "lead",
         allowTechAssign: form.allowTechAssign,
+        workerNoun: cs?.workerNoun || "Technician",
       },
       services,
     }, 200);

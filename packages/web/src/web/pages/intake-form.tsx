@@ -39,6 +39,7 @@ type FormCfg = {
   hasPublicKey: boolean;
   formType?: string;
   allowTechAssign?: boolean;
+  workerNoun?: string;
 };
 type Service = { id: string; name: string; category: string };
 
