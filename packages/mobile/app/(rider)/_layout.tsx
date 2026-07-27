@@ -10,6 +10,7 @@ import {
   ChatCircleDots,
 } from "phosphor-react-native";
 import { C } from "../../lib/theme";
+import { api } from "../../lib/api";
 import { getToken } from "../../lib/auth";
 import { useLocationHeartbeat } from "../../lib/use-location-heartbeat";
 import { usePushNotifications, setAppBadgeCount } from "../../lib/push";
@@ -17,9 +18,33 @@ import { usePushNotifications, setAppBadgeCount } from "../../lib/push";
 const API = ((Constants.expoConfig?.extra?.apiUrl as string) ?? "").replace(/\/$/, "");
 
 export default function RiderLayout() {
-  // keep the technician's live GPS location flowing to dispatch the whole
-  // time they're signed into the driver app (independent of any job).
-  useLocationHeartbeat();
+  // Rider's own status drives whether native background GPS tracking runs at
+  // all — NOT merely "is there a signed-in session" (a session persists
+  // across app relaunches, including headless background relaunches iOS
+  // performs for apps with UIBackgroundModes:["location"], so gating on
+  // session alone is what let the app get woken in the background forever
+  // even when the tech was off shift and never opened it). Same query key
+  // ("me") as profile.tsx so they share one cache entry.
+  const me = useQuery({
+    queryKey: ["me"],
+    queryFn: async () => {
+      const res = await api.riders.me.$get();
+      if (!res.ok) throw new Error("Failed");
+      return (await res.json()).rider as { status?: string } | null;
+    },
+    // keep this reasonably fresh so toggling shift status in Profile turns
+    // background tracking off/on again promptly, not just after a full
+    // app relaunch.
+    refetchInterval: 20_000,
+  });
+  // Default to NOT tracking until we actually know the rider's status —
+  // avoids a window where a cold boot starts tracking before we've confirmed
+  // the tech is on shift.
+  const onShift = me.data?.status != null && me.data.status !== "offline";
+
+  // keep the technician's live GPS location flowing to dispatch while — and
+  // ONLY while — they are on shift (independent of any specific job).
+  useLocationHeartbeat(onShift);
 
   // register this device for push (job offers, enroute alerts) + handle taps.
   usePushNotifications();

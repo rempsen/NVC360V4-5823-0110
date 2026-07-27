@@ -36,7 +36,15 @@ export default function Profile() {
       if (!res.ok) throw new Error("Failed");
       return (await res.json()).rider;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["me"] }),
+    onSuccess: (_rider, status) => {
+      // Stop native background GPS tracking immediately on going Offline —
+      // don't wait for the rider layout's own query refetch. The layout's
+      // useLocationHeartbeat(onShift) effect will also pick this up once
+      // ["me"] refetches, but stopping here is instant instead of depending
+      // on network/query timing.
+      if (status === "offline") stopLocationSharing().catch(() => {});
+      qc.invalidateQueries({ queryKey: ["me"] });
+    },
   });
 
   async function pickPhoto() {

@@ -11,17 +11,31 @@ import { getToken } from "./auth";
  * the technician's real position — even when the phone is locked or the app is
  * backgrounded.
  *
- * Two layers:
+ * GATING (important — this is what keeps the app from running in the
+ * background when the tech never asked it to): native background location
+ * tracking is only started while the rider is explicitly on shift
+ * (`enabled` === true, driven by rider.status !== "offline"). It is NOT
+ * enough to just have a signed-in session — a stored session survives every
+ * app relaunch (including a HEADLESS background relaunch iOS performs for an
+ * app with UIBackgroundModes:["location"]), so starting tracking merely
+ * because a session exists means the app can be silently woken by the OS
+ * forever, even for a tech who is off duty and never opened the app that day.
+ * `enabled` must reflect an explicit user action (going on shift), not mere
+ * auth state.
+ *
+ * Two layers, both start/stop together based on `enabled`:
  *  1. Background task (expo-task-manager + Location.startLocationUpdatesAsync)
  *     keeps reporting when the app is not in the foreground. iOS requires the
  *     "Always" location permission + UIBackgroundModes:location for this.
  *  2. Foreground watcher gives tighter, more responsive updates while the tech
  *     has the app open and is looking at the map.
  *
- * Presence signal: on mount and every time the app comes to the foreground we
- * send { status: "available" } so the server stamps locationUpdatedAt
+ * Presence signal: on mount (while enabled) and every time the app comes to
+ * the foreground we send a heartbeat so the server stamps locationUpdatedAt
  * IMMEDIATELY — even before the first GPS fix arrives. This prevents the
  * scheduler from showing the tech as "Offline" during the GPS warm-up window.
+ * The heartbeat does NOT set status:"available" (that used to silently
+ * override an explicit "Offline" toggle — see riders.ts `heartbeat` flag).
  *
  * Per-job ETA pings still happen separately inside the job screen while enroute.
  */
@@ -43,16 +57,17 @@ async function pushLocation(lat: number, lng: number) {
 }
 
 /**
- * Send an "I'm alive" signal without requiring GPS coords.
- * This stamps locationUpdatedAt on the server so the presence system sees the
- * tech as online even before a GPS fix has arrived or if location permission
- * is set to "While Using" and the foreground watcher hasn't fired yet.
- * Uses status:"available" which the backend treats as a liveness signal.
+ * Send an "I'm alive" signal without requiring GPS coords and WITHOUT
+ * changing shift status. Stamps locationUpdatedAt on the server so the
+ * presence system sees the tech as online even before a GPS fix has arrived
+ * — but a rider who has explicitly gone Offline must stay Offline; this must
+ * never flip status back to "available" (that was the second half of the
+ * background-relaunch bug: it silently undid the on/off-shift toggle).
  */
 async function pingOnline() {
   if (!getToken()) return;
   try {
-    await api.riders.me.$patch({ json: { status: "available" } });
+    await api.riders.me.$patch({ json: { heartbeat: true } });
   } catch {
     /* transient — ignore */
   }
@@ -112,10 +127,16 @@ async function stopBackgroundUpdates() {
   }
 }
 
-export function useLocationHeartbeat() {
+/**
+ * @param enabled Only start native background/foreground GPS tracking while
+ * this is true. Must reflect the rider's explicit on-shift/"available"
+ * status (never just "is there a session") — see file header.
+ */
+export function useLocationHeartbeat(enabled: boolean) {
   const watcher = useRef<Location.LocationSubscription | null>(null);
   const granted = useRef(false);
   const keepaliveTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const running = useRef(false);
 
   async function sendOnce() {
     if (!getToken()) return;
@@ -155,10 +176,28 @@ export function useLocationHeartbeat() {
   useEffect(() => {
     let mounted = true;
 
+    if (!enabled) {
+      // Off shift (or status not yet known) — make sure nothing is running.
+      // This is what actually stops the OS from ever waking the app for a
+      // location event once a tech goes Offline, instead of just relying on
+      // sign-out (which most techs rarely do — they stay logged in for days).
+      if (running.current) {
+        stopForeground();
+        stopBackgroundUpdates();
+        running.current = false;
+      }
+      if (keepaliveTimer.current) {
+        clearInterval(keepaliveTimer.current);
+        keepaliveTimer.current = null;
+      }
+      return () => {
+        mounted = false;
+      };
+    }
+
+    running.current = true;
+
     // ── Immediate online signal ──────────────────────────────────────────────
-    // Stamp locationUpdatedAt on the server RIGHT NOW so dispatch sees the tech
-    // as online before the first GPS ping. This is the fix for the "Offline"
-    // display bug when the app is freshly opened.
     pingOnline();
 
     // ── Keepalive: re-ping every 90s even if GPS is stale/denied ────────────
@@ -179,8 +218,6 @@ export function useLocationHeartbeat() {
     // Refresh a fix + online signal whenever the app returns to the foreground.
     const sub = AppState.addEventListener("change", (s: AppStateStatus) => {
       if (s === "active") {
-        // Always ping online immediately on foreground — GPS may need a moment
-        // to warm up and we don't want the tech to flap to "offline" meanwhile.
         pingOnline();
         if (granted.current) {
           lastSent = 0; // force an immediate GPS send too
@@ -194,12 +231,13 @@ export function useLocationHeartbeat() {
       stopForeground();
       if (keepaliveTimer.current) clearInterval(keepaliveTimer.current);
       sub.remove();
-      // NOTE: we intentionally leave background updates running so the pin keeps
-      // moving after the app is backgrounded. They are stopped explicitly on
-      // logout / going offline via stopLocationSharing().
+      // NOTE: background native updates are intentionally left running across
+      // this effect's own cleanup (e.g. component re-render) — they are only
+      // ever stopped by the `enabled === false` branch above (shift toggled
+      // off) or by stopLocationSharing() on sign-out.
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [enabled]);
 }
 
 /** Stop all location sharing — call on logout or when the tech goes offline. */

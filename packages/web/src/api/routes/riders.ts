@@ -40,6 +40,16 @@ export const ridersRoutes = new Hono()
     if (body.vehicle) set.vehicle = body.vehicle;
     if (body.lat != null) { set.lat = body.lat; set.lng = body.lng; set.locationUpdatedAt = new Date(); }
 
+    // Liveness heartbeat from the mobile app's background/foreground GPS
+    // watcher: bumps locationUpdatedAt so presence doesn't flap to "offline"
+    // during a GPS warm-up window. Must NEVER touch status/manualOffline —
+    // this used to be sent as {status:"available"}, which silently reversed
+    // an explicit "go Offline" toggle every 90s / every foreground event,
+    // making the off-shift switch effectively not stick.
+    if (body.heartbeat === true && body.status == null) {
+      set.locationUpdatedAt = new Date();
+    }
+
     let toggled = false;
     if (body.status === "offline") {
       set.manualOffline = true;
