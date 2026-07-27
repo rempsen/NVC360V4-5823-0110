@@ -15,6 +15,13 @@
       "when": 1785188118602,
       "tag": "0001_icp_expansion_terminology",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1785188908222,
+      "tag": "0002_icp_knowledge_base",
+      "breakpoints": true
     }
   ]
 }

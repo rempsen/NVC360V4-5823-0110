@@ -18,6 +18,21 @@ import { gateway, MODELS } from "../api/agent/gateway";
 import { INTAKE_FIELD_CATALOG } from "../api/routes/forms";
 import { log } from "../api/lib/logger";
 import { getIndustryPreset } from "./industry-presets";
+import type { IcpKnowledge } from "./template-scout";
+
+/** Render an IcpKnowledge block for prompt injection, or "" when empty. */
+function knowledgeBlock(k: IcpKnowledge | null | undefined): string {
+  if (!k) return "";
+  const lines: string[] = [];
+  if (k.summary) lines.push(`Industry context: ${k.summary}`);
+  if (k.workflowNotes) lines.push(`How this business's intake/lead-capture actually works: ${k.workflowNotes}`);
+  if (k.bestPractices?.length) lines.push(`Best practices to reflect in form design:\n${k.bestPractices.map((b) => `  - ${b}`).join("\n")}`);
+  if (k.terminologyNotes) lines.push(`Industry terminology to use: ${k.terminologyNotes}`);
+  if (k.complianceNotes) lines.push(`Compliance/regulatory considerations: ${k.complianceNotes}`);
+  if (k.toneRefinement) lines.push(`Tone refinement: ${k.toneRefinement}`);
+  if (!lines.length) return "";
+  return `\n\nDEEP INDUSTRY RESEARCH (trade publications / standards bodies — reflect this in form titles, fields, and copy, it is more authoritative than generic assumptions):\n${lines.join("\n")}`;
+}
 
 /** Allowed field keys — must mirror INTAKE_FIELD_CATALOG so they render. */
 const FIELD_KEYS = INTAKE_FIELD_CATALOG.map((f) => f.key) as string[];
@@ -54,6 +69,9 @@ export interface FormScoutInput {
   website?: string | null;
   workerNoun?: string | null;
   customerNoun?: string | null;
+  // Optional deep research (trade publications, standards bodies) curated
+  // per ICP — purely additive, forms degrade gracefully without it.
+  knowledge?: IcpKnowledge | null;
 }
 
 const slugify = (s: string) =>
@@ -159,6 +177,7 @@ export async function scoutStarterForms(
   const suggestedCategories = preset
     ? `\nSUGGESTED FORM INTENTS for this industry (adapt names to ${input.name}; pick the 2-3 most useful, do not force all): ${preset.templates.join(", ")}.`
     : "";
+  const research = knowledgeBlock(input.knowledge);
 
   try {
     const { object } = await generateObject({
@@ -172,7 +191,7 @@ WEBSITE: ${input.website || "(unknown)"}
 SERVICES OFFERED: ${servicesLine}
 DESCRIPTION: ${input.description || "(none)"}
 THEY CALL THEIR FIELD WORKERS: ${noun}
-THEY CALL THE PEOPLE THEY SERVE: ${customerNoun}${toneLine}${suggestedCategories}
+THEY CALL THE PEOPLE THEY SERVE: ${customerNoun}${toneLine}${suggestedCategories}${research}
 
 The PRIMARY INDUSTRY (ICP) above is the main driver — let it shape form titles, intros, and field choices first; use the services/website only as secondary detail. Match the TONE guidance above in the intro and success message copy.
 

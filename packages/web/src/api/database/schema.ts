@@ -931,6 +931,34 @@ export const companies = sqliteTable("companies", {
 });
 
 /**
+ * GLOBAL, superadmin-curated deep research per ICP (industry-presets.ts id).
+ * One row per industry, hand-researched from trade associations, standards
+ * bodies, university/clinical literature, and trade publications — NOT
+ * AI-generated. Feeds template-scout.ts / form-scout.ts as additional
+ * generation context (best practices, real workflow stages, compliance
+ * considerations, refined tone/notification guidance) on top of the static
+ * IndustryPreset defaults, so starter templates/forms for that industry are
+ * grounded in how the trade actually works, not just a generic guess.
+ * Optional by design — an industry with no row here still gets the baseline
+ * IndustryPreset experience; this only enriches it further.
+ */
+export const icpKnowledgeBase = sqliteTable("icp_knowledge_base", {
+  industry: text("industry").primaryKey(), // industry-presets.ts id, e.g. "flooring"
+  summary: text("summary").notNull().default(""), // 2-3 sentence grounding on the vertical
+  bestPractices: text("best_practices").notNull().default(""), // JSON string[] — concrete operational best practices
+  workflowNotes: text("workflow_notes").notNull().default(""), // how work actually flows; standards/certifications referenced
+  terminologyNotes: text("terminology_notes").notNull().default(""), // industry jargon beyond the noun fields on IndustryPreset
+  toneRefinement: text("tone_refinement").notNull().default(""), // expanded tone guidance beyond preset.aiTone
+  notificationRefinement: text("notification_refinement").notNull().default(""), // expanded notification guidance beyond preset.notificationGuidance
+  complianceNotes: text("compliance_notes").notNull().default(""), // regulatory/compliance considerations (licensing, EVV, safety, etc.)
+  sources: text("sources").notNull().default(""), // JSON string {title,url}[] — citations for the research above
+  researchedBy: text("researched_by").notNull().default(""), // superadmin user id who curated this
+  researchedAt: integer("researched_at", { mode: "timestamp_ms" }),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }),
+  createdAt: now(),
+});
+
+/**
  * Per-tenant outgoing email sending domains (Resend).
  * Tenant submits a domain -> superadmin approves (creates in Resend) ->
  * DNS records stored -> tenant adds them -> auto-poller flips to verified.

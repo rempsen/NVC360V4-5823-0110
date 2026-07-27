@@ -54,6 +54,16 @@ export interface StarterTemplate {
   rateModel: RateModel;
 }
 
+/** Curated deep-research context for an ICP — see schema.icpKnowledgeBase. */
+export interface IcpKnowledge {
+  summary?: string | null;
+  bestPractices?: string[];
+  workflowNotes?: string | null;
+  terminologyNotes?: string | null;
+  toneRefinement?: string | null;
+  complianceNotes?: string | null;
+}
+
 export interface TemplateScoutInput {
   name: string;
   industry?: string | null; // ICP preset id — primary driver of template intent
@@ -64,6 +74,24 @@ export interface TemplateScoutInput {
   workerNoun?: string | null;
   customerNoun?: string | null;
   brandColor?: string | null;
+  // Optional deep research (trade publications, standards bodies, university
+  // literature) curated per ICP. Purely additive — templates degrade
+  // gracefully to preset-only quality when absent.
+  knowledge?: IcpKnowledge | null;
+}
+
+/** Render an IcpKnowledge block for prompt injection, or "" when empty. */
+function knowledgeBlock(k: IcpKnowledge | null | undefined): string {
+  if (!k) return "";
+  const lines: string[] = [];
+  if (k.summary) lines.push(`Industry context: ${k.summary}`);
+  if (k.workflowNotes) lines.push(`How this work actually flows: ${k.workflowNotes}`);
+  if (k.bestPractices?.length) lines.push(`Best practices to reflect in fields/checklist:\n${k.bestPractices.map((b) => `  - ${b}`).join("\n")}`);
+  if (k.terminologyNotes) lines.push(`Industry terminology to use: ${k.terminologyNotes}`);
+  if (k.complianceNotes) lines.push(`Compliance/regulatory considerations: ${k.complianceNotes}`);
+  if (k.toneRefinement) lines.push(`Tone refinement: ${k.toneRefinement}`);
+  if (!lines.length) return "";
+  return `\n\nDEEP INDUSTRY RESEARCH (trade publications / standards bodies — reflect this in field choices, checklist items, and terminology, it is more authoritative than generic assumptions):\n${lines.join("\n")}`;
 }
 
 const uid = () => Math.random().toString(36).slice(2);
@@ -224,6 +252,7 @@ export async function scoutStarterTemplates(input: TemplateScoutInput): Promise<
     ? `\nSUGGESTED TEMPLATE INTENTS for this industry (adapt names to ${input.name}; pick the 2-3 most useful, do not force all): ${preset.templates.join(", ")}.`
     : "";
   const toneLine = preset ? `\nTONE FOR THIS INDUSTRY: ${preset.aiTone}` : "";
+  const research = knowledgeBlock(input.knowledge);
 
   try {
     const { object } = await generateObject({
@@ -237,7 +266,7 @@ WEBSITE: ${input.website || "(unknown)"}
 SERVICES OFFERED: ${servicesLine}
 DESCRIPTION: ${input.description || "(none)"}
 THEY CALL THEIR FIELD WORKERS: ${noun}
-THEY CALL THE PEOPLE THEY SERVE: ${customerNoun}${toneLine}${suggestedTemplates}
+THEY CALL THE PEOPLE THEY SERVE: ${customerNoun}${toneLine}${suggestedTemplates}${research}
 
 The PRIMARY INDUSTRY (ICP) above is the main driver — let it shape the template names, fields, checklists, and rate models first; use the services/website only as secondary detail. Match the TONE guidance above in field labels and checklist phrasing where natural.
 First, reason about what this company actually does and the industry's best-practice job workflows. Then design 2-3 DISTINCT work-order templates. Wherever it applies to this business, cover the three core workflows:

@@ -34,6 +34,36 @@ import {
 
 type SessionUser = { id: string; name?: string };
 
+/**
+ * Load curated deep-research knowledge for an ICP (icpKnowledgeBase), if any
+ * exists. Returns null for industries not yet researched — callers must
+ * degrade gracefully (template-scout/form-scout already do).
+ */
+async function loadIcpKnowledge(industry: string) {
+  if (!industry || industry === "other") return null;
+  const [row] = await db
+    .select()
+    .from(schema.icpKnowledgeBase)
+    .where(eq(schema.icpKnowledgeBase.industry, industry));
+  if (!row) return null;
+  const parseArr = (s: string) => {
+    try {
+      const a = JSON.parse(s || "[]");
+      return Array.isArray(a) ? a : [];
+    } catch {
+      return [];
+    }
+  };
+  return {
+    summary: row.summary || null,
+    bestPractices: parseArr(row.bestPractices) as string[],
+    workflowNotes: row.workflowNotes || null,
+    terminologyNotes: row.terminologyNotes || null,
+    toneRefinement: row.toneRefinement || null,
+    complianceNotes: row.complianceNotes || null,
+  };
+}
+
 /** normalize a free-text name into a url-safe slug */
 function slugify(s: string): string {
   return s
@@ -346,6 +376,10 @@ export const superadminRoutes = new Hono()
     const preset = getIndustryPreset(industryRaw);
     const industryOther = String(b.industryOther ?? "").trim();
     const resolvedIndustry = preset?.id ?? (industryRaw === "other" ? "other" : "");
+    // Deep per-ICP research (trade publications, standards bodies) — only a
+    // handful of pilot industries have this curated yet; null is expected
+    // and handled gracefully for the rest.
+    const icpKnowledge = await loadIcpKnowledge(resolvedIndustry).catch(() => null);
 
     // 1) insert the tenant row (id = slug = companyId)
     await db.insert(schema.companies).values({
@@ -438,6 +472,7 @@ export const superadminRoutes = new Hono()
         website: str(b.website) || null,
         workerNoun: str(brand.workerNoun, preset?.workerNoun ?? "Technician"),
         customerNoun: str(brand.customerNoun, preset?.customerNoun ?? "Customer"),
+        knowledge: icpKnowledge,
       });
       const brandColor = str(brand.primaryColor, "#06B6D4");
       const logoUrl = str(brand.logoUrl);
@@ -505,6 +540,7 @@ export const superadminRoutes = new Hono()
         workerNoun: str(brand.workerNoun, preset?.workerNoun ?? "Technician"),
         customerNoun: str(brand.customerNoun, preset?.customerNoun ?? "Customer"),
         brandColor: str(brand.primaryColor, "#06B6D4"),
+        knowledge: icpKnowledge,
       });
       for (const t of tpls) {
         await db.insert(schema.taskTemplates).values({
