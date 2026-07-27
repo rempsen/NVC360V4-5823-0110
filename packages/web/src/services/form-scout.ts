@@ -206,6 +206,7 @@ For each form:
 - Pick a clear, conversion-friendly title and a short friendly intro that matches the tone guidance.
 - Choose ONLY fields from this catalog (use the exact keys): ${FIELD_KEYS.join(", ")}.
 - name, email, phone, address are ALWAYS included and required. Add serviceType, preferredAt, notes, photo only when they fit that form's purpose (e.g. include photo for damage/inspection forms; include preferredAt for scheduling/delivery forms).
+- CONVERSION vs. FIRST-VISIT-EFFECTIVENESS tradeoff: shorter forms convert better (fewer required fields = more submissions), but for repair/service-call industries, capturing a bit more diagnostic detail up front (in "notes", or via serviceType) measurably raises first-time-fix rate and avoids a wasted second truck roll — ACCA and field-service research both treat this as a real efficiency lever, not just a data-collection nicety. Balance the two: keep required fields minimal, but make the notes/serviceType prompt text explicitly ask for the 1-2 diagnostic details that matter most for this trade (e.g. "What's the make/model and what's it doing?" for an appliance/HVAC repair form; "What symptoms are you noticing?" for a request-emergency-repair form). Don't add this friction to forms that don't need it (e.g. a simple delivery-scheduling or quote-request form).
 - Write a warm, on-brand success message.
 
 Tailor everything to ${input.name}'s actual line of work. Avoid generic duplicates — each form should serve a different customer intent.`,

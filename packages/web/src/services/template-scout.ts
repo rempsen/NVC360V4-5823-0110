@@ -49,7 +49,16 @@ export interface StarterTemplate {
   color: string;
   description: string;
   fields: TemplateField[];
-  checklist: { id: string; label: string }[];
+  // `required: true` marks a compliance/quality-gate step (e.g. moisture
+  // documentation, EVV clock-out confirmation, a final QI verification) that
+  // the mobile job screen actually BLOCKS job completion on — not just a
+  // cosmetic flag. See job/[id].tsx completion gate. Applying real industry
+  // best practice here: ACCA explicitly documents checklists as a callback-
+  // reduction tool, and its Quality Installation program requires techs to
+  // "verify and document system performance before leaving the job site" —
+  // a soft, dismissible warning does not actually enforce that; a hard gate
+  // does.
+  checklist: { id: string; label: string; required?: boolean }[];
   estimatedMins: number;
   rateModel: RateModel;
 }
@@ -134,10 +143,20 @@ const TemplateSchema = z.object({
             "The on-site fields the worker fills in. Mix types sensibly: text for notes/IDs, number for readings/quantities, select for options, photo for before/after, signature for sign-off, date for follow-ups, checkbox for yes/no.",
           ),
         checklist: z
-          .array(z.string())
+          .array(
+            z.object({
+              label: z.string().describe("Short on-site checklist action item (a verb phrase), e.g. 'Confirm site access', 'Photograph completed work'"),
+              required: z
+                .boolean()
+                .default(false)
+                .describe(
+                  "true ONLY for a genuine compliance/quality/safety gate that industry best practice says must be verified before the job can be considered done — e.g. a documented moisture reading, a required sign-off, a final quality-verification step, a mandated location/time check-out. The mobile app actually BLOCKS job completion on required items left unchecked, so use this sparingly and only for real gates, not routine steps.",
+                ),
+            }),
+          )
           .min(2)
           .max(8)
-          .describe("Short on-site checklist items (verbs), e.g. 'Confirm site access', 'Photograph completed work'"),
+          .describe("Short on-site checklist items — a mix of routine steps and, where the industry genuinely calls for it, 1-3 required verification gates"),
         rateModel: RateSchema.describe("A realistic pricing/rate model for this template in this industry"),
       }),
     )
@@ -278,7 +297,7 @@ If a workflow truly doesn't apply to this trade, replace it with a template that
 For EACH template:
 - Give it a clear name and set category to Residential, Commercial, or Service.
 - Choose 3-12 on-site fields with sensible types (text, number, checkbox, select, photo, signature, date). Include a photo field for jobs needing proof of work, a signature for customer sign-off, and number fields for readings/quantities where relevant.
-- Write a 2-8 item on-site checklist of action steps.
+- Write a 2-8 item on-site checklist of action steps. Mark 1-3 items required:true ONLY when industry best practice treats them as a genuine gate that must happen before the job can be considered done (a documented reading/measurement, a mandated sign-off, a final quality check, a required check-out/verification step) — these actually block job completion in the app, so do not overuse it.
 - Set a realistic estimatedMins.
 - Provide a realistic rateModel for this industry (use flatRate + includedMinutes for call-out style jobs, timeRate/timeUnit for hourly trades, kmRate for delivery/travel, minCharge as a floor where appropriate). Use plausible North-American pricing.
 
@@ -297,9 +316,13 @@ Tailor everything to ${input.name}'s actual line of work. Each template must ser
           description: (t.description || "").trim(),
           fields: normFields(t.fields as any),
           checklist: (t.checklist || [])
-            .filter(Boolean)
+            .filter((item) => item && item.label)
             .slice(0, 8)
-            .map((label) => ({ id: uid(), label: String(label).trim().slice(0, 80) })),
+            .map((item) => ({
+              id: uid(),
+              label: String(item.label).trim().slice(0, 80),
+              required: item.required === true,
+            })),
           estimatedMins: Math.min(600, Math.max(15, Math.round(t.estimatedMins || 60))),
           rateModel: { ...EMPTY_RATE_MODEL, ...(t.rateModel as RateModel) },
         };

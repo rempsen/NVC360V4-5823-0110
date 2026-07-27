@@ -227,9 +227,14 @@ export const bookingsRoutes = new Hono()
         try {
           const checklist = JSON.parse(tpl.checklist || "[]");
           if (Array.isArray(checklist) && checklist.length) {
+            // `required` carries through from the template: a real
+            // compliance/quality gate (e.g. a documented reading, a
+            // mandated sign-off) that the mobile app blocks job completion
+            // on if left unchecked — not just a cosmetic label.
             checklistState = JSON.stringify(checklist.map((item: any) => ({
               label: typeof item === "string" ? item : item.label,
               done: false,
+              required: typeof item === "object" && item.required === true,
             })));
           }
         } catch { /* leave as "[]" */ }

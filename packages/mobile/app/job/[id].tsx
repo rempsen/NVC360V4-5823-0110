@@ -801,6 +801,7 @@ export default function JobDetail() {
               </View>
               {checklist.map((item: any, i: number) => {
                 const done = typeof item === "object" ? item.done : false;
+                const required = typeof item === "object" && item.required === true;
                 const label = typeof item === "object" ? item.label || item.text : String(item);
                 return (
                   <Pressable
@@ -811,8 +812,13 @@ export default function JobDetail() {
                   >
                     {done
                       ? <CheckSquare color={C.green} size={22} weight="fill" />
-                      : <Square color={C.muted} size={22} />}
+                      : <Square color={required ? C.brand : C.muted} size={22} />}
                     <Text style={[s.checkTxt, done && { color: C.muted, textDecorationLine: "line-through" }]}>{label}</Text>
+                    {required && !done && (
+                      <View style={s.requiredPill}>
+                        <Text style={s.requiredPillTxt}>Required</Text>
+                      </View>
+                    )}
                   </Pressable>
                 );
               })}
@@ -1051,6 +1057,28 @@ export default function JobDetail() {
               loading={setStatus.isPending}
               onPress={() => {
                 if (action.next === "completed") {
+                  // Hard gate on required checklist items — these represent a
+                  // real compliance/quality-verification step the industry
+                  // treats as mandatory before a job can be closed (e.g. a
+                  // documented reading, a required sign-off, a final QI-style
+                  // check). Unlike routine steps, these actually BLOCK
+                  // completion instead of just showing a dismissible warning
+                  // — a soft nag doesn't reliably change behavior, a real
+                  // gate does.
+                  const uncheckedRequired = checklist.filter(
+                    (i: any) => typeof i === "object" && i.required === true && !i.done,
+                  );
+                  if (uncheckedRequired.length > 0) {
+                    Alert.alert(
+                      "Required steps not done",
+                      `Complete the following before finishing this job:\n\n${uncheckedRequired
+                        .map((i: any) => `• ${i.label}`)
+                        .join("\n")}`,
+                      [{ text: "Go back", style: "cancel" }],
+                    );
+                    return;
+                  }
+
                   // Show debrief summary before completing
                   const unchecked = checklist.filter((i: any) => !(typeof i === "object" ? i.done : false)).length;
                   const photoCount = photos.data?.length ?? 0;
@@ -1210,6 +1238,8 @@ const s = StyleSheet.create({
   unitTotalVal: { color: C.green, fontSize: 17, fontWeight: "900" },
   checkRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: C.border + "44" },
   checkTxt: { color: C.text, fontSize: 14, flex: 1 },
+  requiredPill: { backgroundColor: C.brand + "22", borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3, flexShrink: 0 },
+  requiredPillTxt: { color: C.brand, fontSize: 10, fontWeight: "700", textTransform: "uppercase" },
   checkProgress: { color: C.muted, fontSize: 12, fontWeight: "700" },
   photoHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   photoBtn: { flexDirection: "row", alignItems: "center", gap: 6 },
