@@ -22,6 +22,7 @@ import { z } from "zod";
 import { gateway, MODELS } from "../api/agent/gateway";
 import { putObject } from "../api/lib/storage";
 import { log } from "../api/lib/logger";
+import { INDUSTRY_LABELS } from "./industry-presets";
 
 export interface BrandProposal {
   website: string;
@@ -31,6 +32,10 @@ export interface BrandProposal {
   logoSourceUrl: string | null; // where we found it on their site
   workerNoun: string | null;
   workerNounPlural: string | null;
+  customerNoun: string | null;
+  customerNounPlural: string | null;
+  jobNoun: string | null;
+  jobNounPlural: string | null;
   tagline: string | null;
   description: string | null;
   services: string[];
@@ -39,6 +44,12 @@ export interface BrandProposal {
   email: string | null;
   phone: string | null;
   socials: Record<string, string>;
+  // AI's best guess at which Primary Industry (ICP) preset fits this
+  // business, from the same page-read pass that pulls terminology/services —
+  // no extra model call. The admin reviews/overrides on the New Company form.
+  suggestedIndustry: string | null; // one of INDUSTRY_LABELS ids, or "other"
+  suggestedIndustryOther: string | null; // free-text guess when "other"
+  suggestedIndustryRationale: string | null; // one short sentence why
   warnings: string[];
 }
 
@@ -232,6 +243,8 @@ const VisionSchema = z.object({
     .nullable(),
 });
 
+const INDUSTRY_ID_LIST = INDUSTRY_LABELS.map((i) => i.id) as [string, ...string[]];
+
 const TextSchema = z.object({
   companyDescription: z
     .string()
@@ -245,6 +258,20 @@ const TextSchema = z.object({
     )
     .nullable(),
   workerNounPlural: z.string().describe("Plural of workerNoun").nullable(),
+  customerNoun: z
+    .string()
+    .describe(
+      "The SINGULAR word this business (or its industry) uses for the people it serves — e.g. Customer, Client, Patient, Passenger, Resident, Family, Guest. Infer from their industry if not stated.",
+    )
+    .nullable(),
+  customerNounPlural: z.string().describe("Plural of customerNoun").nullable(),
+  jobNoun: z
+    .string()
+    .describe(
+      "The SINGULAR word this business's industry uses for a unit of work — e.g. Job, Visit, Ride, Delivery, Route, Appointment, Order, Ticket, Project. Infer from their trade if not stated.",
+    )
+    .nullable(),
+  jobNounPlural: z.string().describe("Plural of jobNoun").nullable(),
   services: z
     .array(z.string())
     .describe("Up to 8 services they offer")
@@ -264,6 +291,22 @@ const TextSchema = z.object({
     })
     .partial()
     .describe("Social profile URLs found on the page"),
+  suggestedIndustry: z
+    .enum(["other", ...INDUSTRY_ID_LIST])
+    .describe(
+      "Best-fit Primary Industry (ICP) category id for this business from the allowed list. Use 'other' if none genuinely fit — do not force a bad match.",
+    )
+    .nullable(),
+  suggestedIndustryOther: z
+    .string()
+    .describe(
+      "Only when suggestedIndustry is 'other': a short (2-5 word) label for what kind of business this actually is, e.g. 'Wedding Photography', 'Pest Control'.",
+    )
+    .nullable(),
+  suggestedIndustryRationale: z
+    .string()
+    .describe("One short sentence explaining the industry guess, shown to the admin for review.")
+    .nullable(),
 });
 
 /** Main entry — run the full brand-scout pipeline. */
@@ -281,6 +324,10 @@ export async function scoutBrand(
     logoSourceUrl: null,
     workerNoun: null,
     workerNounPlural: null,
+    customerNoun: null,
+    customerNounPlural: null,
+    jobNoun: null,
+    jobNounPlural: null,
     tagline: null,
     description: null,
     services: [],
@@ -289,6 +336,9 @@ export async function scoutBrand(
     email: null,
     phone: null,
     socials: {},
+    suggestedIndustry: null,
+    suggestedIndustryOther: null,
+    suggestedIndustryRationale: null,
     warnings,
   };
   if (!website) {
@@ -311,7 +361,12 @@ export async function scoutBrand(
     generateObject({
       model: gateway(MODELS.text),
       schema: TextSchema,
-      prompt: `You are analysing a home-services company's website to onboard them into a dispatch platform. From the page text below, extract the brand details. Be accurate; use null when unknown. Page URL: ${finalUrl}\n\nPAGE TEXT:\n${textSample(html)}`,
+      prompt: `You are analysing a field-service / trade / delivery business's website to onboard them into a dispatch & customer-management platform. From the page text below, extract the brand details AND classify their Primary Industry (ICP). Be accurate; use null when unknown. Page URL: ${finalUrl}
+
+ALLOWED INDUSTRY CATEGORIES (pick the single best fit, or "other" if genuinely none fit):
+${INDUSTRY_LABELS.map((i) => `- ${i.id}: ${i.label}`).join("\n")}
+
+PAGE TEXT:\n${textSample(html)}`,
     }),
   ]);
 
@@ -388,6 +443,10 @@ export async function scoutBrand(
     logoSourceUrl: hosted?.source ?? candidates[0] ?? null,
     workerNoun: text?.workerNoun ?? null,
     workerNounPlural: text?.workerNounPlural ?? null,
+    customerNoun: text?.customerNoun ?? null,
+    customerNounPlural: text?.customerNounPlural ?? null,
+    jobNoun: text?.jobNoun ?? null,
+    jobNounPlural: text?.jobNounPlural ?? null,
     tagline: text?.tagline ?? null,
     description: text?.companyDescription ?? null,
     services: text?.services ?? [],
@@ -396,6 +455,9 @@ export async function scoutBrand(
     email: text?.email ?? null,
     phone: text?.phone ?? null,
     socials,
+    suggestedIndustry: text?.suggestedIndustry ?? null,
+    suggestedIndustryOther: text?.suggestedIndustryOther ?? null,
+    suggestedIndustryRationale: text?.suggestedIndustryRationale ?? null,
     warnings,
   };
 }

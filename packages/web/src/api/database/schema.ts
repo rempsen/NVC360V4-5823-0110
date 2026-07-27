@@ -496,6 +496,14 @@ export const companySettings = sqliteTable("company_settings", {
   // Driver, Plumber, Cleaner, Pro…). Singular + plural so copy reads naturally.
   workerNoun: text("worker_noun").notNull().default("Technician"),
   workerNounPlural: text("worker_noun_plural").notNull().default("Technicians"),
+  // Same idea for the people this tenant serves (Customer, Client, Patient,
+  // Passenger, Resident, Family…) and their unit of work (Job, Visit, Ride,
+  // Delivery, Route, Appointment…). Seeded from the ICP preset at
+  // provisioning, editable via the AI brand-scout review screen.
+  customerNoun: text("customer_noun").notNull().default("Customer"),
+  customerNounPlural: text("customer_noun_plural").notNull().default("Customers"),
+  jobNoun: text("job_noun").notNull().default("Job"),
+  jobNounPlural: text("job_noun_plural").notNull().default("Jobs"),
   // AI-onboarding enrichment (from "Grab Brand Assets").
   tagline: text("tagline").notNull().default(""),
   hours: text("hours").notNull().default(""), // JSON string: [{day,open,close}] or freeform
@@ -914,7 +922,8 @@ export const companies = sqliteTable("companies", {
   contactEmail: text("contact_email").notNull().default(""),
   phone: text("phone").notNull().default(""),
   plan: text("plan").notNull().default("starter"), // starter | pro | enterprise
-  industry: text("industry").notNull().default(""), // Primary Industry (ICP) — drives template/service presets
+  industry: text("industry").notNull().default(""), // Primary Industry (ICP) — drives template/service presets. "other" = custom, see industryOther.
+  industryOther: text("industry_other").notNull().default(""), // free-text business description when industry="other" (no preset fits)
   status: text("status").notNull().default("active"), // active | suspended
   createdBy: text("created_by").notNull().default(""), // superadmin user id
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }),

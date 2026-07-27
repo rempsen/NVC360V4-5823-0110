@@ -57,10 +57,12 @@ export interface StarterTemplate {
 export interface TemplateScoutInput {
   name: string;
   industry?: string | null; // ICP preset id — primary driver of template intent
+  industryOther?: string | null; // free-text business type when industry === "other"
   services?: string[];
   description?: string | null;
   website?: string | null;
   workerNoun?: string | null;
+  customerNoun?: string | null;
   brandColor?: string | null;
 }
 
@@ -210,14 +212,18 @@ export async function scoutStarterTemplates(input: TemplateScoutInput): Promise<
       ? input.services.join(", ")
       : "(unknown — infer from the company name / description)";
   const noun = input.workerNoun || "technician";
+  const customerNoun = input.customerNoun || "customer";
   const color = input.brandColor || "#0ea5e9";
   const preset = getIndustryPreset(input.industry);
   const industryLine = preset
     ? `${preset.label} — design templates that fit how this industry actually runs jobs.`
-    : "(not specified — infer from the company name / services)";
+    : input.industry === "other" && input.industryOther
+      ? `${input.industryOther} (no exact preset — use this description as the primary guide).`
+      : "(not specified — infer from the company name / services)";
   const suggestedTemplates = preset
     ? `\nSUGGESTED TEMPLATE INTENTS for this industry (adapt names to ${input.name}; pick the 2-3 most useful, do not force all): ${preset.templates.join(", ")}.`
     : "";
+  const toneLine = preset ? `\nTONE FOR THIS INDUSTRY: ${preset.aiTone}` : "";
 
   try {
     const { object } = await generateObject({
@@ -230,9 +236,10 @@ COMPANY: ${input.name}
 WEBSITE: ${input.website || "(unknown)"}
 SERVICES OFFERED: ${servicesLine}
 DESCRIPTION: ${input.description || "(none)"}
-THEY CALL THEIR FIELD WORKERS: ${noun}${suggestedTemplates}
+THEY CALL THEIR FIELD WORKERS: ${noun}
+THEY CALL THE PEOPLE THEY SERVE: ${customerNoun}${toneLine}${suggestedTemplates}
 
-The PRIMARY INDUSTRY (ICP) above is the main driver — let it shape the template names, fields, checklists, and rate models first; use the services/website only as secondary detail.
+The PRIMARY INDUSTRY (ICP) above is the main driver — let it shape the template names, fields, checklists, and rate models first; use the services/website only as secondary detail. Match the TONE guidance above in field labels and checklist phrasing where natural.
 First, reason about what this company actually does and the industry's best-practice job workflows. Then design 2-3 DISTINCT work-order templates. Wherever it applies to this business, cover the three core workflows:
   1. a RESIDENTIAL workflow (work at a customer's home),
   2. a COMMERCIAL workflow (work at a business / contract job site),

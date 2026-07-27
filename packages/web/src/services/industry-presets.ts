@@ -1,11 +1,35 @@
-// Industry (ICP) presets — the single source of truth for the 15 supported industries.
-// Drives: New Company dropdown, service-library seeding, work-order template generation,
-// and the Form Builder default category dropdown.
+// Industry (ICP) presets — the single source of truth for every supported
+// client type. Drives: New Company dropdown, service-library seeding,
+// work-order template generation, Form Builder default categories, AI-agent
+// tone/terminology guidance, and notification defaults.
+//
+// This is the foundation for deeper per-ICP customization: the goal is that
+// once a tenant identifies their website + company name + ICP, the whole
+// platform (starter templates, staff/customer terminology, default
+// notification behavior, generated intake forms) adapts to THEM instead of
+// making them adapt to a one-size-fits-all tool.
 
 export type IndustryPreset = {
   id: string; // slug stored on companies.industry
   label: string; // human label in dropdowns
-  workerNoun: string; // technician | installer | rider | etc.
+  group: string; // dropdown section grouping, e.g. "Field Services"
+  // Terminology — relabels the app for this tenant. Singular + plural so
+  // copy reads naturally. workerNoun already flows through useWorkerNoun();
+  // customerNoun/jobNoun are newer and currently apply to the same dynamic
+  // surfaces (a full app-wide reskin is a larger follow-on pass).
+  workerNoun: string; // e.g. "Technician", "Plumber", "Caregiver", "Driver"
+  workerNounPlural: string;
+  customerNoun: string; // e.g. "Customer", "Client", "Patient", "Passenger", "Resident"
+  customerNounPlural: string;
+  jobNoun: string; // e.g. "Job", "Visit", "Ride", "Delivery", "Route", "Appointment"
+  jobNounPlural: string;
+  // Short guidance string fed into AI generation prompts (template-scout,
+  // form-scout, notification copy) so tone matches how this industry
+  // actually talks to its customers.
+  aiTone: string;
+  // Short guidance surfaced as a hint in the Notifications config UI —
+  // what's normal to default on/off for this kind of business.
+  notificationGuidance: string;
   // Service library seeded on company create (schema.services rows).
   services: { name: string; category: string; durationMins: number }[];
   // Suggested work-order template names (drives template-scout primary intent).
@@ -18,7 +42,15 @@ export const INDUSTRY_PRESETS: IndustryPreset[] = [
   {
     id: "hvac",
     label: "HVAC Contractors",
-    workerNoun: "technician",
+    group: "Home Trades",
+    workerNoun: "Technician",
+    workerNounPlural: "Technicians",
+    customerNoun: "Customer",
+    customerNounPlural: "Customers",
+    jobNoun: "Job",
+    jobNounPlural: "Jobs",
+    aiTone: "Direct, reassuring, and urgency-aware — HVAC customers are often uncomfortable (too hot/cold) or worried about cost. Lead with ETA and a clear fix, not jargon.",
+    notificationGuidance: "SMS on-the-way + arrival alerts are high value (comfort emergencies). Enable after-hours escalation for no-heat/no-AC calls.",
     services: [
       { name: "Furnace Repair", category: "HVAC", durationMins: 90 },
       { name: "AC Repair", category: "HVAC", durationMins: 90 },
@@ -39,7 +71,15 @@ export const INDUSTRY_PRESETS: IndustryPreset[] = [
   {
     id: "plumbing",
     label: "Plumbing Companies",
-    workerNoun: "plumber",
+    group: "Home Trades",
+    workerNoun: "Plumber",
+    workerNounPlural: "Plumbers",
+    customerNoun: "Customer",
+    customerNounPlural: "Customers",
+    jobNoun: "Job",
+    jobNounPlural: "Jobs",
+    aiTone: "Calm and practical under pressure — many plumbing calls are active water damage. Confirm arrival time fast and set expectations on cost before work starts.",
+    notificationGuidance: "Emergency/burst-pipe calls should default to SMS + phone-priority alerts. After-hours escalation strongly recommended.",
     services: [
       { name: "Leak Repair", category: "Plumbing", durationMins: 90 },
       { name: "Drain Cleaning", category: "Plumbing", durationMins: 60 },
@@ -60,7 +100,15 @@ export const INDUSTRY_PRESETS: IndustryPreset[] = [
   {
     id: "electrical",
     label: "Electrical Contractors",
-    workerNoun: "electrician",
+    group: "Home Trades",
+    workerNoun: "Electrician",
+    workerNounPlural: "Electricians",
+    customerNoun: "Customer",
+    customerNounPlural: "Customers",
+    jobNoun: "Job",
+    jobNounPlural: "Jobs",
+    aiTone: "Safety-first and precise. Electrical work makes people nervous about fire/shock risk — be explicit about what was fixed and that it's safe now.",
+    notificationGuidance: "Safety inspection reminders are a good default-on notification. After-hours escalation recommended for power-outage calls.",
     services: [
       { name: "Panel Upgrade", category: "Electrical", durationMins: 240 },
       { name: "Outlet & Switch Repair", category: "Electrical", durationMins: 60 },
@@ -81,7 +129,15 @@ export const INDUSTRY_PRESETS: IndustryPreset[] = [
   {
     id: "restoration",
     label: "Restoration & Emergency Services",
-    workerNoun: "technician",
+    group: "Home Trades",
+    workerNoun: "Technician",
+    workerNounPlural: "Technicians",
+    customerNoun: "Customer",
+    customerNounPlural: "Customers",
+    jobNoun: "Job",
+    jobNounPlural: "Jobs",
+    aiTone: "Empathetic and process-driven — customers are usually mid-disaster (fire/flood/mold) and stressed about insurance. Explain next steps and documentation clearly.",
+    notificationGuidance: "Photo/documentation reminders matter for insurance claims. Enable emergency dispatch + insurance-doc notifications by default.",
     services: [
       { name: "Water Damage Mitigation", category: "Restoration", durationMins: 240 },
       { name: "Fire & Smoke Cleanup", category: "Restoration", durationMins: 240 },
@@ -102,7 +158,15 @@ export const INDUSTRY_PRESETS: IndustryPreset[] = [
   {
     id: "appliance",
     label: "Appliance Repair & Home Service",
-    workerNoun: "technician",
+    group: "Home Trades",
+    workerNoun: "Technician",
+    workerNounPlural: "Technicians",
+    customerNoun: "Customer",
+    customerNounPlural: "Customers",
+    jobNoun: "Job",
+    jobNounPlural: "Jobs",
+    aiTone: "Friendly and clear about parts/timelines — appliance repair often needs a follow-up visit for parts, so set expectations up front.",
+    notificationGuidance: "Follow-up visit reminders and parts-arrival notifications are high value defaults.",
     services: [
       { name: "Refrigerator Repair", category: "Appliance", durationMins: 90 },
       { name: "Washer / Dryer Repair", category: "Appliance", durationMins: 90 },
@@ -123,7 +187,15 @@ export const INDUSTRY_PRESETS: IndustryPreset[] = [
   {
     id: "courier",
     label: "Courier & Delivery Companies",
-    workerNoun: "driver",
+    group: "Delivery & Transportation",
+    workerNoun: "Driver",
+    workerNounPlural: "Drivers",
+    customerNoun: "Customer",
+    customerNounPlural: "Customers",
+    jobNoun: "Delivery",
+    jobNounPlural: "Deliveries",
+    aiTone: "Fast, transactional, ETA-obsessed. Customers care about speed and proof of delivery, not small talk.",
+    notificationGuidance: "Live tracking link + proof-of-delivery photo should default ON. SMS is the primary channel, not email.",
     services: [
       { name: "Same-Day Delivery", category: "Delivery", durationMins: 60 },
       { name: "Scheduled Pickup", category: "Delivery", durationMins: 30 },
@@ -144,7 +216,15 @@ export const INDUSTRY_PRESETS: IndustryPreset[] = [
   {
     id: "security",
     label: "Security & Alarm Companies",
-    workerNoun: "technician",
+    group: "Home Trades",
+    workerNoun: "Technician",
+    workerNounPlural: "Technicians",
+    customerNoun: "Customer",
+    customerNounPlural: "Customers",
+    jobNoun: "Job",
+    jobNounPlural: "Jobs",
+    aiTone: "Precise and trust-building — security customers need confidence the system actually works. Confirm testing/monitoring activation explicitly.",
+    notificationGuidance: "Monitoring-activation confirmations and alarm-response alerts should default ON; these customers expect proactive communication.",
     services: [
       { name: "Alarm Installation", category: "Security", durationMins: 180 },
       { name: "Camera / CCTV Install", category: "Security", durationMins: 180 },
@@ -165,7 +245,15 @@ export const INDUSTRY_PRESETS: IndustryPreset[] = [
   {
     id: "telecom",
     label: "Telecommunications Installers",
-    workerNoun: "installer",
+    group: "Technology",
+    workerNoun: "Installer",
+    workerNounPlural: "Installers",
+    customerNoun: "Customer",
+    customerNounPlural: "Customers",
+    jobNoun: "Job",
+    jobNounPlural: "Jobs",
+    aiTone: "Technical but plain-language — translate router/signal jargon into what the customer actually experiences (faster wifi, no dropouts).",
+    notificationGuidance: "Install-window and equipment-swap notifications are high value; trouble-ticket status updates should default ON.",
     services: [
       { name: "Fiber Installation", category: "Telecom", durationMins: 180 },
       { name: "Internet Setup", category: "Telecom", durationMins: 90 },
@@ -186,7 +274,15 @@ export const INDUSTRY_PRESETS: IndustryPreset[] = [
   {
     id: "roofing",
     label: "Roofing Contractors",
-    workerNoun: "roofer",
+    group: "Home Trades",
+    workerNoun: "Roofer",
+    workerNounPlural: "Roofers",
+    customerNoun: "Homeowner",
+    customerNounPlural: "Homeowners",
+    jobNoun: "Job",
+    jobNounPlural: "Jobs",
+    aiTone: "Consultative and estimate-focused — big-ticket, often insurance-involved purchase. Be thorough about scope before/after photos.",
+    notificationGuidance: "Storm-damage assessment and estimate-follow-up reminders are high value defaults.",
     services: [
       { name: "Roof Inspection", category: "Roofing", durationMins: 90 },
       { name: "Leak Repair", category: "Roofing", durationMins: 120 },
@@ -207,7 +303,15 @@ export const INDUSTRY_PRESETS: IndustryPreset[] = [
   {
     id: "landscaping",
     label: "Property Maintenance & Landscaping",
-    workerNoun: "crew",
+    group: "Home Trades",
+    workerNoun: "Crew",
+    workerNounPlural: "Crews",
+    customerNoun: "Customer",
+    customerNounPlural: "Customers",
+    jobNoun: "Visit",
+    jobNounPlural: "Visits",
+    aiTone: "Friendly and schedule-focused — mostly recurring service, so communication is about routing/weather changes more than emergencies.",
+    notificationGuidance: "Recurring-visit reminders and weather-delay notices should default ON; low urgency otherwise.",
     services: [
       { name: "Lawn Maintenance", category: "Landscaping", durationMins: 90 },
       { name: "Seasonal Cleanup", category: "Landscaping", durationMins: 180 },
@@ -228,7 +332,15 @@ export const INDUSTRY_PRESETS: IndustryPreset[] = [
   {
     id: "construction",
     label: "Commercial Construction",
-    workerNoun: "crew",
+    group: "Construction & Supply",
+    workerNoun: "Crew",
+    workerNounPlural: "Crews",
+    customerNoun: "Client",
+    customerNounPlural: "Clients",
+    jobNoun: "Project",
+    jobNounPlural: "Projects",
+    aiTone: "Formal and documentation-heavy — daily reports, change orders, and sign-offs matter more than friendliness.",
+    notificationGuidance: "Daily site reports and change-order approvals should default ON; this audience expects a paper trail.",
     services: [
       { name: "Site Survey", category: "Construction", durationMins: 120 },
       { name: "Demolition", category: "Construction", durationMins: 480 },
@@ -247,9 +359,46 @@ export const INDUSTRY_PRESETS: IndustryPreset[] = [
     categories: ["Construction", "Site Report", "Inspection", "Punch List"],
   },
   {
+    id: "flooring",
+    label: "Flooring & Building Materials Suppliers",
+    group: "Construction & Supply",
+    workerNoun: "Installer",
+    workerNounPlural: "Installers",
+    customerNoun: "Client",
+    customerNounPlural: "Clients",
+    jobNoun: "Order",
+    jobNounPlural: "Orders",
+    aiTone: "Specification-savvy and procurement-minded — clients (often designers, contractors, or hospitality buyers) care about lead times, samples, and exact SKUs, not just scheduling.",
+    notificationGuidance: "Order/shipment status and installation-scheduling notifications should default ON. Site-visit/measurement reminders are high value.",
+    services: [
+      { name: "Site Visit & Measurement", category: "Flooring", durationMins: 90 },
+      { name: "Sample & Spec Consultation", category: "Flooring", durationMins: 60 },
+      { name: "Flooring Supply & Delivery", category: "Flooring", durationMins: 60 },
+      { name: "Flooring Installation", category: "Flooring", durationMins: 300 },
+      { name: "Window Coverings Install", category: "Window Coverings", durationMins: 180 },
+      { name: "Punch List / Final Walkthrough", category: "Flooring", durationMins: 90 },
+    ],
+    templates: [
+      "Site Visit & Measurement",
+      "Residential Supply & Install",
+      "Commercial / Bulk Order",
+      "Installation Scheduling",
+      "Punch List Walkthrough",
+    ],
+    categories: ["Flooring", "Window Coverings", "Installation", "Procurement"],
+  },
+  {
     id: "waste",
     label: "Waste & Recycling",
-    workerNoun: "driver",
+    group: "Facilities & Public Works",
+    workerNoun: "Driver",
+    workerNounPlural: "Drivers",
+    customerNoun: "Customer",
+    customerNounPlural: "Customers",
+    jobNoun: "Pickup",
+    jobNounPlural: "Pickups",
+    aiTone: "Brief and route-driven — customers mostly need to know missed-pickup status, not detailed updates.",
+    notificationGuidance: "Missed-pickup alerts should default ON; routine collection notifications can default OFF (low value, high volume).",
     services: [
       { name: "Residential Pickup", category: "Waste", durationMins: 30 },
       { name: "Commercial Bin Service", category: "Waste", durationMins: 45 },
@@ -270,7 +419,15 @@ export const INDUSTRY_PRESETS: IndustryPreset[] = [
   {
     id: "utility",
     label: "Utility Services",
-    workerNoun: "technician",
+    group: "Facilities & Public Works",
+    workerNoun: "Technician",
+    workerNounPlural: "Technicians",
+    customerNoun: "Customer",
+    customerNounPlural: "Customers",
+    jobNoun: "Job",
+    jobNounPlural: "Jobs",
+    aiTone: "Calm and outage-aware — customers contacting utilities are often without power/water/service, so lead with restoration ETA.",
+    notificationGuidance: "Outage-response alerts and restoration ETAs should default ON and be high-priority (SMS + push).",
     services: [
       { name: "Meter Installation", category: "Utility", durationMins: 90 },
       { name: "Service Connection", category: "Utility", durationMins: 120 },
@@ -291,7 +448,15 @@ export const INDUSTRY_PRESETS: IndustryPreset[] = [
   {
     id: "healthcare",
     label: "Healthcare Home Services",
-    workerNoun: "caregiver",
+    group: "Home & Personal Care",
+    workerNoun: "Caregiver",
+    workerNounPlural: "Caregivers",
+    customerNoun: "Patient",
+    customerNounPlural: "Patients",
+    jobNoun: "Visit",
+    jobNounPlural: "Visits",
+    aiTone: "Warm, careful, and compliance-aware — clinical home services involve vulnerable patients and health information; be precise and gentle, never casual.",
+    notificationGuidance: "Visit confirmations and care-plan updates should default ON. Avoid exposing clinical details in SMS previews.",
     services: [
       { name: "In-Home Care Visit", category: "Healthcare", durationMins: 120 },
       { name: "Medical Equipment Setup", category: "Healthcare", durationMins: 90 },
@@ -310,9 +475,46 @@ export const INDUSTRY_PRESETS: IndustryPreset[] = [
     categories: ["Healthcare", "Care Visit", "Assessment", "Equipment"],
   },
   {
+    id: "home_health_aide",
+    label: "Home Health Care Aide & Companion Care",
+    group: "Home & Personal Care",
+    workerNoun: "Aide",
+    workerNounPlural: "Aides",
+    customerNoun: "Client",
+    customerNounPlural: "Clients",
+    jobNoun: "Visit",
+    jobNounPlural: "Visits",
+    aiTone: "Compassionate and family-inclusive — non-medical companion/personal care for seniors or people with disabilities. Families are often the ones reading notifications, not just the client. Be reassuring and specific about who showed up and what was done.",
+    notificationGuidance: "Arrival/departure confirmations to family contacts should default ON — this is often the #1 thing families want. Consider a family/POA notification recipient in addition to the client.",
+    services: [
+      { name: "Companion Care Visit", category: "Personal Care", durationMins: 120 },
+      { name: "Personal Care / ADL Assistance", category: "Personal Care", durationMins: 120 },
+      { name: "Meal Preparation", category: "Personal Care", durationMins: 60 },
+      { name: "Light Housekeeping", category: "Personal Care", durationMins: 60 },
+      { name: "Transportation / Errands", category: "Personal Care", durationMins: 90 },
+      { name: "Respite Care Visit", category: "Personal Care", durationMins: 180 },
+    ],
+    templates: [
+      "Companion Care Visit",
+      "Personal Care Visit",
+      "New Client Intake & Care Plan",
+      "Family Update Report",
+      "Missed/Late Visit Escalation",
+    ],
+    categories: ["Personal Care", "Companion Care", "Intake", "Family Updates"],
+  },
+  {
     id: "municipal",
     label: "Municipal & Public Works",
-    workerNoun: "crew",
+    group: "Facilities & Public Works",
+    workerNoun: "Crew",
+    workerNounPlural: "Crews",
+    customerNoun: "Resident",
+    customerNounPlural: "Residents",
+    jobNoun: "Request",
+    jobNounPlural: "Requests",
+    aiTone: "Formal and public-record-conscious — communications may be quoted back by citizens; be factual and avoid informal language.",
+    notificationGuidance: "Citizen-request status updates should default ON; consider longer quiet hours (public works isn't usually urgent overnight).",
     services: [
       { name: "Road Maintenance", category: "Public Works", durationMins: 240 },
       { name: "Streetlight Repair", category: "Public Works", durationMins: 90 },
@@ -330,11 +532,277 @@ export const INDUSTRY_PRESETS: IndustryPreset[] = [
     ],
     categories: ["Public Works", "Maintenance", "Inspection", "Request"],
   },
+  {
+    id: "limousine",
+    label: "Limousine & Executive Transportation",
+    group: "Delivery & Transportation",
+    workerNoun: "Chauffeur",
+    workerNounPlural: "Chauffeurs",
+    customerNoun: "Passenger",
+    customerNounPlural: "Passengers",
+    jobNoun: "Ride",
+    jobNounPlural: "Rides",
+    aiTone: "Upscale, discreet, and punctual — this is a premium/hospitality experience. Confirmations should feel white-glove, never generic or robotic.",
+    notificationGuidance: "Driver-assigned + en-route + arrival notifications should default ON; this audience expects proactive, polished communication (flight-tracking style updates for airport rides).",
+    services: [
+      { name: "Airport Transfer", category: "Transportation", durationMins: 60 },
+      { name: "Point-to-Point Ride", category: "Transportation", durationMins: 45 },
+      { name: "Hourly Charter", category: "Transportation", durationMins: 180 },
+      { name: "Event / Wedding Service", category: "Transportation", durationMins: 300 },
+      { name: "Corporate Roadshow", category: "Transportation", durationMins: 240 },
+      { name: "Wine Tour / Night Out", category: "Transportation", durationMins: 240 },
+    ],
+    templates: [
+      "Airport Transfer",
+      "Point-to-Point Ride",
+      "Hourly Charter",
+      "Event Booking",
+      "Corporate Account Ride",
+    ],
+    categories: ["Airport", "Point-to-Point", "Charter", "Events"],
+  },
+  {
+    id: "food_delivery",
+    label: "Food & Grocery Delivery",
+    group: "Delivery & Transportation",
+    workerNoun: "Driver",
+    workerNounPlural: "Drivers",
+    customerNoun: "Customer",
+    customerNounPlural: "Customers",
+    jobNoun: "Order",
+    jobNounPlural: "Orders",
+    aiTone: "Fast, upbeat, and ETA-driven. Food is time-sensitive — every notification should reinforce freshness and speed.",
+    notificationGuidance: "Order-prep, en-route, and arrival notifications should ALL default ON — this is the core value prop for this ICP. SMS/push over email.",
+    services: [
+      { name: "Restaurant Delivery", category: "Delivery", durationMins: 30 },
+      { name: "Grocery Delivery", category: "Delivery", durationMins: 45 },
+      { name: "Catering Delivery", category: "Delivery", durationMins: 60 },
+      { name: "Scheduled Order Delivery", category: "Delivery", durationMins: 30 },
+      { name: "Bulk / Office Order", category: "Delivery", durationMins: 45 },
+    ],
+    templates: [
+      "Standard Delivery Run",
+      "Scheduled Order",
+      "Catering / Bulk Order",
+      "Failed Delivery Report",
+      "Proof of Delivery",
+    ],
+    categories: ["Delivery", "Scheduled", "Catering", "Returns"],
+  },
+  {
+    id: "florist",
+    label: "Florists & Floral Delivery",
+    group: "Delivery & Transportation",
+    workerNoun: "Driver",
+    workerNounPlural: "Drivers",
+    customerNoun: "Customer",
+    customerNounPlural: "Customers",
+    jobNoun: "Delivery",
+    jobNounPlural: "Deliveries",
+    aiTone: "Warm and occasion-aware — deliveries are often for emotional moments (funerals, weddings, birthdays, sympathy). Tone should be gentle, never transactional-cold.",
+    notificationGuidance: "Delivery-confirmation photos should default ON (proof for the sender, who is often not the recipient). Recipient-not-home handling matters — enable failed-delivery alerts.",
+    services: [
+      { name: "Same-Day Floral Delivery", category: "Delivery", durationMins: 30 },
+      { name: "Wedding Delivery & Setup", category: "Events", durationMins: 180 },
+      { name: "Funeral / Sympathy Delivery", category: "Delivery", durationMins: 45 },
+      { name: "Subscription / Recurring Delivery", category: "Delivery", durationMins: 30 },
+      { name: "Corporate Account Delivery", category: "Delivery", durationMins: 30 },
+    ],
+    templates: [
+      "Same-Day Delivery",
+      "Wedding / Event Setup",
+      "Sympathy Delivery",
+      "Recurring Subscription Delivery",
+      "Failed Delivery Report",
+    ],
+    categories: ["Delivery", "Events", "Sympathy", "Subscription"],
+  },
+  {
+    id: "nanny",
+    label: "Nanny & Childcare Services",
+    group: "Home & Personal Care",
+    workerNoun: "Nanny",
+    workerNounPlural: "Nannies",
+    customerNoun: "Family",
+    customerNounPlural: "Families",
+    jobNoun: "Booking",
+    jobNounPlural: "Bookings",
+    aiTone: "Trust-first and detail-oriented — parents need confidence in who's caring for their kids. Confirmations should include the caregiver's name/photo and check-in/out times.",
+    notificationGuidance: "Check-in/check-out confirmations to parents should default ON — this is the single highest-trust notification for this ICP. Background-check/credential status is worth surfacing at booking time.",
+    services: [
+      { name: "Babysitting / Hourly Care", category: "Childcare", durationMins: 180 },
+      { name: "Recurring Weekly Care", category: "Childcare", durationMins: 480 },
+      { name: "Date Night Sitting", category: "Childcare", durationMins: 240 },
+      { name: "Overnight Care", category: "Childcare", durationMins: 600 },
+      { name: "Meet & Greet / Trial Visit", category: "Childcare", durationMins: 60 },
+    ],
+    templates: [
+      "Booking Confirmation",
+      "Recurring Weekly Care",
+      "New Family Intake",
+      "Check-In / Check-Out Report",
+      "Incident Report",
+    ],
+    categories: ["Childcare", "Recurring", "Intake", "Incident"],
+  },
+  {
+    id: "housekeeping",
+    label: "Housekeeping & Cleaning Services",
+    group: "Home & Personal Care",
+    workerNoun: "Cleaner",
+    workerNounPlural: "Cleaners",
+    customerNoun: "Customer",
+    customerNounPlural: "Customers",
+    jobNoun: "Cleaning",
+    jobNounPlural: "Cleanings",
+    aiTone: "Friendly and reliability-focused — most value is in trustworthy recurring service. Confirm arrival windows and any access instructions (keys/codes) clearly.",
+    notificationGuidance: "Arrival-window and completion (with photo) notifications should default ON. Recurring-schedule reminders reduce no-shows/cancellations.",
+    services: [
+      { name: "Standard House Cleaning", category: "Cleaning", durationMins: 120 },
+      { name: "Deep Cleaning", category: "Cleaning", durationMins: 240 },
+      { name: "Move-In / Move-Out Cleaning", category: "Cleaning", durationMins: 240 },
+      { name: "Recurring Weekly/Biweekly Cleaning", category: "Cleaning", durationMins: 120 },
+      { name: "Post-Construction Cleaning", category: "Cleaning", durationMins: 300 },
+      { name: "Office / Commercial Cleaning", category: "Cleaning", durationMins: 180 },
+    ],
+    templates: [
+      "Standard Cleaning Visit",
+      "Deep Cleaning Job",
+      "Move-In / Move-Out Cleaning",
+      "Recurring Service Visit",
+      "Commercial Cleaning Contract",
+    ],
+    categories: ["Cleaning", "Deep Clean", "Recurring", "Commercial"],
+  },
+  {
+    id: "pool_service",
+    label: "Pool Cleaning & Maintenance",
+    group: "Home Trades",
+    workerNoun: "Technician",
+    workerNounPlural: "Technicians",
+    customerNoun: "Customer",
+    customerNounPlural: "Customers",
+    jobNoun: "Visit",
+    jobNounPlural: "Visits",
+    aiTone: "Practical and chemistry-literate — customers want to know water is safe/balanced without needing to understand the science. Report readings simply (\"balanced\" vs raw numbers).",
+    notificationGuidance: "Chemical-reading summaries and equipment-issue alerts should default ON. Seasonal opening/closing reminders are high value.",
+    services: [
+      { name: "Weekly Pool Cleaning", category: "Pool Service", durationMins: 45 },
+      { name: "Chemical Balancing", category: "Pool Service", durationMins: 30 },
+      { name: "Equipment Repair", category: "Pool Service", durationMins: 90 },
+      { name: "Seasonal Opening", category: "Pool Service", durationMins: 120 },
+      { name: "Seasonal Closing", category: "Pool Service", durationMins: 120 },
+      { name: "Filter / Pump Service", category: "Pool Service", durationMins: 60 },
+    ],
+    templates: [
+      "Weekly Service Visit",
+      "Seasonal Opening / Closing",
+      "Equipment Repair",
+      "Chemical Balance Report",
+      "New Pool Assessment",
+    ],
+    categories: ["Pool Service", "Seasonal", "Repair", "Assessment"],
+  },
+  {
+    id: "it_pro",
+    label: "IT & Managed Services Professionals",
+    group: "Technology",
+    workerNoun: "Technician",
+    workerNounPlural: "Technicians",
+    customerNoun: "Client",
+    customerNounPlural: "Clients",
+    jobNoun: "Ticket",
+    jobNounPlural: "Tickets",
+    aiTone: "Precise and jargon-comfortable with business clients, but should still translate impact (downtime, risk) in plain terms for non-technical stakeholders.",
+    notificationGuidance: "Ticket-status and resolution-summary notifications should default ON. Consider SLA-breach escalation alerts for managed-service contracts.",
+    services: [
+      { name: "On-Site Support Visit", category: "IT Support", durationMins: 90 },
+      { name: "Network Setup", category: "IT Support", durationMins: 180 },
+      { name: "Server / Infrastructure Maintenance", category: "IT Support", durationMins: 120 },
+      { name: "Hardware Install / Replacement", category: "IT Support", durationMins: 90 },
+      { name: "Security / Backup Audit", category: "IT Support", durationMins: 120 },
+      { name: "Remote Troubleshooting", category: "IT Support", durationMins: 45 },
+    ],
+    templates: [
+      "Support Ticket",
+      "Network / Infrastructure Install",
+      "Maintenance Visit",
+      "Security Audit",
+      "SLA Escalation",
+    ],
+    categories: ["IT Support", "Installation", "Maintenance", "Security"],
+  },
+  {
+    id: "home_automation",
+    label: "Home Automation & Smart Home Specialists",
+    group: "Technology",
+    workerNoun: "Installer",
+    workerNounPlural: "Installers",
+    customerNoun: "Customer",
+    customerNounPlural: "Customers",
+    jobNoun: "Job",
+    jobNounPlural: "Jobs",
+    aiTone: "Consultative and demo-friendly — customers are buying convenience/luxury. Confirm the system was tested end-to-end (app, voice control, scenes) before calling a job done.",
+    notificationGuidance: "Installation-scheduling and post-install walkthrough/training notifications should default ON. Firmware/system-update alerts are a nice-to-have.",
+    services: [
+      { name: "Smart Home Consultation", category: "Home Automation", durationMins: 60 },
+      { name: "Lighting & Scene Automation", category: "Home Automation", durationMins: 180 },
+      { name: "Smart Security Integration", category: "Home Automation", durationMins: 180 },
+      { name: "Home Theater / AV Install", category: "Home Automation", durationMins: 240 },
+      { name: "Whole-Home Network Setup", category: "Home Automation", durationMins: 180 },
+      { name: "System Troubleshooting", category: "Home Automation", durationMins: 90 },
+    ],
+    templates: [
+      "Consultation & Design",
+      "Installation Work Order",
+      "Post-Install Walkthrough",
+      "Service & Troubleshooting",
+      "System Upgrade",
+    ],
+    categories: ["Home Automation", "Installation", "Consultation", "Support"],
+  },
+  {
+    id: "pharmacy_delivery",
+    label: "Pharmacy & Medication Delivery",
+    group: "Delivery & Transportation",
+    workerNoun: "Driver",
+    workerNounPlural: "Drivers",
+    customerNoun: "Patient",
+    customerNounPlural: "Patients",
+    jobNoun: "Delivery",
+    jobNounPlural: "Deliveries",
+    aiTone: "Precise, private, and reassuring — this is health-sensitive delivery. Confirmations must protect privacy (avoid naming medications in SMS) while still confirming delivery clearly.",
+    notificationGuidance: "Delivery-confirmation with signature/ID-check should default ON. Never include medication names/details in SMS/push previews — summarize generically (\"your pharmacy order\").",
+    services: [
+      { name: "Prescription Delivery", category: "Pharmacy", durationMins: 30 },
+      { name: "Same-Day Urgent Delivery", category: "Pharmacy", durationMins: 30 },
+      { name: "Scheduled Recurring Delivery", category: "Pharmacy", durationMins: 30 },
+      { name: "Long-Term Care Facility Delivery", category: "Pharmacy", durationMins: 45 },
+      { name: "Medical Supply Delivery", category: "Pharmacy", durationMins: 30 },
+    ],
+    templates: [
+      "Standard Prescription Delivery",
+      "Urgent Same-Day Delivery",
+      "Recurring Scheduled Delivery",
+      "Facility / Bulk Delivery",
+      "Failed Delivery Report",
+    ],
+    categories: ["Delivery", "Urgent", "Recurring", "Facility"],
+  },
 ];
 
-export const INDUSTRY_LABELS: { id: string; label: string }[] = INDUSTRY_PRESETS.map(
-  (p) => ({ id: p.id, label: p.label }),
-);
+export const INDUSTRY_LABELS: { id: string; label: string; group: string }[] =
+  INDUSTRY_PRESETS.map((p) => ({ id: p.id, label: p.label, group: p.group }));
+
+/** Distinct dropdown groups, in a sensible display order. */
+export const INDUSTRY_GROUPS: string[] = [
+  "Home Trades",
+  "Home & Personal Care",
+  "Delivery & Transportation",
+  "Construction & Supply",
+  "Technology",
+  "Facilities & Public Works",
+];
 
 export function getIndustryPreset(id: string | undefined | null): IndustryPreset | undefined {
   if (!id) return undefined;
@@ -342,5 +810,6 @@ export function getIndustryPreset(id: string | undefined | null): IndustryPreset
 }
 
 export function industryLabel(id: string | undefined | null): string {
+  if (id === "other") return "Other";
   return getIndustryPreset(id)?.label ?? "";
 }

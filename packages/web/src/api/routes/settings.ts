@@ -26,19 +26,22 @@ async function getOrInit(c: any) {
 export const settingsRoutes = new Hono()
   .get("/", requireAuth, async (c) => {
     const settings = await getOrInit(c);
-    // surface the tenant's Primary Industry (ICP) so the UI (Form Builder
-    // category dropdown, etc.) can adapt. Stored on companies, not settings.
+    // surface the tenant's Primary Industry (ICP) + free-text "other"
+    // description so the UI (Form Builder category dropdown, etc.) can adapt.
+    // Stored on companies, not settings.
     let industry = "";
+    let industryOther = "";
     try {
       const [co] = await db
-        .select({ industry: schema.companies.industry })
+        .select({ industry: schema.companies.industry, industryOther: schema.companies.industryOther })
         .from(schema.companies)
         .where(eq(schema.companies.id, tenantId(c)));
       industry = co?.industry ?? "";
+      industryOther = co?.industryOther ?? "";
     } catch {
       // best-effort; default to empty
     }
-    return c.json({ settings: { ...settings, industry } }, 200);
+    return c.json({ settings: { ...settings, industry, industryOther } }, 200);
   })
   .put("/", requireAdmin, async (c) => {
     const me = c.get("user") as SessionUser;

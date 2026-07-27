@@ -230,6 +230,10 @@ export const superadminRoutes = new Hono()
       ["logoUrl", "logo"],
       ["workerNoun", "workerNoun"],
       ["workerNounPlural", "workerNounPlural"],
+      ["customerNoun", "customerNoun"],
+      ["customerNounPlural", "customerNounPlural"],
+      ["jobNoun", "jobNoun"],
+      ["jobNounPlural", "jobNounPlural"],
       ["tagline", "tagline"],
       ["hours", "hours"],
       ["address", "address"],
@@ -335,8 +339,13 @@ export const superadminRoutes = new Hono()
     }
 
     // Primary Industry (ICP) — drives templates + service library presets.
-    const industry = String(b.industry ?? "").trim();
-    const preset = getIndustryPreset(industry);
+    // "other" is a valid sentinel (no preset fits) paired with a free-text
+    // description in industryOther, so future/unknown client types aren't
+    // forced into an ill-fitting bucket.
+    const industryRaw = String(b.industry ?? "").trim();
+    const preset = getIndustryPreset(industryRaw);
+    const industryOther = String(b.industryOther ?? "").trim();
+    const resolvedIndustry = preset?.id ?? (industryRaw === "other" ? "other" : "");
 
     // 1) insert the tenant row (id = slug = companyId)
     await db.insert(schema.companies).values({
@@ -347,14 +356,18 @@ export const superadminRoutes = new Hono()
       plan: ["starter", "pro", "enterprise"].includes(b.plan)
         ? b.plan
         : "starter",
-      industry: preset?.id ?? "",
+      industry: resolvedIndustry,
+      industryOther: resolvedIndustry === "other" ? industryOther : "",
       status: "active",
       createdBy: me?.id ?? "",
     });
 
     // 2) seed the tenant's company_settings row (PK = slug to avoid collision).
     //    Fold in any reviewed AI brand data ("Grab Brand Assets") so the tenant
-    //    starts fully branded — colors, logo, worker-noun, footer details.
+    //    starts fully branded — colors, logo, terminology, footer details.
+    //    Terminology fallback chain: what the AI actually read off their site
+    //    first, then the ICP preset's fitting default (e.g. "Plumber" not a
+    //    generic "Technician"), then a neutral platform default last.
     const brand = (b.brand ?? {}) as Record<string, any>;
     const str = (v: any, fb = "") =>
       typeof v === "string" && v.trim() ? v.trim() : fb;
@@ -377,8 +390,12 @@ export const superadminRoutes = new Hono()
       logo: str(brand.logoUrl),
       brandColor: str(brand.primaryColor, "#06B6D4"),
       accentColor: str(brand.accentColor),
-      workerNoun: str(brand.workerNoun, "Technician"),
-      workerNounPlural: str(brand.workerNounPlural, "Technicians"),
+      workerNoun: str(brand.workerNoun, preset?.workerNoun ?? "Technician"),
+      workerNounPlural: str(brand.workerNounPlural, preset?.workerNounPlural ?? "Technicians"),
+      customerNoun: str(brand.customerNoun, preset?.customerNoun ?? "Customer"),
+      customerNounPlural: str(brand.customerNounPlural, preset?.customerNounPlural ?? "Customers"),
+      jobNoun: str(brand.jobNoun, preset?.jobNoun ?? "Job"),
+      jobNounPlural: str(brand.jobNounPlural, preset?.jobNounPlural ?? "Jobs"),
       tagline: str(brand.tagline),
       services: jsonStr(brand.services),
       hours: str(brand.hours),
@@ -414,10 +431,13 @@ export const superadminRoutes = new Hono()
           : [];
       const starters = await scoutStarterForms({
         name,
+        industry: resolvedIndustry || null,
+        industryOther: resolvedIndustry === "other" ? industryOther : null,
         services: servicesArr,
         description: str(brand.description) || str(brand.tagline) || null,
         website: str(b.website) || null,
-        workerNoun: str(brand.workerNoun, "Technician"),
+        workerNoun: str(brand.workerNoun, preset?.workerNoun ?? "Technician"),
+        customerNoun: str(brand.customerNoun, preset?.customerNoun ?? "Customer"),
       });
       const brandColor = str(brand.primaryColor, "#06B6D4");
       const logoUrl = str(brand.logoUrl);
@@ -477,11 +497,13 @@ export const superadminRoutes = new Hono()
           : [];
       const tpls = await scoutStarterTemplates({
         name,
-        industry: preset?.id ?? null,
+        industry: resolvedIndustry || null,
+        industryOther: resolvedIndustry === "other" ? industryOther : null,
         services: servicesArr,
         description: str(brand.description) || str(brand.tagline) || null,
         website: str(b.website) || null,
         workerNoun: str(brand.workerNoun, preset?.workerNoun ?? "Technician"),
+        customerNoun: str(brand.customerNoun, preset?.customerNoun ?? "Customer"),
         brandColor: str(brand.primaryColor, "#06B6D4"),
       });
       for (const t of tpls) {

@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { useAuth } from "../../hooks/use-auth";
 import { activeCompany, switchCompany } from "../../lib/tenant";
-import { INDUSTRY_LABELS } from "../../../services/industry-presets";
+import { INDUSTRY_LABELS, INDUSTRY_GROUPS } from "../../../services/industry-presets";
 import { AddressAutocomplete } from "../../components/address-autocomplete";
 import { FullLoader } from "../../components/loader";
 import { PageHead } from "./shell";
@@ -52,6 +52,7 @@ const EMPTY = {
   phone: "",
   plan: "starter",
   industry: "",
+  industryOther: "",
   website: "",
   adminName: "",
   adminEmail: "",
@@ -69,6 +70,10 @@ type BrandProposal = {
   logoSourceUrl: string | null;
   workerNoun: string | null;
   workerNounPlural: string | null;
+  customerNoun: string | null;
+  customerNounPlural: string | null;
+  jobNoun: string | null;
+  jobNounPlural: string | null;
   tagline: string | null;
   description: string | null;
   services: string[];
@@ -77,6 +82,9 @@ type BrandProposal = {
   email: string | null;
   phone: string | null;
   socials: Record<string, string>;
+  suggestedIndustry: string | null;
+  suggestedIndustryOther: string | null;
+  suggestedIndustryRationale: string | null;
   warnings: string[];
 };
 
@@ -157,11 +165,16 @@ export default function CompaniesPage() {
     },
     onSuccess: (p) => {
       setBrand(p);
-      // pre-fill contact fields from what we learned, if still blank
+      // pre-fill contact fields + the AI-suggested ICP from what we learned,
+      // if the admin hasn't already picked something. Still fully overridable
+      // — this is a suggestion, not a lock-in.
+      const knownIndustry = p.suggestedIndustry && INDUSTRY_LABELS.some((i) => i.id === p.suggestedIndustry);
       setForm((f) => ({
         ...f,
         contactEmail: f.contactEmail || p.email || "",
         phone: f.phone || p.phone || "",
+        industry: f.industry || (knownIndustry ? p.suggestedIndustry! : p.suggestedIndustry === "other" ? "other" : f.industry),
+        industryOther: f.industryOther || (p.suggestedIndustry === "other" ? p.suggestedIndustryOther || "" : f.industryOther),
       }));
     },
     onError: (e: any) => setErr(e.message),
@@ -383,13 +396,46 @@ export default function CompaniesPage() {
               onChange={(e) => set("industry", e.target.value)}
             >
               <option value="">Select industry…</option>
-              {INDUSTRY_LABELS.map((i) => (
-                <option key={i.id} value={i.id}>{i.label}</option>
+              {INDUSTRY_GROUPS.map((g) => (
+                <optgroup key={g} label={g}>
+                  {INDUSTRY_LABELS.filter((i) => i.group === g).map((i) => (
+                    <option key={i.id} value={i.id}>{i.label}</option>
+                  ))}
+                </optgroup>
               ))}
+              <option value="other">Other — describe their business…</option>
             </select>
             <p className="mt-1 text-xs text-slate-500">
-              Drives starter templates, the service library, and work-order intelligence.
+              Drives starter templates, the service library, work-order intelligence, AI tone,
+              and terminology (customer/job naming) for this tenant.
             </p>
+            {brand?.suggestedIndustry && form.industry === brand.suggestedIndustry && (
+              <p className="mt-1.5 flex items-start gap-1.5 rounded-lg bg-brand/10 px-2.5 py-1.5 text-[11px] text-cyan-300">
+                <Sparkles className="mt-0.5 h-3 w-3 shrink-0" />
+                <span>
+                  AI suggested this from their website
+                  {brand.suggestedIndustryRationale ? `: ${brand.suggestedIndustryRationale}` : "."}
+                  {" "}Change it above if it's not quite right.
+                </span>
+              </p>
+            )}
+            {form.industry === "other" && (
+              <div className="mt-2">
+                <Field label="What kind of business is this?">
+                  <input
+                    aria-label="Describe their business"
+                    className={inputCls}
+                    value={form.industryOther}
+                    onChange={(e) => set("industryOther", e.target.value)}
+                    placeholder="e.g. Wedding Photography, Pest Control, Mobile Notary…"
+                  />
+                </Field>
+                <p className="mt-1 text-xs text-slate-500">
+                  No preset fits yet — this description drives AI-generated templates &
+                  intake forms instead. We can add it as a full preset later.
+                </p>
+              </div>
+            )}
           </Field>
 
           {/* Website + AI brand scout ---------------------------------- */}
@@ -472,7 +518,14 @@ export default function CompaniesPage() {
             <BtnGhost onClick={() => setOpen(false)}>Cancel</BtnGhost>
             <BtnPrimary
               onClick={() => create.mutate()}
-              disabled={create.isPending || !form.name || !form.industry || !form.adminEmail || !form.adminPassword}
+              disabled={
+                create.isPending ||
+                !form.name ||
+                !form.industry ||
+                (form.industry === "other" && !form.industryOther.trim()) ||
+                !form.adminEmail ||
+                !form.adminPassword
+              }
             >
               {create.isPending ? "Provisioning…" : "Create company"}
             </BtnPrimary>
@@ -586,6 +639,48 @@ function BrandReview({
             value={brand.workerNounPlural ?? ""}
             onChange={(e) => setField("workerNounPlural", e.target.value || null)}
             placeholder="Technicians"
+          />
+        </Field>
+      </div>
+
+      {/* customer + job noun — same terminology system as worker noun */}
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Call the people they serve…">
+          <input
+            aria-label="Customer noun"
+            className={inputCls}
+            value={brand.customerNoun ?? ""}
+            onChange={(e) => setField("customerNoun", e.target.value || null)}
+            placeholder="Customer"
+          />
+        </Field>
+        <Field label="…plural">
+          <input
+            aria-label="Customer noun plural"
+            className={inputCls}
+            value={brand.customerNounPlural ?? ""}
+            onChange={(e) => setField("customerNounPlural", e.target.value || null)}
+            placeholder="Customers"
+          />
+        </Field>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Call a unit of work…">
+          <input
+            aria-label="Job noun"
+            className={inputCls}
+            value={brand.jobNoun ?? ""}
+            onChange={(e) => setField("jobNoun", e.target.value || null)}
+            placeholder="Job"
+          />
+        </Field>
+        <Field label="…plural">
+          <input
+            aria-label="Job noun plural"
+            className={inputCls}
+            value={brand.jobNounPlural ?? ""}
+            onChange={(e) => setField("jobNounPlural", e.target.value || null)}
+            placeholder="Jobs"
           />
         </Field>
       </div>

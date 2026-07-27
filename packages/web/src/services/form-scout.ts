@@ -17,6 +17,7 @@ import { z } from "zod";
 import { gateway, MODELS } from "../api/agent/gateway";
 import { INTAKE_FIELD_CATALOG } from "../api/routes/forms";
 import { log } from "../api/lib/logger";
+import { getIndustryPreset } from "./industry-presets";
 
 /** Allowed field keys — must mirror INTAKE_FIELD_CATALOG so they render. */
 const FIELD_KEYS = INTAKE_FIELD_CATALOG.map((f) => f.key) as string[];
@@ -43,10 +44,16 @@ export interface StarterForm {
 
 export interface FormScoutInput {
   name: string;
+  // Primary Industry (ICP) preset id — same driver template-scout uses.
+  // Previously this scout got NO industry context at all; now the same
+  // preset (services/categories/tone) shapes intake-form design too.
+  industry?: string | null;
+  industryOther?: string | null; // free-text business type when industry === "other"
   services?: string[];
   description?: string | null;
   website?: string | null;
   workerNoun?: string | null;
+  customerNoun?: string | null;
 }
 
 const slugify = (s: string) =>
@@ -139,6 +146,19 @@ export async function scoutStarterForms(
       ? input.services.join(", ")
       : "(unknown — infer from the company name / description)";
   const noun = input.workerNoun || "technician";
+  const customerNoun = input.customerNoun || "customer";
+  const preset = getIndustryPreset(input.industry);
+  const industryLine = preset
+    ? `${preset.label} — design forms that fit how this industry actually intakes work.`
+    : input.industry === "other" && input.industryOther
+      ? `${input.industryOther} (no exact preset — use this description as the primary guide).`
+      : "(not specified — infer from the company name / services)";
+  const toneLine = preset
+    ? `\nTONE FOR THIS INDUSTRY: ${preset.aiTone}`
+    : "";
+  const suggestedCategories = preset
+    ? `\nSUGGESTED FORM INTENTS for this industry (adapt names to ${input.name}; pick the 2-3 most useful, do not force all): ${preset.templates.join(", ")}.`
+    : "";
 
   try {
     const { object } = await generateObject({
@@ -146,19 +166,25 @@ export async function scoutStarterForms(
       schema: FormSchema,
       prompt: `You are onboarding a service business into a dispatch & booking platform and must design its starter customer intake forms (the public web forms prospects fill out to request work).
 
+PRIMARY INDUSTRY (ICP): ${industryLine}
 COMPANY: ${input.name}
 WEBSITE: ${input.website || "(unknown)"}
 SERVICES OFFERED: ${servicesLine}
 DESCRIPTION: ${input.description || "(none)"}
 THEY CALL THEIR FIELD WORKERS: ${noun}
+THEY CALL THE PEOPLE THEY SERVE: ${customerNoun}${toneLine}${suggestedCategories}
+
+The PRIMARY INDUSTRY (ICP) above is the main driver — let it shape form titles, intros, and field choices first; use the services/website only as secondary detail. Match the TONE guidance above in the intro and success message copy.
 
 Design 2 or 3 DISTINCT starter intake forms that reflect how this specific industry actually takes in work and follows best practices for lead capture. Examples of good differentiation:
 - A roofing/exterior company: "Request a Free Inspection", "Get a Roof Replacement Quote", "Emergency Leak / Storm Damage".
 - A building-materials supplier: "Request a Materials Quote", "Schedule a Delivery", "Contractor / Bulk Order Inquiry".
 - An HVAC company: "Book a Tune-Up", "Request Emergency Repair", "New System Estimate".
+- A nanny/childcare agency: "Request a Sitter", "New Family Intake", "Recurring Care Inquiry".
+- A home health aide agency: "Request Care for a Loved One", "New Client Intake", "Respite Care Inquiry".
 
 For each form:
-- Pick a clear, conversion-friendly title and a short friendly intro.
+- Pick a clear, conversion-friendly title and a short friendly intro that matches the tone guidance.
 - Choose ONLY fields from this catalog (use the exact keys): ${FIELD_KEYS.join(", ")}.
 - name, email, phone, address are ALWAYS included and required. Add serviceType, preferredAt, notes, photo only when they fit that form's purpose (e.g. include photo for damage/inspection forms; include preferredAt for scheduling/delivery forms).
 - Write a warm, on-brand success message.

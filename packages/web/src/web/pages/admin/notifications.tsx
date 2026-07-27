@@ -12,7 +12,7 @@ import {
   RotateCcw, Moon, Sparkles, Image as ImageIcon, Palette, AlignLeft,
   Bold, Italic, Link as LinkIcon, PenLine, Loader2,
 } from "lucide-react";
-import { useWorkerNoun } from "../../lib/use-brand";
+import { useWorkerNoun, useIndustryNotificationGuidance } from "../../lib/use-brand";
 const recipLabel = (r: { key: string; label: string }, noun: string) => (r.key === "tech" ? noun : r.label);
 import { EmailEditor, type EmailBlock } from "../../components/email-editor";
 import { starterDesignForRecipient } from "../../lib/email-starters";
@@ -1020,9 +1020,21 @@ function Channels() {
     { key: "webhookEnabled", label: "Webhooks", icon: Globe, desc: "Outbound HTTP POSTs" },
   ];
 
+  const industryGuidance = useIndustryNotificationGuidance();
+
   return (
     <div className="space-y-5">
       <p className="text-sm text-slate-400">Global delivery configuration. Master switches and quiet hours apply on top of every per-event rule.</p>
+
+      {industryGuidance && (
+        <div className="flex items-start gap-2.5 rounded-2xl border border-brand/20 bg-brand/5 p-4 text-sm text-cyan-100">
+          <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-cyan-glow" />
+          <div>
+            <span className="font-semibold text-cyan-glow">Recommended for your industry: </span>
+            {industryGuidance}
+          </div>
+        </div>
+      )}
 
       {/* master switches */}
       <div className="rounded-2xl border border-white/5 nvc-card p-5">
