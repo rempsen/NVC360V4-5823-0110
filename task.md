@@ -71,10 +71,39 @@ authenticated run — not a build check, not tsc, not a bare 401/404 smoke test 
 Fixed, rebuilt, re-ran the entire flow successfully, cleaned up all test data from the
 live DB afterward. Committed.
 
-### Still outstanding (lower priority, not blocking)
-- No auto-seeded starter option categories per ICP on company create.
-- No employee/PIN-gated work-order form (work-order-form.tsx) integration — only the
-  admin work-order-modal.tsx has the "copy selections link" button.
+
+## Round 3 (both remaining follow-ups completed)
+- [x] Per-ICP option-catalog seeding: new services/option-catalog-presets.ts with
+      research-grounded starter categories/tiers for 13 industries (Wave 1: home-builder-
+      developer, painting-decorating, design-build, renovation-contractor; Wave 2:
+      electrical, exteriors, hvac-plumbing, garage-door, flooring, concrete-foundation-
+      repair, tree-care, landscaping-grounds-snow, restoration; thin Wave 3:
+      commercial-building-maintenance SLA tier). Wired into superadmin.ts company-create
+      flow (step 2g, seedOptionCatalogForCompany, same pattern as seedCatalogForCompany).
+      Outlier ICPs (equipment-rental, property-management-maintenance, sports-organization)
+      intentionally left unseeded — matches their own "hold" research verdict.
+- [x] Employee PIN-gated work-order-form.tsx: success screen now shows "Copy customer
+      selections link" using the newly-created booking's publicToken (public-forms.ts
+      submit response now returns `publicToken` alongside `bookingId`).
+- [x] Full E2E verification via superadmin API (not just code review): created a real
+      test company "e2e-option-seed-test" (industry home-builder-developer) via
+      POST /api/superadmin/companies as dan@nvc360.com, confirmed server logs showed
+      "seeded 3 option categories", then logged in AS THAT TENANT'S OWN ADMIN and hit
+      GET /api/option-catalog/categories — got back all 3 real categories (Flooring,
+      Kitchen Countertops, Electrical Upgrade Package) with correct tiers/price deltas
+      exactly as authored. Cleaned up all test rows (company, user, categories, catalog
+      items, services, templates, forms, company_settings) from the live Turso DB after.
+- [x] bun run build (real gate) passes clean after all changes.
+- [x] Committed.
+
+### Still open (not asked for, noted for completeness)
+- Outlier ICPs (equipment-rental, property-management-maintenance, sports-organization)
+  have no option-catalog preset — deliberate, matches their "hold"/"conditional" research
+  verdict, not an oversight.
+- Public intake-form flow (public-forms.ts, the OTHER c.json success response around
+  line 557, a different code path from the work-order form) was not touched — out of
+  scope, that's a separate customer-facing intake form feature, not the PIN-gated
+  employee work-order form the user referenced.
 
 ### IMPORTANT LESSON THIS SESSION
 tsc --noEmit in this repo's root tsconfig.json has `"files": []` and uses project

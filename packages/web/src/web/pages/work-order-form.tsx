@@ -285,6 +285,7 @@ function WorkOrderBuilder({ companyId, slug, cfg, services, brand, publicKey }: 
 
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState<string | null>(null);
+  const [doneToken, setDoneToken] = useState<string | null>(null);
   const [err, setErr] = useState("");
 
   const canSubmit = !!serviceId && (client || (clientMode === "new" && newClient.name.trim()));
@@ -352,6 +353,7 @@ function WorkOrderBuilder({ companyId, slug, cfg, services, brand, publicKey }: 
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d?.message || "Couldn't create the work order");
       setDone(d.message || cfg.successMessage || "Work order created.");
+      setDoneToken(d.publicToken || null);
     } catch (e: any) {
       setErr(e.message || "Something went wrong. Please try again.");
     } finally {
@@ -368,7 +370,16 @@ function WorkOrderBuilder({ companyId, slug, cfg, services, brand, publicKey }: 
           </div>
           <h1 className="text-xl font-bold text-slate-800">Work order created</h1>
           <p className="mt-2 text-sm text-slate-500">{done}</p>
-          <button onClick={() => window.location.reload()} className="mt-5 rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">Create another</button>
+          {doneToken && (
+            <button
+              type="button"
+              onClick={() => navigator.clipboard?.writeText(`${window.location.origin}/s/${doneToken}`)}
+              className="mt-4 w-full rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Copy customer selections link
+            </button>
+          )}
+          <button onClick={() => window.location.reload()} className="mt-3 rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">Create another</button>
         </div>
       </div>
     );

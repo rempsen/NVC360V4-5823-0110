@@ -742,7 +742,7 @@ async function submitWorkOrder(c: any, companyId: string, form: typeof schema.in
       .catch((e) => console.error("work order recipient email failed", e));
   }
 
-  return c.json({ ok: true, message: form.successMessage, bookingId: b.id }, 201);
+  return c.json({ ok: true, message: form.successMessage, bookingId: b.id, publicToken: b.publicToken }, 201);
 }
 
 /** Email the configured recipient a summary of a new employee-submitted work order. */

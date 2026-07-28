@@ -25,6 +25,7 @@ import { scoutStarterTemplates } from "../../services/template-scout";
 import { provisionNotificationBranding } from "../../services/dispatch";
 import { getIndustryPreset } from "../../services/industry-presets";
 import { CATALOG_PRESETS } from "../../services/catalog-presets";
+import { OPTION_CATALOG_PRESETS } from "../../services/option-catalog-presets";
 import {
   resendAvailable,
   createDomainInResend,
@@ -152,6 +153,58 @@ async function seedCatalogForCompany(
     if (row) {
       keyToId[it.key] = row.id;
       inserted++;
+    }
+  }
+
+  return inserted;
+}
+
+/**
+ * Seed the OPTIONS/TIER CATALOG (schema.optionCategories + optionCategoryItems)
+ * for a company from its industry preset — the generalized options/tier quote
+ * engine (Phase 3 cross-ICP synthesis #1 build priority: 13 of 17 researched
+ * ICPs independently converged on this good/better/best pattern). Without
+ * this, a new tenant's /admin/options page is empty until someone builds
+ * categories by hand — this makes the wedge feature usable on day one.
+ * Idempotent is the caller's responsibility (only call when empty). Returns
+ * the number of category rows inserted.
+ */
+async function seedOptionCatalogForCompany(
+  companyId: string,
+  industryId: string,
+): Promise<number> {
+  const categories = OPTION_CATALOG_PRESETS[industryId];
+  if (!categories || categories.length === 0) return 0;
+
+  let inserted = 0;
+  for (let i = 0; i < categories.length; i++) {
+    const cat = categories[i];
+    const [catRow] = await db
+      .insert(schema.optionCategories)
+      .values({
+        companyId,
+        name: cat.name,
+        description: cat.description,
+        sortOrder: i,
+        active: true,
+      })
+      .returning({ id: schema.optionCategories.id });
+    if (!catRow) continue;
+    inserted++;
+    for (let j = 0; j < cat.tiers.length; j++) {
+      const tier = cat.tiers[j];
+      await db.insert(schema.optionCategoryItems).values({
+        companyId,
+        categoryId: catRow.id,
+        tierLabel: tier.tierLabel,
+        name: tier.name,
+        description: tier.description,
+        priceDelta: tier.priceDelta,
+        unitCost: 0,
+        isDefault: tier.isDefault,
+        sortOrder: j,
+        active: true,
+      });
     }
   }
 
@@ -600,6 +653,22 @@ export const superadminRoutes = new Hono()
         }
       } catch (e) {
         console.error("[superadmin] catalog seeding failed", e);
+      }
+    }
+
+    // 2g) auto-seed the OPTIONS/TIER CATALOG (schema.optionCategories) from the
+    //     industry preset — the generalized options/tier quote engine wedge.
+    //     Best-effort, non-blocking.
+    if (preset?.id) {
+      try {
+        const n = await seedOptionCatalogForCompany(slug, preset.id);
+        if (n > 0) {
+          console.log(
+            `[superadmin] seeded ${n} option categories (${preset.id}) for "${slug}"`,
+          );
+        }
+      } catch (e) {
+        console.error("[superadmin] option-catalog seeding failed", e);
       }
     }
 
