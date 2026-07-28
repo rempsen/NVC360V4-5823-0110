@@ -1147,6 +1147,24 @@ export function WorkOrderModal({
           </div>
         )}
 
+        {/* Options/tier selections link — send to the customer so they can pick a
+            tier per option category (Good/Better/Best) and e-sign; price deltas
+            roll into this job's line items automatically once submitted. */}
+        {isEdit && editBooking?.publicToken && (
+          <div className="sm:col-span-2">
+            <button
+              type="button"
+              onClick={() => {
+                const url = `${window.location.origin}/s/${editBooking.publicToken}`;
+                navigator.clipboard?.writeText(url);
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-white/10"
+            >
+              Copy customer selections link
+            </button>
+          </div>
+        )}
+
         {/* ── Catalog line items ── */}
         <div className="sm:col-span-2">
           <CatalogLineItems

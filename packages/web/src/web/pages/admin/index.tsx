@@ -22,6 +22,7 @@ const AuditPage = lazy(() => import("./audit"));
 const ZonesPage = lazy(() => import("./zones"));
 const ServicesPage = lazy(() => import("./services"));
 const CatalogPage = lazy(() => import("./catalog"));
+const OptionsCatalogPage = lazy(() => import("./options-catalog"));
 const ReviewsPage = lazy(() => import("./reviews"));
 const NotificationsPage = lazy(() => import("./notifications"));
 const ApiAccessPage = lazy(() => import("./api-access"));
@@ -70,6 +71,7 @@ export default function AdminApp() {
           <Route path="/admin/audit" component={AuditPage} />
           <Route path="/admin/settings" component={SettingsPage} />
           <Route path="/admin/catalog" component={CatalogPage} />
+          <Route path="/admin/options" component={OptionsCatalogPage} />
           <Route path="/admin/services" component={ServicesPage} />
           <Route path="/admin/reviews" component={ReviewsPage} />
           <Route path="/admin/notifications" component={NotificationsPage} />

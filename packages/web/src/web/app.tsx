@@ -99,6 +99,7 @@ class ErrorBoundary extends Component<
 const ForgotPasswordPage = lazy(() => import("./pages/forgot-password"));
 const ResetPasswordPage = lazy(() => import("./pages/reset-password"));
 const TrackPublic = lazy(() => import("./pages/track-public"));
+const SelectionsPublic = lazy(() => import("./pages/selections-public"));
 const IntakeForm = lazy(() => import("./pages/intake-form"));
 const JoinTech = lazy(() => import("./pages/join-tech"));
 const CustomerApp = lazy(() => import("./pages/customer"));
@@ -143,6 +144,7 @@ function App() {
           <Route path="/forgot-password" component={ForgotPasswordPage} />
           <Route path="/reset-password" component={ResetPasswordPage} />
           <Route path="/t/:token" component={TrackPublic} />
+          <Route path="/s/:token" component={SelectionsPublic} />
           <Route path="/f/:companyId/:slug" component={IntakeForm} />
           <Route path="/join/:token" component={JoinTech} />
 

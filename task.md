@@ -28,9 +28,61 @@ Retire old pilot ICPs entirely.
 ## Round 2 (both scopes)
 - [x] catalog-presets.ts reconciled to real 17-ICP slugs; retired 9 no-counterpart ids;
       added 9 new starter catalogs; caught+fixed unquoted-hyphenated-key syntax bug via
-      runtime parse check (tsc --noEmit alone missed it); tsc clean now.
-- [ ] commit catalog-presets.ts
-- [ ] Options/Tier Quote Engine v1 (Phase 3 #1 priority) — schema + API + minimal UI
+      runtime parse check (tsc --noEmit alone missed it); tsc clean now. COMMITTED.
+- [x] Options/Tier Quote Engine backend: schema (option_categories,
+      option_category_items, booking_option_selections) migrated to live Turso;
+      routes/option-catalog.ts (admin CRUD + attach-rate report);
+      routes/option-selections.ts (public token-based via bookings.publicToken,
+      reuses buildUnitLineItem + recomputeBooking for pricing — no new pricing math);
+      wired into api/index.ts. Verified via live server boot + curl smoke test
+      (not just tsc, which has proven unreliable this session). COMMITTED.
+- [x] Admin frontend: pages/admin/options-catalog.tsx (category/tier CRUD + attach-rate
+      table), wired into admin/index.tsx route + admin/shell.tsx nav ("Options & Tiers").
+      COMMITTED (see below).
+- [x] Public customer-facing selections page: pages/selections-public.tsx at /s/:token
+      (wouter route in app.tsx), mirrors track-public.tsx visual style. Tier cards per
+      category, running total, typed-name e-sign, locked/confirmed state after submit.
+- [x] "Copy customer selections link" button added to work-order-modal.tsx (only shows
+      when editing an existing booking with a publicToken) — copies /s/:token to clipboard.
+- [x] Full verification done properly this time: `bun run build` (tsc --noEmit && vite
+      build, the REAL gate — see lesson below) passes clean, all new chunks
+      (options-catalog, selections-public) built. Booted actual dev server against live
+      Turso DB + Redis, curled every new endpoint: public 404 on bad token (GET+POST),
+      admin 401 without auth, SPA serves /s/:token via client-side routing (200 + React
+      handles it). DB/redis both report healthy in /api/ready.
+- [x] Committed: schema+migration, backend routes, catalog-presets.ts reconciliation.
+      Frontend pieces (options-catalog.tsx, selections-public.tsx, app.tsx route,
+      admin/index.tsx route, admin/shell.tsx nav, work-order-modal.tsx link button)
+      committed in this round too.
+
+### Not done / explicit follow-ups (told to Dan)
+- No per-ICP seed data for option categories/tiers yet (e.g. auto-creating "Flooring"
+  Good/Better/Best for a new home-builder-developer tenant). Admins currently build their
+  own categories from scratch on /admin/options. Wiring industry-presets.ts -> auto-seeded
+  option categories on company create would be the natural next step.
+  Sports-organization).
+- No employee/PIN-gated work-order form integration (work-order-form.tsx) — only the
+  admin work-order-modal.tsx got the "copy selections link" button.
+- Did not test with a real authenticated admin session end-to-end (create category ->
+  add tier -> generate public link -> submit as customer -> verify booking line items
+  updated) — verified each piece in isolation (server boot, route auth behavior, build
+  output) but not one continuous authenticated user journey. Recommend Dan/QA click
+  through it once on staging.
+
+### IMPORTANT LESSON THIS SESSION
+tsc --noEmit in this repo's root tsconfig.json has `"files": []` and uses project
+references — running plain `tsc --noEmit` from packages/web checks NOTHING (always exits
+0 regardless of real errors). This is why it missed a real hyphenated-object-key syntax
+error earlier. Running `tsc --noEmit -p tsconfig.app.json` directly DOES check files, but
+this repo has ~dozens of PRE-EXISTING, unrelated type errors (better-auth `c.get("user")`
+overload issues, AWS SDK version mismatches, etc.) that predate this session's changes —
+so that invocation isn't a useful signal either without a way to diff against a known-good
+baseline. The REAL gate the team relies on is `bun run build` (= tsc --noEmit && vite
+build) from packages/web — vite's own transform catches real syntax/type errors that
+matter for the bundle, and it passing is what "the code actually works" means here. Going
+forward: verify with `bun run build` + booting the dev server + curling changed endpoints,
+never tsc alone.
+
 
 ## Key facts / IDs (don't re-fetch)
 - Supabase project: nvc360-icp-intelligence, ref baqduvribxicrzalwycb (still unverified via

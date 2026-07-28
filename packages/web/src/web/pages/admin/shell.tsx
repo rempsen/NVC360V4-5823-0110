@@ -14,6 +14,7 @@ import {
   ClipboardList,
   LayoutTemplate,
   Package,
+  Layers,
   Users,
   Wrench,
   BarChart3,
@@ -62,6 +63,7 @@ const NAV_GROUPS: NavGroup[] = [
     heading: "Catalog & Forms",
     items: [
       { to: "/admin/catalog", label: "Catalog", icon: Package },
+      { to: "/admin/options", label: "Options & Tiers", icon: Layers },
       { to: "/admin/builder", label: "Form Builder Templates", icon: LayoutTemplate },
       { to: "/admin/intake-forms", label: "Intake Forms", icon: FileText },
     ],
