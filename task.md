@@ -138,3 +138,40 @@ never tsc alone.
   researchedAt, updatedAt, createdAt. No write route exists in the app — prior pilot rows
   were seeded via raw SQL directly against Turso (DATABASE_URL + DATABASE_AUTH_TOKEN in
   /home/user/nvc360-v4/.env). Same approach needed for the 4 new rows.
+
+## Round 4 — deep ICP research for remaining 13 + notification defaults + noun wiring + mobile + scrape depth
+User request (verbatim priorities):
+1. Complete deep trade research for remaining 13 ICPs (icp_knowledge_base) — same quality as Wave 1.
+2. Fix customerNoun/jobNoun dead code — wire into frontend like workerNoun (18 pages), confirm scrape+ICP fallback already populates them correctly (it does, per superadmin.ts:472-478 — this is a FRONTEND-ONLY fix).
+3. ICP-aware notification defaults (currently one flat 15-row matrix for every tenant regardless of industry) — research-grounded per-ICP notification profile, seeded at company create.
+4. Mobile driver app (Expo) — zero ICP/terminology customization today — bring it to parity with web (workerNoun etc.)
+5. Deepen website-scrape usage beyond brand+forms/templates (currently dead-ends after email footer + form/template prompt context) — test against bmdmaterials.com as the working model, propose + implement a global standard.
+
+Plan of attack (in this order):
+A. Fetch remaining 13 ICP Drive folders (01/03/04 docs) — folder IDs already known from earlier session:
+   04-electrical 1q34KR_C9PRQ2gBdP1kBR3VsdAfANs-Bw, 05-exteriors 10_RMHHCz81ayExOZKWTCzn7YIoYMJhCZ,
+   06-hvac-plumbing 1bMD9PJ2tlos9zpjgoVIV_AEVr6dj2B90, 07-landscaping-grounds-snow 1rXSj2nAcOaIFC-J7qs59lzS5V5VVhKP1,
+   09-commercial-building-maintenance 1mWdG_0ezFzLgYGldX74oUigXe0ZQz0yN, 10-flooring 1cTZPUJNoQrGdfFEttc83yGtZUTgjIVqn,
+   11-garage-door 1WRQQX0ZXZc1aFLGfpCNPESOToDV6qbhz, 12-tree-care 1tOEawZ7J1DiNciKJuK4pHWnAI81Ydhdf,
+   13-concrete-foundation-repair 1VeSwI5fQY6HyiwurUP0U8VWrw1ouvx7n, 14-equipment-rental 1oabI52mRwvTkyRRevpzehoQoU1Ee4gHQ,
+   15-property-management-maintenance 1R6mzTc9pqRkt3SknKqre-_basm3EShrN, 16-restoration 1I7t0w0v1MiprgbMqiiSs1xAMQ9shFK5W,
+   17-sports-organization 10IAFn6XOuw_gdjWkWZm5J5BnLkB6Fn5d
+B. Seed icp_knowledge_base for all 13 (extend scripts/seed-icp-knowledge-base.ts pattern).
+C. Build notification-presets.ts (per-ICP T1-T8 trigger profile from Phase3 synthesis + per-ICP docs), wire into
+   superadmin.ts to replace/extend seedNotificationRules with an ICP-aware version.
+D. Wire useCustomerNoun/useJobNoun into the same ~18 files that already use useWorkerNoun.
+E. Mobile app: add brand/terminology fetching parity with web.
+F. Deepen website-scrape -> seeding pipeline (e.g. feed scraped services into catalog/options), test with bmdmaterials.com.
+
+### Phase A DONE: fetched + read all 13 remaining ICPs' research
+- All 39 files (01/03/04 per industry) downloaded to /home/user/icp-research/<slug>/, verified titles match
+  (caught + fixed a download-tool race bug: requesting multiple fileIds sharing the same base filename
+  e.g. "01-Industry-Overview.md" from TWO different folders in one call caused silent content overwrite —
+  5 of 13 industries got the WRONG industry's content on first pass. Re-downloaded those 5 one file at a
+  time and verified each by title before trusting it: electrical, hvac-plumbing,
+  commercial-building-maintenance, garage-door, concrete-foundation-repair all reconfirmed correct.)
+- Read summary + best-practices + notifications tables for all 13. Also noted: concrete-foundation-repair
+  was RE-SCORED from provisional 6.3 to 7.3 (core, non-provisional) on 2026-07-27 per its own doc header —
+  industry-presets.ts still shows the old 6.3/provisional value, should update fitScore/rationale there too.
+- NEXT: write seed script (extend scripts/seed-icp-knowledge-base.ts pattern) with all 13 new rows, run
+  against live Turso DB, verify via SELECT.
