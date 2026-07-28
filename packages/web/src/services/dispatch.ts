@@ -15,6 +15,7 @@ import { renderEmailDesign, designToText, type EmailBlock, type EmailBrand } fro
 import { verifiedDomainsForCompany } from "./email-domains";
 import { sendSms, trackingUrl } from "./sms";
 import { sendPush } from "./push";
+import { applyNotificationOverrides } from "./notification-presets";
 
 export type NvcEvent =
   | "created"
@@ -585,8 +586,8 @@ export async function seedNotificationRules(companyId: string) {
     .where(eq(schema.notificationRules.companyId, companyId))
     .limit(1);
   if (existing.length) return;
-  // sensible defaults
-  const defaults: { event: NvcEvent; recipient: Recipient; inApp: boolean; email: boolean; sms: boolean; webhook: boolean }[] = [
+  // sensible defaults, then adjusted per-ICP (see notification-presets.ts)
+  const base: { event: NvcEvent; recipient: Recipient; inApp: boolean; email: boolean; sms: boolean; webhook: boolean }[] = [
     { event: "created", recipient: "office", inApp: true, email: false, sms: false, webhook: false },
     { event: "created", recipient: "client", inApp: true, email: true, sms: false, webhook: false },
     { event: "assigned", recipient: "tech", inApp: true, email: true, sms: true, webhook: false },
@@ -603,8 +604,14 @@ export async function seedNotificationRules(companyId: string) {
     { event: "cancelled", recipient: "client", inApp: true, email: true, sms: false, webhook: false },
     { event: "receipt", recipient: "client", inApp: true, email: true, sms: false, webhook: false },
   ];
+  const [company] = await db
+    .select({ industry: schema.companies.industry })
+    .from(schema.companies)
+    .where(eq(schema.companies.id, companyId))
+    .limit(1);
+  const defaults = applyNotificationOverrides(base, company?.industry);
   for (const d of defaults) {
     await db.insert(schema.notificationRules).values({ ...d, companyId });
   }
-  console.log("[dispatch] seeded", defaults.length, "notification rules for", companyId);
+  console.log("[dispatch] seeded", defaults.length, "notification rules for", companyId, "(industry:", company?.industry || "none", ")");
 }
