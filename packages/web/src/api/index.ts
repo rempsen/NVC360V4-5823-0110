@@ -17,6 +17,8 @@ import { paymentsWebhookRoutes } from "./routes/payments-webhook";
 import { notificationsRoutes } from "./routes/notifications";
 import { adminRoutes } from "./routes/admin";
 import { trackRoutes } from "./routes/track";
+import { optionCatalogRoutes } from "./routes/option-catalog";
+import { optionSelectionsRoutes } from "./routes/option-selections";
 import { messagesRoutes } from "./routes/messages";
 import { fleetRoutes } from "./routes/fleet";
 import { aiRoutes } from "./routes/ai";
@@ -254,6 +256,10 @@ const app = new Hono<{ Variables: Variables }>()
   .route("/notifications", notificationsRoutes)
   .route("/admin", adminRoutes)
   .route("/track", trackRoutes)
+  // Public options/selections page (no auth) — token-based, same trust model as /track.
+  .route("/selections", optionSelectionsRoutes)
+  // Admin-authenticated options/tier catalog CRUD + attach-rate reporting.
+  .route("/option-catalog", optionCatalogRoutes)
   .route("/messages", messagesRoutes)
   .route("/fleet", fleetRoutes)
   .route("/ai", aiRoutes)
