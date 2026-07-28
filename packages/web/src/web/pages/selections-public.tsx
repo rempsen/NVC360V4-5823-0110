@@ -24,7 +24,7 @@ type Payload = {
   booking: { id: string; title: string; status: string; address: string };
   company: { name: string } | null;
   categories: Category[];
-  existingSelections: { categoryId: string; itemId: string; signatureName: string; selectedAt: number }[];
+  existingSelections: { categoryId: string; itemId: string; signatureName: string; selectedAt: string | number | null }[];
   locked: boolean;
 };
 

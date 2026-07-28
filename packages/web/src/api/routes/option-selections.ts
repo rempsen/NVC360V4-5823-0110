@@ -108,7 +108,7 @@ export const optionSelectionsRoutes = new Hono()
       resolved.push({ category, item });
     }
 
-    const now = Date.now();
+    const now = new Date();
     // replace: drop any prior selections for this booking, insert the fresh set
     await t.delete(schema.bookingOptionSelections, eq(schema.bookingOptionSelections.bookingId, b.id));
     for (const { category, item } of resolved) {
