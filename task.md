@@ -25,21 +25,12 @@ Retire old pilot ICPs entirely.
 - [x] Confirmed no other file hardcodes the removed old industry ids (only test fixtures
       use "hvac" as an unrelated services.category string — harmless)
 
-## Known gaps (not done this round — flag to Dan)
-- packages/web/src/services/catalog-presets.ts (CATALOG_PRESETS) is still keyed by the OLD
-  industry ids (hvac, plumbing, etc.) for pricing-catalog seeding (schema.catalogItems).
-  Not type-coupled (Record<string,...>), so it doesn't break the build, but new-company
-  catalog seeding will silently insert 0 items for any of the 17 real ICPs until this is
-  reconciled too. Separate follow-up task.
-- Deeper Wave-1 app customization (actual Selections Studio / Selections Board / Change
-  Orders UI, notification engine primitives, menu modules from Phase 3 synthesis section
-  E) was NOT built — only the industry list + icp_knowledge_base research content. That's
-  the "generalized options/tier quote engine" (#1 build priority) and is real feature work,
-  not data reconciliation.
-- Did not touch template-scout.ts / form-scout.ts logic — they already consume
-  icp_knowledge_base + IndustryPreset generically, so richer KB content should already
-  flow into AI-generated templates/forms without code changes, but not manually verified
-  end-to-end this round.
+## Round 2 (both scopes)
+- [x] catalog-presets.ts reconciled to real 17-ICP slugs; retired 9 no-counterpart ids;
+      added 9 new starter catalogs; caught+fixed unquoted-hyphenated-key syntax bug via
+      runtime parse check (tsc --noEmit alone missed it); tsc clean now.
+- [ ] commit catalog-presets.ts
+- [ ] Options/Tier Quote Engine v1 (Phase 3 #1 priority) — schema + API + minimal UI
 
 ## Key facts / IDs (don't re-fetch)
 - Supabase project: nvc360-icp-intelligence, ref baqduvribxicrzalwycb (still unverified via
