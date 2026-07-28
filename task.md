@@ -55,19 +55,26 @@ Retire old pilot ICPs entirely.
       admin/index.tsx route, admin/shell.tsx nav, work-order-modal.tsx link button)
       committed in this round too.
 
-### Not done / explicit follow-ups (told to Dan)
-- No per-ICP seed data for option categories/tiers yet (e.g. auto-creating "Flooring"
-  Good/Better/Best for a new home-builder-developer tenant). Admins currently build their
-  own categories from scratch on /admin/options. Wiring industry-presets.ts -> auto-seeded
-  option categories on company create would be the natural next step.
-  Sports-organization).
-- No employee/PIN-gated work-order form integration (work-order-form.tsx) — only the
-  admin work-order-modal.tsx got the "copy selections link" button.
-- Did not test with a real authenticated admin session end-to-end (create category ->
-  add tier -> generate public link -> submit as customer -> verify booking line items
-  updated) — verified each piece in isolation (server boot, route auth behavior, build
-  output) but not one continuous authenticated user journey. Recommend Dan/QA click
-  through it once on staging.
+### Follow-up: did the recommended full authenticated E2E walkthrough
+Logged in as admin@nvc360.app, ran the real flow end to end against the live Turso DB:
+create category -> add Good/Better tiers -> pick a real booking -> hit its /s/:token
+selections page -> submit as "customer" with e-sign -> confirmed booking subtotal/total
+recomputed correctly ($45 -> $1,545 subtotal reflecting a $1,500 LVP upgrade, tax
+recalculated) -> confirmed the page shows a locked/confirmed state on reload -> confirmed
+admin per-booking selections view and attach-rate report both showed correct data (100%
+attach rate, $1,500 incremental revenue).
+FOUND AND FIXED A REAL BUG: POST /api/selections/:token was throwing 500 — passed
+`Date.now()` (a number) to a drizzle `timestamp_ms` column, which needs a JS `Date`
+object on insert (confirmed by checking the rest of the codebase's convention, e.g.
+bookings.ts always uses `new Date()`). This is exactly the kind of bug that only a real
+authenticated run — not a build check, not tsc, not a bare 401/404 smoke test — catches.
+Fixed, rebuilt, re-ran the entire flow successfully, cleaned up all test data from the
+live DB afterward. Committed.
+
+### Still outstanding (lower priority, not blocking)
+- No auto-seeded starter option categories per ICP on company create.
+- No employee/PIN-gated work-order form (work-order-form.tsx) integration — only the
+  admin work-order-modal.tsx has the "copy selections link" button.
 
 ### IMPORTANT LESSON THIS SESSION
 tsc --noEmit in this repo's root tsconfig.json has `"files": []` and uses project
