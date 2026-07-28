@@ -22,6 +22,7 @@ import {
 import { scoutBrand } from "../../services/brand-scout";
 import { scoutStarterForms } from "../../services/form-scout";
 import { scoutStarterTemplates } from "../../services/template-scout";
+import { scoutStarterServices } from "../../services/service-scout";
 import { provisionNotificationBranding } from "../../services/dispatch";
 import { getIndustryPreset } from "../../services/industry-presets";
 import { CATALOG_PRESETS } from "../../services/catalog-presets";
@@ -617,12 +618,32 @@ export const superadminRoutes = new Hono()
       console.error("[superadmin] starter-template seeding failed", e);
     }
 
-    // 2e) auto-seed the SERVICE LIBRARY (schema.services) from the ICP preset so
-    //     the tenant starts with a ready-made, industry-specific service catalog.
-    //     Best-effort, non-blocking.
-    if (preset) {
+    // 2e) auto-seed the SERVICE LIBRARY (schema.services), tailored to the
+    //     tenant's OWN scraped website services where available (falls back
+    //     to the plain ICP preset list when there's no scrape data or the
+    //     model call fails) — previously this always used the generic preset
+    //     verbatim even when the scrape had real service names for this
+    //     specific business. Best-effort, non-blocking.
+    if (preset || (Array.isArray(brand.services) && brand.services.length)) {
       try {
-        for (const s of preset.services) {
+        const servicesArr: string[] = Array.isArray(brand.services)
+          ? brand.services
+          : typeof brand.services === "string" && brand.services.trim()
+            ? brand.services
+                .split(/[\n,;|]/)
+                .map((s: string) => s.trim())
+                .filter(Boolean)
+            : [];
+        const tailored = await scoutStarterServices({
+          name,
+          industry: resolvedIndustry || null,
+          industryOther: resolvedIndustry === "other" ? industryOther : null,
+          services: servicesArr,
+          description: str(brand.description) || str(brand.tagline) || null,
+          website: str(b.website) || null,
+          knowledge: icpKnowledge,
+        });
+        for (const s of tailored) {
           await db.insert(schema.services).values({
             companyId: slug,
             name: s.name,
@@ -632,7 +653,7 @@ export const superadminRoutes = new Hono()
           });
         }
         console.log(
-          `[superadmin] seeded ${preset.services.length} services (${preset.id}) for "${slug}"`,
+          `[superadmin] seeded ${tailored.length} services (${preset?.id ?? "scraped, no preset"}) for "${slug}"`,
         );
       } catch (e) {
         console.error("[superadmin] service-library seeding failed", e);
