@@ -318,6 +318,76 @@ export const catalogItems = sqliteTable("catalog_items", {
   companyIdx: index("catalog_company_idx").on(t.companyId),
 }));
 
+/**
+ * GENERALIZED OPTIONS/TIER QUOTE ENGINE — Phase 3 cross-ICP synthesis #1 build
+ * priority (13 of 17 researched ICPs independently converged on this pattern:
+ * Selections Studio / Options Catalog / Upgrade Catalogue / Material Tier
+ * Catalog / Door Configurator / Price Book are all the same underlying shape).
+ *
+ * A company defines reusable "option categories" (e.g. "Flooring", "Garage
+ * Door", "Paint Grade") each with 2+ tiers (e.g. Good/Better/Best) carrying a
+ * price delta. These are attached to a booking/quote via a customer-facing,
+ * token-based selection page (no login required — reuses bookings.publicToken,
+ * same trust model as the existing live-tracking link) where the customer
+ * picks a tier per category and e-signs (typed name) to lock in the price.
+ * Selections roll up into the booking's line items via the existing
+ * buildUnitLineItem/recomputeBooking pipeline — no separate pricing engine.
+ */
+export const optionCategories = sqliteTable("option_categories", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  companyId: text("company_id").notNull().default("default"),
+  name: text("name").notNull(), // e.g. "Flooring", "Paint Grade", "Garage Door Model"
+  description: text("description").notNull().default(""), // shown to the customer above the tier cards
+  sortOrder: integer("sort_order").notNull().default(0),
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
+  createdAt: now(),
+}, (t) => ({
+  companyIdx: index("optcat_company_idx").on(t.companyId),
+}));
+
+export const optionCategoryItems = sqliteTable("option_category_items", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  companyId: text("company_id").notNull().default("default"),
+  categoryId: text("category_id")
+    .notNull()
+    .references(() => optionCategories.id, { onDelete: "cascade" }),
+  tierLabel: text("tier_label").notNull().default(""), // "Good" | "Better" | "Best" | custom
+  name: text("name").notNull(), // e.g. "Luxury Vinyl Plank"
+  description: text("description").notNull().default(""),
+  image: text("image").notNull().default(""),
+  priceDelta: real("price_delta").notNull().default(0), // added to the base price when selected (can be 0 for the included/default tier)
+  unitCost: real("unit_cost").notNull().default(0), // optional COGS delta, for margin/attach-rate reporting only
+  isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false), // pre-selected tier when the customer opens the page
+  sortOrder: integer("sort_order").notNull().default(0),
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
+  createdAt: now(),
+}, (t) => ({
+  categoryIdx: index("optitem_category_idx").on(t.categoryId),
+  companyIdx: index("optitem_company_idx").on(t.companyId),
+}));
+
+/** One row per (booking, category) — the customer's locked-in tier choice + e-sign. */
+export const bookingOptionSelections = sqliteTable("booking_option_selections", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  companyId: text("company_id").notNull().default("default"),
+  bookingId: text("booking_id")
+    .notNull()
+    .references(() => bookings.id, { onDelete: "cascade" }),
+  categoryId: text("category_id").notNull(),
+  categoryName: text("category_name").notNull().default(""), // snapshot at selection time
+  itemId: text("item_id").notNull(),
+  itemName: text("item_name").notNull().default(""), // snapshot
+  tierLabel: text("tier_label").notNull().default(""), // snapshot
+  priceDelta: real("price_delta").notNull().default(0), // snapshot
+  selectedBy: text("selected_by").notNull().default("customer"), // customer | staff
+  signatureName: text("signature_name").notNull().default(""), // typed e-sign name
+  selectedAt: integer("selected_at", { mode: "timestamp_ms" }),
+  createdAt: now(),
+}, (t) => ({
+  bookingIdx: index("optsel_booking_idx").on(t.bookingId),
+  companyIdx: index("optsel_company_idx").on(t.companyId),
+}));
+
 /** Live rider location pings during an active job (track history) */
 export const trackingPings = sqliteTable("tracking_pings", {
   id: text("id")

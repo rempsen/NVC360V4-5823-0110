@@ -22,6 +22,13 @@
       "when": 1785188908222,
       "tag": "0002_icp_knowledge_base",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1785270373285,
+      "tag": "0003_closed_genesis",
+      "breakpoints": true
     }
   ]
 }
