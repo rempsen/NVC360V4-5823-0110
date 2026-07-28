@@ -14,6 +14,7 @@ const fmtDate = (d: string) => new Date(d).toLocaleDateString("en-US", { month: 
 export default function AdminPayouts() {
   const qc = useQueryClient();
   const { noun } = useWorkerNoun();
+  const { nounPlural: jobPlural } = useJobNoun();
   const [genOpen, setGenOpen] = useState(false);
   const today = new Date();
   const weekAgo = new Date(Date.now() - 7 * 86400000);

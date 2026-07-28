@@ -6,7 +6,7 @@ import { PageWrap } from "../../components/brand";
 import { PageHead } from "./shell";
 import { Modal, Field, inputCls, BtnPrimary, BtnGhost, ConfirmModal } from "../../components/modal";
 import { Plus, Trash2, Tag as TagIcon, ListPlus, GripVertical } from "lucide-react";
-import { useWorkerNoun } from "../../lib/use-brand";
+import { useWorkerNoun, useCustomerNoun } from "../../lib/use-brand";
 
 const SCOPES = ["both", "client", "tech"];
 const ENTITIES = [
@@ -21,6 +21,9 @@ const FIELD_TYPES = [
 export default function AdminTags() {
   const qc = useQueryClient();
   const { nounPlural } = useWorkerNoun();
+  const { nounPlural: customerNounPlural } = useCustomerNoun();
+  const { nounPlural: jobNounPlural } = useJobNoun();
+  const entityLabel = (id: string) => (id === "tech" ? nounPlural : id === "client" ? customerNounPlural : id === "work_order" ? jobNounPlural : ENTITIES.find((e) => e.id === id)?.label ?? id);
   const [tagModal, setTagModal] = useState(false);
   const [tagForm, setTagForm] = useState({ label: "", color: "#06B6D4", scope: "both" });
   const [delTag, setDelTag] = useState<string | null>(null);
@@ -117,7 +120,7 @@ export default function AdminTags() {
             {ENTITIES.map((e) => (
               <button key={e.id} onClick={() => setEntity(e.id)}
                 className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${entity === e.id ? "bg-brand text-white" : "bg-ink-2 text-slate-400 hover:bg-white/5"}`}>
-                {e.label}
+                {entityLabel(e.id)}
               </button>
             ))}
           </div>
@@ -157,7 +160,7 @@ export default function AdminTags() {
             </Field>
             <Field label="Applies to">
               <select className={inputCls} value={tagForm.scope} onChange={(e) => setTagForm({ ...tagForm, scope: e.target.value })}>
-                {SCOPES.map((s) => <option key={s} value={s}>{s === "both" ? "Both" : s === "client" ? "Clients" : nounPlural}</option>)}
+                {SCOPES.map((s) => <option key={s} value={s}>{s === "both" ? "Both" : s === "client" ? customerNounPlural : nounPlural}</option>)}
               </select>
             </Field>
           </div>
@@ -166,7 +169,7 @@ export default function AdminTags() {
 
       {/* Field modal */}
       <Modal open={fieldModal} onClose={() => setFieldModal(false)} title="New custom field"
-        subtitle={`For ${ENTITIES.find((e) => e.id === entity)?.label}`}
+        subtitle={`For ${entityLabel(entity)}`}
         footer={<><BtnGhost onClick={() => setFieldModal(false)}>Cancel</BtnGhost>
           <BtnPrimary disabled={!fieldForm.label || createField.isPending} onClick={() => createField.mutate()}>Add field</BtnPrimary></>}>
         <div className="space-y-3">

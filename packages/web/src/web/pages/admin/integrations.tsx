@@ -7,7 +7,7 @@ import { PageWrap } from "../../components/brand";
 import { PageHead } from "./shell";
 import { Modal } from "../../components/modal";
 import { RefreshCw, Check, Plug, Link2Off, Settings, Copy, AlertTriangle, Clock, ShieldCheck, Save, Trash2, Eye, EyeOff, UploadCloud, ExternalLink } from "lucide-react";
-import { useWorkerNoun } from "../../lib/use-brand";
+import { useWorkerNoun, useCustomerNoun } from "../../lib/use-brand";
 import { BrandIcon } from "../../components/brand-icons";
 
 const CATEGORY_ORDER = ["Accounting", "Email", "Calendar", "File Storage", "Photos", "Productivity", "Service"];
@@ -184,6 +184,7 @@ const DRIVE_DATASETS = [
 ];
 function DriveExportModal({ open, onClose, onReconnect }: { open: boolean; onClose: () => void; onReconnect?: () => void }) {
   const { nounPlural } = useWorkerNoun();
+  const { nounPlural: customerNounPlural } = useCustomerNoun();
   const [dataset, setDataset] = useState("work-orders");
   const [format, setFormat] = useState<"csv" | "xlsx">("xlsx");
   const [result, setResult] = useState<any>(null);
@@ -299,7 +300,7 @@ function DriveExportModal({ open, onClose, onReconnect }: { open: boolean; onClo
               <span className="mb-1.5 block text-xs font-semibold text-slate-400">What to back up</span>
               <select value={dataset} onChange={(e) => setDataset(e.target.value)}
                 className="w-full rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-sm text-white">
-                {DRIVE_DATASETS.map((d) => <option key={d.id} value={d.id}>{d.id === "technicians" ? nounPlural : d.label}</option>)}
+                {DRIVE_DATASETS.map((d) => <option key={d.id} value={d.id}>{d.id === "technicians" ? nounPlural : d.id === "clients" ? customerNounPlural : d.label}</option>)}
               </select>
             </label>
           </div>

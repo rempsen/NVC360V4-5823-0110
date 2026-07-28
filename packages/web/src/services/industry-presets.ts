@@ -247,9 +247,9 @@ export const INDUSTRY_PRESETS: IndustryPreset[] = [
     group: "Building & Renovation",
     tier: "core",
     rank: 13,
-    fitScore: 6.3,
+    fitScore: 7.3,
     rationale:
-      "Provisional but core — Winnipeg's expansive clay soil makes this one of the densest local trades. High-ticket, estimate-centric with natural good/better/best tiers (piering, waterproofing, finish).",
+      "Re-scored from provisional 6.3 to 7.3 (core, non-provisional) after a dedicated market scan — Winnipeg's expansive clay soil makes this one of the densest local trades. High-ticket, estimate-centric with natural good/better/best tiers (piering, waterproofing, finish).",
     workerNoun: "Crew Lead",
     workerNounPlural: "Crew Leads",
     customerNoun: "Homeowner",

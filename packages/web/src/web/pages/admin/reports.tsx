@@ -13,7 +13,7 @@ import {
   DollarSign, Wrench, ClipboardList, Wallet, Boxes, Users, Receipt, Map,
   Database, Table as TableIcon,
 } from "lucide-react";
-import { useWorkerNoun } from "../../lib/use-brand";
+import { useWorkerNoun, useCustomerNoun } from "../../lib/use-brand";
 
 /* ------------------------------ config ------------------------------ */
 type ReportId =
@@ -355,6 +355,8 @@ const RAW_DATASETS = [
 ];
 function RawExports() {
   const { nounPlural } = useWorkerNoun();
+  const { nounPlural: customerNounPlural } = useCustomerNoun();
+  const { nounPlural: jobNounPlural } = useJobNoun();
   const [busy, setBusy] = useState("");
   async function dl(ds: string, format: string) {
     setBusy(`${ds}-${format}`);
@@ -378,7 +380,7 @@ function RawExports() {
         {RAW_DATASETS.map((d) => (
           <div key={d.id} className="flex items-center gap-3 rounded-xl border border-white/10 bg-ink-3/40 p-3">
             <d.icon className="h-5 w-5 text-slate-400" />
-            <span className="flex-1 text-sm font-semibold text-slate-200">{d.id === "technicians" ? nounPlural : d.label}</span>
+            <span className="flex-1 text-sm font-semibold text-slate-200">{d.id === "technicians" ? nounPlural : d.id === "clients" ? customerNounPlural : d.id === "work-orders" ? jobNounPlural : d.label}</span>
             {["csv", "xlsx", "pdf"].map((fmt) => (
               <button key={fmt} onClick={() => dl(d.id, fmt)} disabled={busy === `${d.id}-${fmt}`}
                 className="rounded-lg bg-white/5 px-2.5 py-1.5 text-[11px] font-bold uppercase text-slate-300 hover:bg-brand hover:text-white disabled:opacity-50">

@@ -4,7 +4,7 @@ import { Logo } from "../../components/brand";
 import { DispatchMessenger } from "../../components/dispatch-messenger";
 import { TenantSwitcher } from "../../components/tenant-switcher";
 import { useAuth } from "../../hooks/use-auth";
-import { useWorkerNoun } from "../../lib/use-brand";
+import { useWorkerNoun, useCustomerNoun, useJobNoun } from "../../lib/use-brand";
 import { authClient, clearToken } from "../../lib/auth";
 import { cn } from "../../lib/utils";
 import {
@@ -56,7 +56,7 @@ const NAV_GROUPS: NavGroup[] = [
       { to: "/admin", label: "Dashboard", icon: LayoutDashboard },
       { to: "/admin/fleet", label: "Map", icon: MapIcon },
       { to: "/admin/scheduler", label: "Scheduler", icon: CalendarClock },
-      { to: "/admin/work-orders", label: "Work Orders", icon: ClipboardList },
+      { to: "/admin/work-orders", label: "__JOB_PLURAL__", icon: ClipboardList },
     ],
   },
   {
@@ -72,7 +72,7 @@ const NAV_GROUPS: NavGroup[] = [
     heading: "People",
     items: [
       { to: "/admin/techs", label: "__WORKER_PLURAL__ & Managers", icon: Wrench },
-      { to: "/admin/clients", label: "Clients", icon: Users },
+      { to: "/admin/clients", label: "__CUSTOMER_PLURAL__", icon: Users },
       { to: "/admin/reviews", label: "Reviews", icon: Star },
     ],
   },
@@ -98,6 +98,8 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const [loc, navigate] = useLocation();
   const { user, role } = useAuth();
   const { nounPlural: workerPlural } = useWorkerNoun();
+  const { nounPlural: customerPlural } = useCustomerNoun();
+  const { nounPlural: jobPlural } = useJobNoun();
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   // superadmins get a "Companies" (tenant registry) entry under Operations.
@@ -167,7 +169,10 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                       <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r bg-brand" />
                     )}
                     <n.icon className={cn("h-[17px] w-[17px] shrink-0 transition-colors", active ? "text-brand" : "text-slate-600 group-hover:text-slate-400")} />{" "}
-                    {n.label.replace("__WORKER_PLURAL__", workerPlural)}
+                    {n.label
+                      .replace("__WORKER_PLURAL__", workerPlural)
+                      .replace("__CUSTOMER_PLURAL__", customerPlural)
+                      .replace("__JOB_PLURAL__", jobPlural)}
                   </Link>
                 );
               })}

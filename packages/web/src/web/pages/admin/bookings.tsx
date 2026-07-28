@@ -9,7 +9,7 @@ import {
   Download, Filter, Trash2, RotateCcw, Printer, ChevronLeft, ChevronRight,
   Columns3, FileJson, FileText, FileSpreadsheet, Loader2, ChevronDown,
 } from "lucide-react";
-import { useWorkerNoun } from "../../lib/use-brand";
+import { useWorkerNoun, useCustomerNoun, useJobNoun } from "../../lib/use-brand";
 import { TechAvatar } from "../../components/tech-avatar";
 import { WorkOrderModal } from "../../components/work-order-modal";
 
@@ -69,6 +69,8 @@ function buildQuery(f: typeof EMPTY, q: string, includeDeleted: boolean) {
 export default function AdminWorkOrders() {
   const qc = useQueryClient();
   const { noun } = useWorkerNoun();
+  const { noun: customerNoun } = useCustomerNoun();
+  const { noun: jobNoun, nounPlural: jobPlural } = useJobNoun();
   const initialStatus =
     (typeof window !== "undefined" &&
       new URLSearchParams(window.location.search).get("status")) ||
@@ -201,8 +203,8 @@ export default function AdminWorkOrders() {
   return (
     <PageWrap>
       <PageHead
-        title="Work Orders"
-        subtitle="Search, filter, dispatch and export every job"
+        title={jobPlural}
+        subtitle={`Search, filter, dispatch and export every ${jobNoun.toLowerCase()}`}
         actions={
           <div className="flex items-center gap-2">
             <ExportMenu params={params} columns={facets.data?.columns ?? []} />
@@ -210,7 +212,7 @@ export default function AdminWorkOrders() {
               onClick={() => setNewOpen(true)}
               className="flex items-center gap-1.5 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-deep"
             >
-              <Plus className="h-4 w-4" /> New Work Order
+              <Plus className="h-4 w-4" /> New {jobNoun}
             </button>
           </div>
         }
@@ -297,8 +299,8 @@ export default function AdminWorkOrders() {
               </span>
             ) : (
               <>
-                <span className="font-semibold text-slate-300">{total}</span> work
-                order{total === 1 ? "" : "s"}
+                <span className="font-semibold text-slate-300">{total}</span>{" "}
+                {total === 1 ? jobNoun.toLowerCase() : jobPlural.toLowerCase()}
               </>
             )}
           </span>
@@ -308,8 +310,8 @@ export default function AdminWorkOrders() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/5 text-left text-xs uppercase tracking-wide text-slate-500">
-                <th className="px-3 py-3 font-semibold lg:px-4">Work order</th>
-                <th className="hidden px-3 py-3 font-semibold lg:table-cell lg:px-4">Client</th>
+                <th className="px-3 py-3 font-semibold lg:px-4">{jobNoun}</th>
+                <th className="hidden px-3 py-3 font-semibold lg:table-cell lg:px-4">{customerNoun}</th>
                 <th className="hidden px-3 py-3 font-semibold xl:table-cell xl:px-4">Schedule</th>
                 <th className="hidden px-3 py-3 font-semibold md:table-cell lg:px-4">{noun}</th>
                 <th className="px-3 py-3 font-semibold lg:px-4">Status</th>
@@ -555,6 +557,7 @@ function FilterBar({
   onClear: () => void;
 }) {
   const { noun } = useWorkerNoun();
+  const { noun: customerNoun } = useCustomerNoun();
   const up = (patch: Partial<typeof EMPTY>) =>
     setFilters({ ...filters, ...patch });
   const toggleArr = (key: "status" | "priority" | "paymentStatus", v: string) => {
@@ -664,7 +667,7 @@ function FilterBar({
           </select>
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Client tag</span>
+          <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{customerNoun} tag</span>
           <select
             value={filters.tagId}
             onChange={(e) => up({ tagId: e.target.value })}
@@ -678,7 +681,7 @@ function FilterBar({
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Job #</span>
+          <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{jobNoun} #</span>
           <input aria-label="e.g. A1B2C3"
             value={filters.jobId}
             onChange={(e) => up({ jobId: e.target.value })}

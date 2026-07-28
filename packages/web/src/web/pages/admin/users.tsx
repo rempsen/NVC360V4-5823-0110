@@ -18,13 +18,12 @@ import { TagPicker } from "../../components/tag-picker";
 import { AttachmentManager } from "../../components/attachment-manager";
 import { CustomFieldsForm } from "../../components/custom-fields";
 import { Search, UserPlus, Trash2, Plus, X, Mail, Phone, ClipboardList } from "lucide-react";
-import { useWorkerNoun } from "../../lib/use-brand";
+import { useWorkerNoun, useCustomerNoun } from "../../lib/use-brand";
 
-const ROLE_LABEL: Record<string, string> = {
+const ROLE_LABEL_BASE: Record<string, string> = {
   superadmin: "Super Admin",
   admin: "Dispatcher",
   rider: "Technician",
-  customer: "Client",
 };
 const ROLE_TINT: Record<string, string> = {
   superadmin: "bg-amber-500/15 text-amber-300",
@@ -36,7 +35,9 @@ const ROLE_TINT: Record<string, string> = {
 export default function AdminClients() {
   const qc = useQueryClient();
   const { noun, nounPlural } = useWorkerNoun();
-  const roleLabel = (r: string) => (r === "rider" ? noun : ROLE_LABEL[r] ?? r);
+  const { noun: customerNoun, nounPlural: customerNounPlural } = useCustomerNoun();
+  const roleLabel = (r: string) =>
+    r === "rider" ? noun : r === "customer" ? customerNoun : ROLE_LABEL_BASE[r] ?? r;
   const [q, setQ] = useState("");
   const [role, setRole] = useState("all");
   const [showAdd, setShowAdd] = useState(false);
@@ -104,7 +105,7 @@ export default function AdminClients() {
         subtitle={`${list.length} accounts`}
         actions={
           <BtnPrimary onClick={() => setShowAdd(true)}>
-            <UserPlus className="h-4 w-4" /> Add Client
+            <UserPlus className="h-4 w-4" /> Add {customerNoun}
           </BtnPrimary>
         }
       />
@@ -113,7 +114,7 @@ export default function AdminClients() {
         <div className="flex gap-1.5">
           {[
             ["all", "All"],
-            ["customer", "Clients"],
+            ["customer", customerNounPlural],
             ["rider", nounPlural],
             ["admin", "Dispatchers"],
           ].map(([r, label]) => (
@@ -250,7 +251,7 @@ export default function AdminClients() {
             <Field label="Account type">
               <select className={inputCls} value={form.role}
                 onChange={(e) => setForm({ ...form, role: e.target.value })}>
-                <option value="customer">Client</option>
+                <option value="customer">{customerNoun}</option>
                 <option value="admin">Dispatcher</option>
               </select>
             </Field>

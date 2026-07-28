@@ -6,7 +6,7 @@ import { FullLoader } from "../../components/loader";
 import { StatusBadge, PageWrap } from "../../components/brand";
 import { PageHead } from "./shell";
 import { fmtDate, money, TECH_STATUS } from "../../lib/utils";
-import { useWorkerNoun } from "../../lib/use-brand";
+import { useWorkerNoun, useCustomerNoun } from "../../lib/use-brand";
 import {
   ClipboardList,
   Activity,
@@ -102,6 +102,7 @@ const STATUS_ORDER: Record<string, number> = {
 
 export default function AdminDashboard() {
   const { nounPlural: workerPlural } = useWorkerNoun();
+  const { nounPlural: customerPlural } = useCustomerNoun();
   const [fleetSort, setFleetSort] = useState("all");
 
   // date-range filter state (drives the top six cards)
@@ -211,7 +212,7 @@ export default function AdminDashboard() {
           : undefined,
     },
     {
-      label: "Clients",
+      label: customerPlural,
       value: s.customers,
       icon: Users,
       iconTint: "bg-brand/10 text-brand",

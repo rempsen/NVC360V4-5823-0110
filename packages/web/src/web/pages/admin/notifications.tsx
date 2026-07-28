@@ -12,8 +12,9 @@ import {
   RotateCcw, Moon, Sparkles, Image as ImageIcon, Palette, AlignLeft,
   Bold, Italic, Link as LinkIcon, PenLine, Loader2,
 } from "lucide-react";
-import { useWorkerNoun, useIndustryNotificationGuidance } from "../../lib/use-brand";
-const recipLabel = (r: { key: string; label: string }, noun: string) => (r.key === "tech" ? noun : r.label);
+import { useWorkerNoun, useCustomerNoun, useIndustryNotificationGuidance } from "../../lib/use-brand";
+const recipLabel = (r: { key: string; label: string }, noun: string, customerNoun: string) =>
+  r.key === "tech" ? noun : r.key === "client" ? customerNoun : r.label;
 import { EmailEditor, type EmailBlock } from "../../components/email-editor";
 import { starterDesignForRecipient } from "../../lib/email-starters";
 
@@ -71,6 +72,7 @@ export default function AdminNotifications() {
 function RulesMatrix() {
   const qc = useQueryClient();
   const { noun } = useWorkerNoun();
+  const { noun: customerNoun } = useCustomerNoun();
   const [openEvent, setOpenEvent] = useState<{ event: string; label: string } | null>(null);
   const rules = useQuery({
     queryKey: ["notif-rules"],
@@ -114,7 +116,7 @@ function RulesMatrix() {
             <tr className="border-b border-white/5 bg-ink/40 text-left text-xs uppercase tracking-wide text-slate-500">
               <th className="px-4 py-3 font-semibold" rowSpan={2}>Event</th>
               {RECIPIENTS.map((r, i) => (
-                <th key={r.key} className={`px-4 pt-3 pb-1.5 text-center font-bold text-slate-300 ${i > 0 ? "border-l border-white/5" : ""}`}>{recipLabel(r, noun)}</th>
+                <th key={r.key} className={`px-4 pt-3 pb-1.5 text-center font-bold text-slate-300 ${i > 0 ? "border-l border-white/5" : ""}`}>{recipLabel(r, noun, customerNoun)}</th>
               ))}
               <th className="px-4 py-3 text-center font-semibold" rowSpan={2}>Copy</th>
               <th className="px-4 py-3 text-right font-semibold" rowSpan={2}>Test</th>
@@ -203,6 +205,7 @@ function RulesMatrix() {
 function EventDrawer({ event, label, onClose }: { event: string; label: string; onClose: () => void }) {
   const qc = useQueryClient();
   const { noun } = useWorkerNoun();
+  const { noun: customerNoun } = useCustomerNoun();
   const detail = useQuery({
     queryKey: ["notif-event", event],
     queryFn: async () => (await api["notif-config"].events[":event"].$get({ param: { event } })).json(),
@@ -248,7 +251,7 @@ function EventDrawer({ event, label, onClose }: { event: string; label: string; 
                 <RecipientCard
                   key={rc.key}
                   rule={rule}
-                  recipientLabel={recipLabel(rc, noun)}
+                  recipientLabel={recipLabel(rc, noun, customerNoun)}
                   eventLabel={label}
                   fallback={defaults[rc.key] || ""}
                   vars={vars}
@@ -639,6 +642,8 @@ function BodyTemplateCard({
   onChange: (v: string) => void; rows: number; placeholder: string;
 }) {
   const insert = (k: string) => onChange((value ? value + " " : "") + `{{${k}}}`);
+  const { noun: customerNoun } = useCustomerNoun();
+  const tokenLabel = (t: { key: string; label: string }) => (t.key === "firstName" ? `${customerNoun} first name` : t.label);
   return (
     <div className="rounded-2xl border border-white/5 nvc-card p-5">
       <h3 className="mb-1 flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-slate-300"><Icon className="h-4 w-4" /> {title}</h3>
@@ -649,7 +654,7 @@ function BodyTemplateCard({
           <button
             key={t.key}
             onClick={() => insert(t.key)}
-            title={t.label}
+            title={tokenLabel(t)}
             className="rounded-md border border-white/10 bg-ink px-2 py-1 text-[11px] font-mono text-slate-300 hover:border-brand/40 hover:text-cyan-glow"
           >
             {`{{${t.key}}}`}

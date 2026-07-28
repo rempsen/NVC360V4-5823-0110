@@ -24,7 +24,7 @@ import {
   MapPin,
 } from "lucide-react";
 import { apiHeaders } from "../lib/api";
-import { useWorkerNoun } from "../lib/use-brand";
+import { useWorkerNoun, useCustomerNoun } from "../lib/use-brand";
 import { api } from "../lib/api";
 import { Modal, Field, inputCls, BtnGhost, BtnPrimary, ConfirmModal } from "./modal";
 import { PRIORITY_META } from "../lib/utils";
@@ -417,6 +417,7 @@ export function WorkOrderModal({
   const isEdit = !!editBooking;
   const qc = useQueryClient();
   const { noun } = useWorkerNoun();
+  const { noun: customerNoun } = useCustomerNoun();
 
   // core fields
   const [customerId, setCustomerId] = useState("");
@@ -870,7 +871,7 @@ export function WorkOrderModal({
       <div className="grid gap-4 sm:grid-cols-2">
 
         {/* ── Core fields ── */}
-        <Field label="Client">
+        <Field label={customerNoun}>
           <select value={customerId} onChange={(e) => setCustomerId(e.target.value)} className={inputCls}>
             <option value="">Select client…</option>
             {clients.map((c: any) => (

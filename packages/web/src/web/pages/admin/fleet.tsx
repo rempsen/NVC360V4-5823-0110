@@ -106,7 +106,7 @@ export default function FleetPage() {
     .filter((b: any) => b.lat != null && b.lng != null && b.status !== "cancelled")
     .map((b: any) => ({
       id: b.id,
-      title: b.title || b.service || "Job",
+      title: b.title || b.service || jobNoun,
       status: b.status,
       color: STATUS_META[b.status]?.color ?? "#0ea5e9",
       lat: b.lat,

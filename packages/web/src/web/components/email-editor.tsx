@@ -9,7 +9,7 @@ import {
   X, Smartphone, Monitor, Sparkles, GripVertical, Bold, Italic, Link as LinkIcon,
   ImagePlus,
 } from "lucide-react";
-import { useWorkerNoun } from "../lib/use-brand";
+import { useWorkerNoun, useCustomerNoun } from "../lib/use-brand";
 
 /* ---------------- types (mirror services/email-render.ts) ---------------- */
 export type EmailBlock =
@@ -331,10 +331,15 @@ function HeaderLogoPanel({ onChange }: { onChange: () => void }) {
 /* ---------------- token inserter ---------------- */
 function TokenRow({ onInsert }: { onInsert: (k: string) => void }) {
   const { noun } = useWorkerNoun();
+  const { noun: customerNoun } = useCustomerNoun();
+  const tokenLabel = (t: { key: string; label: string }) =>
+    t.key === "techName" ? noun
+    : t.key === "firstName" ? `${customerNoun} name`
+    : t.label;
   return (
     <div className="mb-2 flex flex-wrap gap-1">
       {TOKENS.map((t) => (
-        <button key={t.key} onClick={() => onInsert(`{{${t.key}}}`)} title={t.key === "techName" ? noun : t.label} className="rounded-md border border-white/10 bg-ink px-1.5 py-0.5 text-[10px] font-mono text-slate-400 hover:border-brand/40 hover:text-cyan-glow">
+        <button key={t.key} onClick={() => onInsert(`{{${t.key}}}`)} title={tokenLabel(t)} className="rounded-md border border-white/10 bg-ink px-1.5 py-0.5 text-[10px] font-mono text-slate-400 hover:border-brand/40 hover:text-cyan-glow">
           {t.key}
         </button>
       ))}
