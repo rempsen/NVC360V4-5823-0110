@@ -12,12 +12,14 @@ import { stopLocationSharing } from "../../lib/use-location-heartbeat";
 import Constants from "expo-constants";
 import { C } from "../../lib/theme";
 import { Avatar, Card, Button, FullLoader, Row } from "../../components/ui";
+import { useWorkerNoun } from "../../lib/use-brand";
 
 const API = ((Constants.expoConfig?.extra?.apiUrl as string) ?? "").replace(/\/$/, "");
 
 export default function Profile() {
   const router = useRouter();
   const qc = useQueryClient();
+  const { noun: workerNoun } = useWorkerNoun();
   const { data: session } = authClient.useSession();
   const [uploading, setUploading] = useState(false);
 

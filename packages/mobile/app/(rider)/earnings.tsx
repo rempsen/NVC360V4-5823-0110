@@ -6,8 +6,10 @@ import { TrendUp, CheckCircle, Receipt } from "phosphor-react-native";
 import { api } from "../../lib/api";
 import { C, money, fmtDate } from "../../lib/theme";
 import { Card, FullLoader, Empty, StatusBadge } from "../../components/ui";
+import { useJobNoun } from "../../lib/use-brand";
 
 export default function Earnings() {
+  const { nounPlural: jobNounPlural } = useJobNoun();
   const me = useQuery({
     queryKey: ["me"],
     queryFn: async () => {
@@ -81,7 +83,7 @@ export default function Earnings() {
 
         <View style={s.statGrid}>
           <Stat label="Total earned" value={money(gross)} />
-          <Stat label="Jobs done" value={String(completed.length)} />
+          <Stat label={`${jobNounPlural} done`} value={String(completed.length)} />
           <Stat label="Paid out" value={money(paidNet)} />
           <Stat label="Rating" value={`★ ${(me.data?.rating ?? 5).toFixed(1)}`} />
         </View>

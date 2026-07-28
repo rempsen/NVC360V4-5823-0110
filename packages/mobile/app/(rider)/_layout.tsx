@@ -14,10 +14,12 @@ import { api } from "../../lib/api";
 import { getToken } from "../../lib/auth";
 import { useLocationHeartbeat } from "../../lib/use-location-heartbeat";
 import { usePushNotifications, setAppBadgeCount } from "../../lib/push";
+import { useJobNoun } from "../../lib/use-brand";
 
 const API = ((Constants.expoConfig?.extra?.apiUrl as string) ?? "").replace(/\/$/, "");
 
 export default function RiderLayout() {
+  const { nounPlural: jobNounPlural } = useJobNoun();
   // Rider's own status drives whether native background GPS tracking runs at
   // all — NOT merely "is there a signed-in session" (a session persists
   // across app relaunches, including headless background relaunches iOS

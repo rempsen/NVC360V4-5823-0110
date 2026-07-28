@@ -46,6 +46,7 @@ import {
   Buildings,
 } from "phosphor-react-native";
 import { api } from "../../lib/api";
+import { useCustomerNoun, useJobNoun } from "../../lib/use-brand";
 import { getToken } from "../../lib/auth";
 import { C, money, fmtDate, assetUrl } from "../../lib/theme";
 import { StatusBadge, Button, FullLoader } from "../../components/ui";
@@ -81,6 +82,8 @@ export default function JobDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const qc = useQueryClient();
+  const { noun: customerNoun } = useCustomerNoun();
+  const { noun: jobNoun } = useJobNoun();
   
   const pingTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const [msg, setMsg] = useState("");
@@ -380,7 +383,7 @@ export default function JobDetail() {
         <Pressable onPress={() => router.back()} style={s.backBtn} hitSlop={10}>
           <CaretLeft color={C.text} size={22} />
         </Pressable>
-        <Text style={s.topTitle} numberOfLines={1}>{j.service?.name || j.title || "Job"}</Text>
+        <Text style={s.topTitle} numberOfLines={1}>{j.service?.name || j.title || jobNoun}</Text>
         <View style={{ width: 40 }} />
       </View>
 
@@ -431,7 +434,7 @@ export default function JobDetail() {
             <View style={s.custRow}>
               <View style={s.custIcon}><User color={C.brand} size={20} weight="fill" /></View>
               <View style={{ flex: 1 }}>
-                <Text style={s.custName}>{j.customer?.name || "Customer"}</Text>
+                <Text style={s.custName}>{j.customer?.name || customerNoun}</Text>
                 <Text style={s.custMeta}>{fmtDate(j.scheduledAt)}</Text>
               </View>
               {(j.customer?.phone || j.customerPhone) ? (
@@ -572,7 +575,7 @@ export default function JobDetail() {
             <View style={s.block}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 7, marginBottom: 8 }}>
                 <Note color={C.sub} size={14} weight="fill" />
-                <Text style={s.blockTitle}>Job Notes</Text>
+                <Text style={s.blockTitle}>{jobNoun} Notes</Text>
               </View>
               <Text style={s.notes}>{j.notes}</Text>
             </View>
@@ -582,7 +585,7 @@ export default function JobDetail() {
           <View style={s.block}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 7, marginBottom: 10 }}>
               <Info color={C.sub} size={14} weight="fill" />
-              <Text style={s.blockTitle}>Job Details</Text>
+              <Text style={s.blockTitle}>{jobNoun} Details</Text>
             </View>
             {j.service?.name ? (
               <View style={s.fieldRow}>
@@ -641,7 +644,7 @@ export default function JobDetail() {
                 <View style={s.block}>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 7, marginBottom: 8 }}>
                     <Tag color={C.sub} size={14} weight="fill" />
-                    <Text style={s.blockTitle}>Job Instructions & Fields</Text>
+                    <Text style={s.blockTitle}>{jobNoun} Instructions & Fields</Text>
                   </View>
                   {customFieldDefs.map((cf: any) => {
                     const val = fields[cf.id] ?? fields[cf.label];
@@ -990,7 +993,7 @@ export default function JobDetail() {
             >
               <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
                 <Buildings color={C.sub} size={16} weight="fill" />
-                <Text style={s.blockTitle}>Customer Messages</Text>
+                <Text style={s.blockTitle}>{customerNoun} Messages</Text>
                 {(messages.data ?? []).length > 0 && (
                   <Text style={s.threadCount}>{(messages.data ?? []).length}</Text>
                 )}
@@ -1123,7 +1126,7 @@ export default function JobDetail() {
           <View style={s.footer}>
             <View style={s.doneBanner}>
               <CheckSquare color={C.green} size={20} weight="fill" />
-              <Text style={s.doneTxt}>Job completed · {money(j.price)} earned</Text>
+              <Text style={s.doneTxt}>{jobNoun} completed · {money(j.price)} earned</Text>
             </View>
           </View>
         )}

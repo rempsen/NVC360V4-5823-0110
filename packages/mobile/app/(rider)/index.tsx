@@ -16,6 +16,7 @@ import { C, fmtDate, money } from "../../lib/theme";
 import { StatusBadge, Card, Button, FullLoader, Empty } from "../../components/ui";
 import Constants from "expo-constants";
 import { getToken } from "../../lib/auth";
+import { useCustomerNoun } from "../../lib/use-brand";
 
 const API = ((Constants.expoConfig?.extra?.apiUrl as string) ?? "").replace(/\/$/, "");
 
@@ -204,12 +205,13 @@ function Section({ title, accent, children }: { title: string; accent?: boolean;
 }
 
 function JobHead({ b, chevron }: { b: Booking; chevron?: boolean }) {
+  const { noun: customerNoun } = useCustomerNoun();
   return (
     <>
       <View style={s.jobTop}>
         <View style={{ flex: 1, gap: 4 }}>
           <Text style={s.svc}>{b.service?.name || b.title || "Service"}</Text>
-          <Text style={s.cust}>{b.customer?.name || "Customer"}</Text>
+          <Text style={s.cust}>{b.customer?.name || customerNoun}</Text>
         </View>
         <View style={{ alignItems: "flex-end", gap: 6 }}>
           <StatusBadge status={b.status} />
