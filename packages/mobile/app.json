@@ -38,6 +38,7 @@
         ],
         "NSLocationAlwaysAndWhenInUseUsageDescription": "NVC360 shares your live location with dispatch while you are on shift so customers can be given accurate ETAs.",
         "NSLocationWhenInUseUsageDescription": "NVC360 shares your live location during active jobs.",
+        "NSFaceIDUsageDescription": "NVC360 uses Face ID to quickly and securely unlock the app.",
         "ITSAppUsesNonExemptEncryption": false
       },
       "entitlements": {

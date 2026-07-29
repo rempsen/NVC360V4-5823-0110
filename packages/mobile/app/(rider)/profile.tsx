@@ -14,6 +14,7 @@ import Constants from "expo-constants";
 import { C } from "../../lib/theme";
 import { Avatar, Card, Button, FullLoader, Row } from "../../components/ui";
 import { useWorkerNoun } from "../../lib/use-brand";
+import { isBiometricAvailable, getLockPreference, setLockPreference, clearUnlockStamp } from "../../lib/biometric-lock";
 
 const API = ((Constants.expoConfig?.extra?.apiUrl as string) ?? "").replace(/\/$/, "");
 
@@ -23,6 +24,22 @@ export default function Profile() {
   const { noun: workerNoun } = useWorkerNoun();
   const { data: session } = authClient.useSession();
   const [uploading, setUploading] = useState(false);
+
+  const biometric = useQuery({
+    queryKey: ["biometric-lock"],
+    queryFn: async () => ({
+      available: await isBiometricAvailable(),
+      enabled: await getLockPreference(),
+    }),
+    staleTime: Infinity,
+  });
+  const toggleBiometric = useMutation({
+    mutationFn: async (enabled: boolean) => {
+      await setLockPreference(enabled);
+      return enabled;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["biometric-lock"] }),
+  });
 
   const me = useQuery({
     queryKey: ["me"],
@@ -94,9 +111,13 @@ export default function Profile() {
         style: "destructive",
         onPress: async () => {
           // Unhook this device before clearing auth: stop background GPS and
-          // remove the push token so a logged-out phone goes dark.
+          // remove the push token so a logged-out phone goes dark. Also clear
+          // the "already unlocked today" stamp so the NEXT sign-in on this
+          // device (possibly a different driver, shared phone) always gets
+          // one fresh biometric prompt rather than inheriting today's unlock.
           await unregisterPushToken().catch(() => {});
           await stopLocationSharing().catch(() => {});
+          await clearUnlockStamp().catch(() => {});
           await authClient.signOut().catch(() => {});
           await clearToken();
           qc.clear();
@@ -174,6 +195,38 @@ export default function Profile() {
             </Pressable>
           </View>
         </Card>
+
+        {biometric.data?.available && (
+          <Card>
+            <View style={s.availRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={s.availTitle}>Face ID / Fingerprint Lock</Text>
+                <Text style={s.availSub}>
+                  {biometric.data.enabled
+                    ? "Unlock NVC360 with Face ID or your fingerprint once a day."
+                    : "Off — the app opens without unlocking."}
+                </Text>
+              </View>
+              <Pressable
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+                  toggleBiometric.mutate(!biometric.data!.enabled);
+                }}
+                style={[s.toggle, biometric.data.enabled && s.toggleOn]}
+                accessibilityRole="switch"
+                accessibilityLabel="Face ID / Fingerprint Lock"
+                accessibilityState={{ checked: biometric.data.enabled, busy: toggleBiometric.isPending }}
+                accessibilityHint={biometric.data.enabled ? "Double tap to turn off" : "Double tap to turn on"}
+              >
+                {toggleBiometric.isPending ? (
+                  <ActivityIndicator color={biometric.data.enabled ? "#03130d" : C.sub} size="small" />
+                ) : (
+                  <View style={[s.knob, biometric.data.enabled && s.knobOn]} />
+                )}
+              </Pressable>
+            </View>
+          </Card>
+        )}
 
         <Card>
           <Text style={s.cardTitle}>Details</Text>
