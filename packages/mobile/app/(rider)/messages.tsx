@@ -26,6 +26,7 @@ import { getToken } from "../../lib/auth";
 import { C } from "../../lib/theme";
 import { FullLoader } from "../../components/ui";
 import { setAppBadgeCount } from "../../lib/push";
+import { useLiveMessageSignal } from "../../lib/live-messages";
 
 const API = ((Constants.expoConfig?.extra?.apiUrl as string) ?? "").replace(/\/$/, "");
 
@@ -55,8 +56,13 @@ export default function Messages() {
       if (!res.ok) throw new Error("Failed");
       return res.json() as Promise<{ direct: DirectMsg[]; job: any }>;
     },
-    refetchInterval: 5000,
+    // SSE (below) pushes an instant refetch on a new message; this interval
+    // is now just a safety net in case the stream silently drops.
+    refetchInterval: 60000,
   });
+  useLiveMessageSignal("/api/messages/direct/stream", () =>
+    qc.invalidateQueries({ queryKey: ["dispatch-thread"] }),
+  );
 
   // new job offers — surfaced here too so the driver never misses one
   const jobs = useQuery({

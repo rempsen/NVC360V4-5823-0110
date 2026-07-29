@@ -47,6 +47,7 @@ import {
 } from "phosphor-react-native";
 import { api } from "../../lib/api";
 import { useCustomerNoun, useJobNoun } from "../../lib/use-brand";
+import { useLiveMessageSignal } from "../../lib/live-messages";
 import { getToken } from "../../lib/auth";
 import { C, money, fmtDate, assetUrl } from "../../lib/theme";
 import { StatusBadge, Button, FullLoader } from "../../components/ui";
@@ -114,8 +115,13 @@ export default function JobDetail() {
       if (!res.ok) throw new Error("Failed");
       return (await res.json()).messages as any[];
     },
-    refetchInterval: 8000,
+    // SSE (below) pushes an instant refetch on a new message; this interval
+    // is now just a safety net in case the stream silently drops.
+    refetchInterval: 60000,
   });
+  useLiveMessageSignal(id ? `/api/messages/${id}/stream` : null, () =>
+    qc.invalidateQueries({ queryKey: ["messages", id] }),
+  );
 
   const photos = useQuery({
     queryKey: ["photos", id],
@@ -161,8 +167,11 @@ export default function JobDetail() {
       if (!res.ok) throw new Error("Failed");
       return res.json() as Promise<{ direct: any[]; job: any }>;
     },
-    refetchInterval: 6000,
+    refetchInterval: 60000,
   });
+  useLiveMessageSignal("/api/messages/direct/stream", () =>
+    qc.invalidateQueries({ queryKey: ["dispatch-thread"] }),
+  );
 
   const sendMsg = useMutation({
     mutationFn: async (body: string) => {
