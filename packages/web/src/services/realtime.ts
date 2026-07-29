@@ -175,6 +175,29 @@ export function subscribeTrack(token: string, fn: Subscriber) {
   return bus.subscribe(chan(token), fn);
 }
 
+/**
+ * Driver-app real-time messaging — reuses the exact same pub/sub bus as live
+ * tracking above (in-memory single-node, Redis multi-node) instead of a
+ * separate system. "direct" = the rider<->dispatch thread, keyed by riderId
+ * (both directions of that one conversation publish/subscribe to the same
+ * channel). "job" = a per-booking thread, keyed by bookingId.
+ *
+ * These are deliberately signal-only: the event just tells a listening
+ * client "something changed, go refetch" (mirroring the existing HTTP GETs
+ * that already fetch/shape the actual message list) rather than trying to
+ * carry the full message payload through the bus — far less risk of
+ * duplicating serialization/notification logic in two places.
+ */
+const msgChan = (kind: "direct" | "job", key: string) => `msg:${kind}:${key}`;
+
+export function publishMsg(kind: "direct" | "job", key: string) {
+  return bus.publish(msgChan(kind, key), { type: "message", token: key, data: null, at: Date.now() });
+}
+
+export function subscribeMsg(kind: "direct" | "job", key: string, fn: Subscriber) {
+  return bus.subscribe(msgChan(kind, key), fn);
+}
+
 export function realtimeStats() {
   const backend = bus === redisBus ? "redis" : "memory";
   const activeSubscribers =

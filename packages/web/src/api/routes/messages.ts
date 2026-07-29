@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
 import { db } from "../database";
 import { tdb } from "../database/tenant";
 import * as schema from "../database/schema";
@@ -7,6 +8,7 @@ import { requireAuth, requireAdmin, tx, tenantId } from "../middleware/auth";
 import { isAdminRole } from "../lib/permissions";
 import { sendSms, trackingUrl } from "../../services/sms";
 import { sendPush } from "../../services/push";
+import { publishMsg, subscribeMsg } from "../../services/realtime";
 
 type SessionUser = { id: string; role?: string; name: string };
 
@@ -145,6 +147,7 @@ export const messagesRoutes = new Hono()
       });
     }
 
+    publishMsg("direct", rider.id).catch(() => {});
     return c.json({ message: m }, 201);
   })
 
@@ -325,6 +328,9 @@ export const messagesRoutes = new Hono()
       techId,
     }, unread).catch(() => {});
 
+    // Same channel key as the rider->dispatch direction (POST /direct) —
+    // one thread, one channel, either direction wakes up a listening client.
+    publishMsg("direct", techId).catch(() => {});
     return c.json({ message: m }, 201);
   })
 
@@ -537,5 +543,85 @@ export const messagesRoutes = new Hono()
       }
     }
 
+    publishMsg("job", bookingId).catch(() => {});
     return c.json({ message: m }, 201);
+  })
+
+  // ── Real-time signals (SSE) — tell a listening client "go refetch", the
+  //    actual data still comes from the existing GETs above. Same pattern as
+  //    packages/web/src/api/routes/track.ts's proven /:token/stream route. ──
+  // GET /api/messages/direct/stream — rider's own direct-thread live signal
+  .get("/direct/stream", requireAuth, async (c) => {
+    const u = c.get("user") as SessionUser;
+    if (u.role !== "rider") return c.json({ message: "Forbidden" }, 403);
+    const rider = await tx(c).selectOne(schema.riders, eq(schema.riders.userId, u.id));
+    if (!rider) return c.json({ message: "Rider not found" }, 404);
+    const riderId = rider.id;
+
+    return streamSSE(c, async (stream) => {
+      let closed = false;
+      let dirty = false;
+      const unsub = subscribeMsg("direct", riderId, () => {
+        dirty = true;
+      });
+      stream.onAbort(() => {
+        closed = true;
+        unsub();
+      });
+
+      const TICK_MS = 1_000;
+      const PING_EVERY = 20; // ticks -> 20s heartbeat
+      let sinceData = 0;
+      while (!closed) {
+        await stream.sleep(TICK_MS);
+        if (closed) break;
+        if (dirty) {
+          dirty = false;
+          await stream.writeSSE({ event: "new-message", data: "1" });
+          sinceData = 0;
+          continue;
+        }
+        if (++sinceData >= PING_EVERY) {
+          sinceData = 0;
+          await stream.writeSSE({ event: "ping", data: "1" });
+        }
+      }
+    });
+  })
+
+  // GET /api/messages/:bookingId/stream — job-thread live signal (same auth
+  // bar as GET /:bookingId above: requireAuth + tenant-scoped tx(), no extra
+  // per-user check beyond that today).
+  .get("/:bookingId/stream", requireAuth, async (c) => {
+    const bookingId = c.req.param("bookingId");
+
+    return streamSSE(c, async (stream) => {
+      let closed = false;
+      let dirty = false;
+      const unsub = subscribeMsg("job", bookingId, () => {
+        dirty = true;
+      });
+      stream.onAbort(() => {
+        closed = true;
+        unsub();
+      });
+
+      const TICK_MS = 1_000;
+      const PING_EVERY = 20;
+      let sinceData = 0;
+      while (!closed) {
+        await stream.sleep(TICK_MS);
+        if (closed) break;
+        if (dirty) {
+          dirty = false;
+          await stream.writeSSE({ event: "new-message", data: "1" });
+          sinceData = 0;
+          continue;
+        }
+        if (++sinceData >= PING_EVERY) {
+          sinceData = 0;
+          await stream.writeSSE({ event: "ping", data: "1" });
+        }
+      }
+    });
   });
