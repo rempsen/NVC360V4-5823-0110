@@ -164,6 +164,8 @@ export default function Messages() {
                   key={b.id}
                   style={s.offerCard}
                   onPress={() => router.push("/(rider)")}
+                  accessibilityRole="button"
+                  accessibilityLabel={`New job offer: ${b.service?.name || b.title || "Service"} at ${b.address || "unknown address"}`}
                 >
                   <View style={s.offerIcon}>
                     <Briefcase color={C.brand} size={18} weight="fill" />
@@ -185,6 +187,8 @@ export default function Messages() {
             <Pressable
               style={s.jobLink}
               onPress={() => router.push(`/job/${thread.data!.job.id}`)}
+              accessibilityRole="button"
+              accessibilityLabel={`Open job thread for ${thread.data.job.title}`}
             >
               <Wrench color={C.cyan} size={16} weight="fill" />
               <Text style={s.jobLinkTxt} numberOfLines={1}>
@@ -240,11 +244,14 @@ export default function Messages() {
             placeholderTextColor={C.muted}
             style={s.input}
             multiline
+            accessibilityLabel="Message to dispatch"
           />
           <Pressable
             onPress={() => draft.trim() && send.mutate(draft.trim())}
             style={[s.sendBtn, !draft.trim() && { opacity: 0.5 }]}
             disabled={!draft.trim() || send.isPending}
+            accessibilityRole="button"
+            accessibilityLabel="Send message"
           >
             {send.isPending ? (
               <ActivityIndicator color="#04121c" size="small" />

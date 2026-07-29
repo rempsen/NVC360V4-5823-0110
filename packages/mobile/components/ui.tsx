@@ -62,15 +62,25 @@ export function Card({
   children,
   style,
   onPress,
+  accessibilityLabel,
 }: {
   children: React.ReactNode;
   style?: any;
   onPress?: () => void;
+  accessibilityLabel?: string;
 }) {
   const inner = <View style={[s.card, style]}>{children}</View>;
   if (onPress)
     return (
-      <Pressable onPress={onPress} style={({ pressed }) => ({ opacity: pressed ? 0.85 : 1 })}>
+      <Pressable
+        onPress={() => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+          onPress();
+        }}
+        style={({ pressed }) => ({ opacity: pressed ? 0.85 : 1 })}
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel}
+      >
         {inner}
       </Pressable>
     );

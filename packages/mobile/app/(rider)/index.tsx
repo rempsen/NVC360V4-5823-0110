@@ -166,7 +166,11 @@ export default function Jobs() {
         {inflight.length > 0 && (
           <Section title="In progress">
             {inflight.map((b) => (
-              <Card key={b.id} onPress={() => router.push(`/job/${b.id}`)}>
+              <Card
+                key={b.id}
+                onPress={() => router.push(`/job/${b.id}`)}
+                accessibilityLabel={`${b.service?.name || b.title || "Job"} for ${b.customer?.name || "customer"}, in progress. Opens job details.`}
+              >
                 <JobHead b={b} chevron />
               </Card>
             ))}
@@ -176,7 +180,11 @@ export default function Jobs() {
         {upcoming.length > 0 && (
           <Section title="Up next">
             {upcoming.map((b) => (
-              <Card key={b.id} onPress={() => router.push(`/job/${b.id}`)}>
+              <Card
+                key={b.id}
+                onPress={() => router.push(`/job/${b.id}`)}
+                accessibilityLabel={`${b.service?.name || b.title || "Job"} for ${b.customer?.name || "customer"}, up next. Opens job details.`}
+              >
                 <JobHead b={b} chevron />
               </Card>
             ))}
