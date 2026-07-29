@@ -8,12 +8,17 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Pressable,
+  Linking,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import Constants from "expo-constants";
 import { authClient, captureToken } from "../lib/auth";
 import { C } from "../lib/theme";
 import { Button } from "../components/ui";
+
+const API = ((Constants.expoConfig?.extra?.apiUrl as string) ?? "").replace(/\/$/, "");
 
 export default function SignIn() {
   const router = useRouter();
@@ -75,6 +80,7 @@ export default function SignIn() {
               autoCorrect={false}
               keyboardType="email-address"
               style={s.input}
+              accessibilityLabel="Email address"
             />
 
             <Text style={[s.label, { marginTop: 16 }]}>Password</Text>
@@ -86,11 +92,21 @@ export default function SignIn() {
               secureTextEntry
               style={s.input}
               onSubmitEditing={submit}
+              accessibilityLabel="Password"
             />
 
             {error ? <Text style={s.error}>{error}</Text> : null}
 
             <Button title="Sign in" loading={loading} onPress={submit} style={{ marginTop: 22 }} />
+
+            <Pressable
+              onPress={() => Linking.openURL(`${API}/forgot-password`)}
+              style={s.forgotWrap}
+              accessibilityRole="link"
+              accessibilityLabel="Forgot password"
+            >
+              <Text style={s.forgotText}>Forgot password?</Text>
+            </Pressable>
           </View>
 
           <Text style={s.foot}>NVC360 · Field Operations</Text>
@@ -101,6 +117,8 @@ export default function SignIn() {
 }
 
 const s = StyleSheet.create({
+  forgotWrap: { alignSelf: "center", marginTop: 18, padding: 8 },
+  forgotText: { color: C.brand, fontSize: 13, fontWeight: "700" },
   safe: { flex: 1, backgroundColor: C.bg },
   scroll: { flexGrow: 1, justifyContent: "center", padding: 24, gap: 36 },
   brandWrap: { alignItems: "center", gap: 6 },

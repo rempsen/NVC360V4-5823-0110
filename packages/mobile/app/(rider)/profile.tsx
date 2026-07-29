@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, Alert, ActivityIndicator } from "react-native";
+import * as Haptics from "expo-haptics";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -123,7 +124,12 @@ export default function Profile() {
       </View>
       <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
         <View style={s.idCard}>
-          <Pressable onPress={pickPhoto} style={s.avatarWrap}>
+          <Pressable
+            onPress={pickPhoto}
+            style={s.avatarWrap}
+            accessibilityRole="button"
+            accessibilityLabel="Change profile photo"
+          >
             <Avatar name={session?.user?.name} photoUrl={rider?.photoUrl} size={88} />
             <View style={s.camBadge}>
               {uploading ? <ActivityIndicator color="#fff" size="small" /> : <Camera color="#fff" size={16} weight="fill" />}
@@ -150,8 +156,15 @@ export default function Profile() {
               </Text>
             </View>
             <Pressable
-              onPress={() => setStatus.mutate(onShift ? "offline" : "available")}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+                setStatus.mutate(onShift ? "offline" : "available");
+              }}
               style={[s.toggle, onShift && s.toggleOn]}
+              accessibilityRole="switch"
+              accessibilityLabel="On the clock"
+              accessibilityState={{ checked: onShift, busy: setStatus.isPending }}
+              accessibilityHint={onShift ? "Double tap to go off shift" : "Double tap to go on shift"}
             >
               {setStatus.isPending ? (
                 <ActivityIndicator color={onShift ? "#03130d" : C.sub} size="small" />

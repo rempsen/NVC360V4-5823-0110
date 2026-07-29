@@ -380,7 +380,7 @@ export default function JobDetail() {
   return (
     <SafeAreaView style={s.safe} edges={["top", "left", "right"]}>
       <View style={s.topbar}>
-        <Pressable onPress={() => router.back()} style={s.backBtn} hitSlop={10}>
+        <Pressable onPress={() => router.back()} style={s.backBtn} hitSlop={10} accessibilityRole="button" accessibilityLabel="Go back">
           <CaretLeft color={C.text} size={22} />
         </Pressable>
         <Text style={s.topTitle} numberOfLines={1}>{j.service?.name || j.title || jobNoun}</Text>
@@ -442,10 +442,12 @@ export default function JobDetail() {
                   <Pressable
                     onPress={() => Linking.openURL(`tel:${j.customer?.phone || j.customerPhone}`)}
                     style={s.iconBtn}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Call ${customerNoun.toLowerCase()}`}
                   >
                     <Phone color={C.brand} size={19} weight="fill" />
                   </Pressable>
-                  <Pressable onPress={() => textCustomer()} style={s.iconBtn}>
+                  <Pressable onPress={() => textCustomer()} style={s.iconBtn} accessibilityRole="button" accessibilityLabel={`Text ${customerNoun.toLowerCase()}`}>
                     <ChatText color={C.brand} size={19} weight="fill" />
                   </Pressable>
                 </View>
@@ -832,7 +834,7 @@ export default function JobDetail() {
           <View style={s.block}>
             <View style={s.photoHead}>
               <Text style={s.blockTitle}>Photos</Text>
-              <Pressable onPress={capturePhoto} style={s.photoBtn} disabled={uploading}>
+              <Pressable onPress={capturePhoto} style={s.photoBtn} disabled={uploading} accessibilityRole="button" accessibilityLabel="Take photo">
                 {uploading ? <ActivityIndicator color={C.brand} size="small" /> : <Camera color={C.brand} size={18} weight="fill" />}
                 <Text style={s.photoBtnTxt}>{uploading ? "Uploading…" : "Add photo"}</Text>
               </Pressable>
@@ -1054,6 +1056,9 @@ export default function JobDetail() {
         {/* Sticky action */}
         {action && (
           <View style={s.footer}>
+            {setStatus.isPaused && (
+              <Text style={s.offlineHint}>No signal — will send the moment you're back online</Text>
+            )}
             <Button
               title={action.label}
               variant={action.variant}
@@ -1136,6 +1141,7 @@ export default function JobDetail() {
 }
 
 const s = StyleSheet.create({
+  offlineHint: { color: C.amber, fontSize: 11, fontWeight: "700", textAlign: "center", marginBottom: 8 },
   safe: { flex: 1, backgroundColor: C.bg },
   topbar: {
     flexDirection: "row",

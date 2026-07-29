@@ -7,6 +7,7 @@ import {
   Image,
   PressableProps,
 } from "react-native";
+import * as Haptics from "expo-haptics";
 import { C, STATUS, initials, assetUrl } from "../lib/theme";
 
 export function StatusBadge({ status }: { status: string }) {
@@ -92,6 +93,9 @@ export function Button({
   small,
   disabled,
   style,
+  onPress,
+  accessibilityLabel,
+  accessibilityRole,
   ...rest
 }: BtnProps) {
   const palette: Record<string, { bg: string; fg: string; border?: string }> = {
@@ -102,9 +106,28 @@ export function Button({
     outline: { bg: "transparent", fg: C.text, border: C.borderHi },
   };
   const p = palette[variant];
+  // Small tactile confirmation on every tap — the kind of polish detail that
+  // makes an app feel responsive/premium rather than just functional. Skipped
+  // for destructive-feeling states (disabled/loading) since nothing happened.
+  const handlePress = (e: any) => {
+    if (!disabled && !loading) {
+      Haptics.impactAsync(
+        variant === "danger" ? Haptics.ImpactFeedbackStyle.Medium : Haptics.ImpactFeedbackStyle.Light,
+      ).catch(() => {});
+    }
+    onPress?.(e);
+  };
   return (
     <Pressable
       disabled={disabled || loading}
+      onPress={handlePress}
+      // Screen-reader support: every Button gets a sensible default label/role
+      // for free (VoiceOver/TalkBack) unless the caller overrides it — this is
+      // the single highest-leverage place to fix it since nearly every
+      // tappable action in the app goes through this component.
+      accessibilityRole={accessibilityRole ?? "button"}
+      accessibilityLabel={accessibilityLabel ?? title}
+      accessibilityState={{ disabled: !!(disabled || loading), busy: !!loading }}
       style={({ pressed }) => [
         s.btn,
         small && s.btnSmall,
