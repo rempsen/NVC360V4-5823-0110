@@ -6,8 +6,14 @@ import { ErrorBoundary } from "../components/ErrorBoundary";
 import { OfflineBanner } from "../components/OfflineBanner";
 import { OneDollarStatsProvider } from "../lib/analytics";
 import { setupNetworkIntegration } from "../lib/network";
+import { setupSentry, Sentry } from "../lib/sentry";
 import { C } from "../lib/theme";
 import appJson from "../app.json";
+
+// Initialize as early as possible (module scope, before any component
+// renders) so Sentry's native crash handler is armed for the whole app
+// lifecycle, not just after RootLayout mounts.
+setupSentry();
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -25,7 +31,7 @@ const queryClient = new QueryClient({
 const applicationId = appJson.expo.extra.applicationId ?? "";
 const hostname = applicationId ? `${applicationId}-mobile` : "localhost";
 
-export default function RootLayout() {
+function RootLayout() {
   useEffect(() => setupNetworkIntegration(), []);
   return (
     <ErrorBoundary>
@@ -58,3 +64,8 @@ export default function RootLayout() {
     </ErrorBoundary>
   );
 }
+
+// Sentry.wrap arms the native crash boundary + auto-instruments navigation/
+// touch breadcrumbs around the whole app — this is the piece that actually
+// catches a crash on a driver's real phone that would otherwise be invisible.
+export default Sentry.wrap(RootLayout);

@@ -8,6 +8,7 @@ import {
   Dimensions,
   StyleSheet,
 } from "react-native";
+import { Sentry } from "../lib/sentry";
 
 interface Props {
   children: ReactNode;
@@ -30,6 +31,7 @@ export class ErrorBoundary extends Component<Props, State> {
   state: State = { errors: [], expanded: false, expandedIndex: null, copied: false };
 
   private onError = (e: ErrorEvent) => {
+    Sentry.captureException(e.error || new Error(e.message));
     this.addError({
       message: e.message || String(e.error),
       stack: e.error?.stack,
@@ -38,6 +40,7 @@ export class ErrorBoundary extends Component<Props, State> {
 
   private onUnhandledRejection = (e: PromiseRejectionEvent) => {
     const err = e.reason;
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)));
     this.addError({
       message: err?.message || String(err),
       stack: err?.stack,
@@ -75,6 +78,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    Sentry.captureException(error, { contexts: { react: { componentStack: errorInfo.componentStack } } });
     this.setState((prev) => {
       const updated = prev.errors.map((e) =>
         e.message === error.message

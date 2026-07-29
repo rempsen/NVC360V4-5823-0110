@@ -88,7 +88,8 @@
         {
           "enablePushNotifications": true
         }
-      ]
+      ],
+      "@sentry/react-native"
     ],
     "runtimeVersion": "1.0.1",
     "updates": {
