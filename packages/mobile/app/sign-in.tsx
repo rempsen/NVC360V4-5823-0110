@@ -15,6 +15,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import Constants from "expo-constants";
 import { authClient, captureToken } from "../lib/auth";
+import { hasSeenOnboarding } from "../lib/onboarding";
 import { C } from "../lib/theme";
 import { Button } from "../components/ui";
 
@@ -44,7 +45,8 @@ export default function SignIn() {
         setLoading(false);
         return;
       }
-      router.replace("/(rider)");
+      const seen = await hasSeenOnboarding();
+      router.replace(seen ? "/(rider)" : "/onboarding");
     } catch (e: any) {
       setError(e?.message || "Something went wrong");
       setLoading(false);
