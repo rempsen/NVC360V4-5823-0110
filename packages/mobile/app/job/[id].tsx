@@ -426,8 +426,8 @@ export default function JobDetail() {
                     <View style={[s.stepDot, isDone && s.stepDotDone, isActive && s.stepDotActive]}>
                       {step.icon}
                     </View>
-                    <View style={{ alignItems: "center", position: "absolute", top: 28, left: -20, width: 60 }}>
-                      <Text style={[s.stepLabel, isActive && { color: C.brand, fontWeight: "700" }, isDone && { color: C.green }]}>{step.label}</Text>
+                    <View style={{ alignItems: "center", position: "absolute", top: 42, left: -23, width: 80 }}>
+                      <Text style={[s.stepLabel, isActive && { color: C.brand, fontWeight: "700" }, isDone && { color: C.green }]} numberOfLines={1}>{step.label}</Text>
                     </View>
                     {idx < arr.length - 1 && (
                       <View style={[s.stepLine, isDone && s.stepLineDone]} />
@@ -1328,7 +1328,7 @@ const s = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 20,
     paddingTop: 16,
-    paddingBottom: 36,
+    paddingBottom: 46,
     backgroundColor: C.card,
     borderRadius: 18,
     borderWidth: 1,
