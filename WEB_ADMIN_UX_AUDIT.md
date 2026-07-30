@@ -9,6 +9,10 @@ current accessibility number. This audit is scoped to **UI/UX and feature-set** 
 
 ---
 
+## ✅ P0 items 1–4 — FIXED and verified live (commit `be61b39`)
+All four below were fixed and re-tested against the running vite dev server (port 5173) after the fix —
+not just read, actually clicked through. See `NEXT_PRIORITIES.md` for what's left.
+
 ## 🔴 P0 — Found broken right now (fix before anything else)
 
 ### 1. Three admin pages are fully crashed: Payouts, Reports, Tags & Fields
