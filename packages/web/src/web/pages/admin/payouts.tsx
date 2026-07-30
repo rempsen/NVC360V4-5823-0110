@@ -58,7 +58,7 @@ export default function AdminPayouts() {
     <PageWrap>
       <PageHead
         title={`${noun} Payouts`}
-        subtitle="Earnings from completed & paid jobs"
+        subtitle={`Earnings from completed & paid ${jobPlural.toLowerCase()}`}
         actions={<BtnPrimary onClick={() => setGenOpen(true)}><Plus className="h-4 w-4" /> Generate payouts</BtnPrimary>}
       />
 
@@ -74,7 +74,8 @@ export default function AdminPayouts() {
         </div>
       ) : (
         <div className="nvc-card overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px] text-sm">
             <thead className="border-b border-white/5 text-left text-xs uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="px-4 py-3">{noun}</th>
@@ -111,6 +112,7 @@ export default function AdminPayouts() {
               ))}
             </tbody>
           </table>
+        </div>
         </div>
       )}
 

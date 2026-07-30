@@ -4,7 +4,7 @@ import { api } from "../../lib/api";
 import { FullLoader } from "../../components/loader";
 import { PageWrap } from "../../components/brand";
 import { PageHead } from "./shell";
-import { Field, inputCls, BtnPrimary, BtnGhost, ConfirmModal } from "../../components/modal";
+import { Field, inputCls, BtnPrimary, ConfirmModal } from "../../components/modal";
 import { AddressAutocomplete } from "../../components/address-autocomplete";
 import { Save, Building2, Check, Calendar, Copy, RefreshCw, ExternalLink, MapPin, Sparkles, Plug, KeyRound, ScrollText, Lock, Eye, EyeOff, Tag, Plus, Trash2, Pencil, X } from "lucide-react";
 import { useWorkerNoun } from "../../lib/use-brand";
@@ -156,9 +156,9 @@ function CompanySettingsTab() {
         </BtnPrimary>
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-3 lg:items-start">
+      <div className="grid gap-5 xl:grid-cols-3 xl:items-start">
         {/* Business profile + geofencing (left, 2-wide) */}
-        <div className="space-y-5 lg:col-span-2">
+        <div className="space-y-5 xl:col-span-2">
         <div className="nvc-card space-y-4 p-5">
           <h3 className="flex items-center gap-2 font-bold text-white">
             <Building2 className="h-4 w-4 text-brand" /> Business Profile

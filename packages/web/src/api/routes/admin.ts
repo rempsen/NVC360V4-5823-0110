@@ -41,7 +41,6 @@ export const adminRoutes = new Hono()
     };
 
     const allBookings = await t.select(schema.bookings);
-    const allInvoices = await t.select(schema.invoices);
     const users = (await db.select().from(schema.user)).filter((u) => u.companyId === cid);
     const riders = await t.select(schema.riders);
 
@@ -52,11 +51,16 @@ export const adminRoutes = new Hono()
           inRange(basis === "created" ? b.createdAt : b.scheduledAt),
         )
       : allBookings;
-    const paidInvoices = allInvoices.filter(
-      (i) => i.status === "paid" && (!hasRange || inRange(i.paidAt)),
-    );
-
-    const revenue = paidInvoices.reduce((s, i) => s + i.total, 0);
+    // "Revenue" is computed the same way here as in the Revenue report
+    // (reports.ts): sum of non-cancelled booking totals in range. Previously
+    // this summed only *paid invoices*, which almost always read $0 in
+    // practice (STRIPE_WEBHOOK_SECRET isn't set, so invoices rarely flip to
+    // "paid") while the Revenue report — using booking totals directly —
+    // showed the real number. Keeping both pages on the same definition
+    // avoids showing two different "Revenue" figures for the same tenant.
+    const revenue = bookings
+      .filter((b) => b.status !== "cancelled")
+      .reduce((s, b) => s + Number(b.total || b.price || 0), 0);
     const active = bookings.filter((b) =>
       ["assigned", "enroute", "arrived", "in_progress"].includes(b.status),
     ).length;

@@ -119,6 +119,8 @@ export function IntakeFormsSection({ publicKeys }: { publicKeys: PubKey[] }) {
   const [creatingType, setCreatingType] = useState<"lead" | "work_order">("lead");
   const [delTarget, setDelTarget] = useState<IntakeForm | null>(null);
   const [embedFor, setEmbedFor] = useState<IntakeForm | null>(null);
+  const [settingRecipientFor, setSettingRecipientFor] = useState<string | null>(null);
+  const [quickRecipient, setQuickRecipient] = useState("");
 
   const formsQ = useQuery({ queryKey: ["intake-forms"], queryFn: () => jget<{ forms: IntakeForm[]; publicBase: string }>("/api/forms") });
   const forms = formsQ.data?.forms ?? [];
@@ -146,6 +148,14 @@ export function IntakeFormsSection({ publicKeys }: { publicKeys: PubKey[] }) {
   const delM = useMutation({
     mutationFn: (id: string) => jsend(`/api/forms/${id}`, "DELETE"),
     onSuccess: () => { setDelTarget(null); qc.invalidateQueries({ queryKey: ["intake-forms"] }); },
+  });
+
+  // Quick-fix for the "No recipient" warning right on the list row — avoids
+  // sending the admin into the full form editor just to set one email.
+  const setRecipientM = useMutation({
+    mutationFn: ({ id, email }: { id: string; email: string }) =>
+      jsend(`/api/forms/${id}`, "PATCH", { recipientEmail: email }),
+    onSuccess: () => { setSettingRecipientFor(null); setQuickRecipient(""); qc.invalidateQueries({ queryKey: ["intake-forms"] }); },
   });
 
   const publicUrl = (f: IntakeForm) => {
@@ -207,8 +217,39 @@ export function IntakeFormsSection({ publicKeys }: { publicKeys: PubKey[] }) {
                     ? <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">Live</span>
                     : <span className="rounded-full bg-slate-500/15 px-2 py-0.5 text-[11px] font-semibold text-slate-400">Disabled</span>}
                   {!f.publicKeyId && <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold text-amber-300">No key bound</span>}
-                  {f.formType === "lead" && !f.recipientEmail && <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-[11px] font-semibold text-rose-300">No recipient</span>}
+                  {f.formType === "lead" && !f.recipientEmail && settingRecipientFor !== f.id && (
+                    <button
+                      type="button"
+                      onClick={() => { setSettingRecipientFor(f.id); setQuickRecipient(""); }}
+                      className="rounded-full bg-rose-500/15 px-2 py-0.5 text-[11px] font-semibold text-rose-300 hover:bg-rose-500/25"
+                    >
+                      No recipient — click to set
+                    </button>
+                  )}
                 </div>
+                {settingRecipientFor === f.id && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <input
+                      aria-label="Recipient email"
+                      autoFocus
+                      type="email"
+                      value={quickRecipient}
+                      onChange={(e) => setQuickRecipient(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter" && quickRecipient.trim()) setRecipientM.mutate({ id: f.id, email: quickRecipient.trim() }); if (e.key === "Escape") setSettingRecipientFor(null); }}
+                      placeholder="intake@company.com"
+                      className={`${inputCls} h-8 w-56 text-xs`}
+                    />
+                    <button
+                      type="button"
+                      disabled={!quickRecipient.trim() || setRecipientM.isPending}
+                      onClick={() => setRecipientM.mutate({ id: f.id, email: quickRecipient.trim() })}
+                      className="inline-flex items-center gap-1 rounded-lg bg-brand px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-brand-deep disabled:opacity-50"
+                    >
+                      {setRecipientM.isPending ? "Saving…" : "Save"}
+                    </button>
+                    <button type="button" onClick={() => setSettingRecipientFor(null)} className="text-xs font-semibold text-slate-500 hover:text-slate-300">Cancel</button>
+                  </div>
+                )}
                 <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
                   <code className="text-slate-400">/f/{f.companyId}/{f.slug}</code>
                   <span>{f.submitCount} submission{f.submitCount === 1 ? "" : "s"}</span>
@@ -400,7 +441,7 @@ function FormEditor({ form, newFormType, publicKeys, onKeysChanged, onClose, onS
               </Field>
               <div className="flex items-end pb-1">
                 <label className="flex items-center gap-2 text-sm text-slate-300">
-                  <input type="checkbox" checked={allowTechAssign} onChange={(e) => setAllowTechAssign(e.target.checked)} className="h-4 w-4 rounded border-white/20" />
+                  <input type="checkbox" aria-label="Employees can pick a technician & schedule time" checked={allowTechAssign} onChange={(e) => setAllowTechAssign(e.target.checked)} className="h-4 w-4 rounded border-white/20" />
                   Employees can pick a technician & schedule time
                 </label>
               </div>
@@ -449,7 +490,7 @@ function FormEditor({ form, newFormType, publicKeys, onKeysChanged, onClose, onS
                 {logoUploading ? "Uploading…" : "Upload"}
               </button>
               {logoUrl && <button type="button" onClick={() => setLogoUrl("")} className="shrink-0 text-xs font-semibold text-slate-400 hover:text-red-400">Remove</button>}
-              <input ref={logoFileRef} type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && uploadLogo(e.target.files[0])} />
+              <input ref={logoFileRef} aria-label="Upload logo file" type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && uploadLogo(e.target.files[0])} />
             </div>
             <input aria-label="logo" className={`${inputCls} mt-1.5 text-xs`} value={logoUrl} onChange={(e) => setLogoUrl(e.target.value)} placeholder="…or paste a direct image URL" />
             {isGoogleDriveShareLink(logoUrl) && (

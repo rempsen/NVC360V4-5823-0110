@@ -387,6 +387,7 @@ export default function AdminZones() {
                       const l = layersRef.current[z.id] as L.Polygon | undefined;
                       if (l && mapRef.current) mapRef.current.fitBounds((l as L.Polygon).getBounds(), { padding: [40, 40] });
                     })}
+                    aria-label={`View zone ${z.name}`}
                     className={`group flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 transition ${
                       selected === z.id ? "border-brand/50 bg-brand/10" : "border-white/5 bg-white/[0.02] hover:bg-white/[0.05]"
                     }`}

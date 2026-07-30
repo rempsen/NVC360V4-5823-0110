@@ -206,10 +206,6 @@ export default function AdminDashboard() {
       iconTint: "bg-emerald-500/10 text-emerald-400",
       topBorder: "border-t-emerald-500/40",
       to: "/admin/payouts",
-      hint:
-        s.revenue === 0 && s.completedBookings > 0
-          ? "No payments recorded yet"
-          : undefined,
     },
     {
       label: customerPlural,

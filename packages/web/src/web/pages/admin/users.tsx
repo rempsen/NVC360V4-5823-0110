@@ -143,7 +143,8 @@ export default function AdminClients() {
       </div>
 
       <div className="nvc-card overflow-hidden">
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+        <table className="w-full min-w-[720px] text-sm">
           <thead>
             <tr className="border-b border-white/5 text-left text-xs uppercase tracking-wide text-slate-500">
               <th className="px-4 py-3 font-semibold">Name</th>
@@ -204,6 +205,7 @@ export default function AdminClients() {
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* add client modal */}

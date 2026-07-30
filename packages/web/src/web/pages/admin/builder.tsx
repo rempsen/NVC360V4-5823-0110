@@ -192,7 +192,7 @@ export default function BuilderPage() {
         subtitle={editingId ? "Editing an existing template" : "Design custom work-order templates — drag field types onto the canvas"}
       />
 
-      <div className="grid gap-5 lg:grid-cols-[200px_1fr_280px]">
+      <div className="grid gap-5 xl:grid-cols-[200px_1fr_280px]">
         {/* palette */}
         <div className="nvc-card h-fit p-3">
           <p className="mb-2 px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Field types</p>

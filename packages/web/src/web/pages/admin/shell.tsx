@@ -72,7 +72,11 @@ const NAV_GROUPS: NavGroup[] = [
     heading: "People",
     items: [
       { to: "/admin/techs", label: "__WORKER_PLURAL__ & Managers", icon: Wrench },
-      { to: "/admin/clients", label: "__CUSTOMER_PLURAL__", icon: Users },
+      // Static label, not the per-industry customerNoun: this page (Directory)
+      // lists customers AND staff/admins together, so the customer-specific
+      // term was misleading here even though it's correct on pages that only
+      // show customers.
+      { to: "/admin/clients", label: "People", icon: Users },
       { to: "/admin/reviews", label: "Reviews", icon: Star },
     ],
   },

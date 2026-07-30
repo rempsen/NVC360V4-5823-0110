@@ -181,6 +181,7 @@ export default function AdminOptionsCatalog() {
       <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
         <div className="flex items-center gap-2">
           <input
+            aria-label="New category name"
             value={newCategoryName}
             onChange={(e) => setNewCategoryName(e.target.value)}
             placeholder="New category name (e.g. Flooring, Paint Grade, Garage Door Model)…"
@@ -210,7 +211,8 @@ export default function AdminOptionsCatalog() {
                 onClick={() =>
                   setExpanded((s) => {
                     const next = new Set(s);
-                    next.has(cat.id) ? next.delete(cat.id) : next.add(cat.id);
+                    if (next.has(cat.id)) next.delete(cat.id);
+                    else next.add(cat.id);
                     return next;
                   })
                 }
@@ -271,12 +273,14 @@ export default function AdminOptionsCatalog() {
                     <div className="space-y-2 rounded-lg border border-white/10 bg-ink-2 p-3">
                       <div className="grid grid-cols-2 gap-2">
                         <input
+                          aria-label="Tier label"
                           value={itemDraft.tierLabel}
                           onChange={(e) => setItemDraft((d) => ({ ...d, tierLabel: e.target.value }))}
                           placeholder="Tier label (Good/Better/Best)"
                           className="rounded-md border border-white/10 bg-ink px-2.5 py-1.5 text-sm outline-none focus:border-brand"
                         />
                         <input
+                          aria-label="Option name"
                           value={itemDraft.name}
                           onChange={(e) => setItemDraft((d) => ({ ...d, name: e.target.value }))}
                           placeholder="Option name (e.g. Luxury Vinyl Plank)"
@@ -284,14 +288,17 @@ export default function AdminOptionsCatalog() {
                         />
                       </div>
                       <input
+                        aria-label="Description"
                         value={itemDraft.description}
                         onChange={(e) => setItemDraft((d) => ({ ...d, description: e.target.value }))}
                         placeholder="Description shown to the customer (optional)"
                         className="w-full rounded-md border border-white/10 bg-ink px-2.5 py-1.5 text-sm outline-none focus:border-brand"
                       />
                       <div className="flex items-center gap-2">
-                        <label className="text-xs text-slate-400">Price delta</label>
+                        <label htmlFor="opt-price-delta" className="text-xs text-slate-400">Price delta</label>
                         <input
+                          id="opt-price-delta"
+                          aria-label="Price delta"
                           type="number"
                           step="any"
                           value={itemDraft.priceDelta}
@@ -301,6 +308,7 @@ export default function AdminOptionsCatalog() {
                         <label className="ml-auto flex items-center gap-1.5 text-xs text-slate-400">
                           <input
                             type="checkbox"
+                            aria-label="Default (included) tier"
                             checked={itemDraft.isDefault}
                             onChange={(e) => setItemDraft((d) => ({ ...d, isDefault: e.target.checked }))}
                           />

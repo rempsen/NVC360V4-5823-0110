@@ -182,7 +182,7 @@ function FieldStaffTab() {
           {list.map((r: any) => {
             const meta = TECH_STATUS[r.status] ?? { label: r.status, color: "#64748b" };
             return (
-              <div key={r.id} {...activate(() => setDetailId(r.id))} className="nvc-card group relative cursor-pointer p-4 transition hover:border-brand/30">
+              <div key={r.id} {...activate(() => setDetailId(r.id))} aria-label={`View ${r.name}`} className="nvc-card group relative cursor-pointer p-4 transition hover:border-brand/30">
                 <button
                   onClick={(e) => { e.stopPropagation(); setDelId(r.id); }}
                   title="Remove technician"

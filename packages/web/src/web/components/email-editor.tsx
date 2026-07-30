@@ -171,6 +171,7 @@ export function EmailEditor({
                   <div
                     key={b.id}
                     {...activate(() => setSelected(b.id))}
+                    aria-label={`Edit ${b.type} block`}
                     className={`group flex items-center gap-2 rounded-lg border px-2.5 py-2 text-sm cursor-pointer transition ${
                       selected === b.id ? "border-brand/50 bg-brand/10 text-white" : "border-white/5 bg-ink text-slate-400 hover:text-white hover:border-white/10"
                     }`}

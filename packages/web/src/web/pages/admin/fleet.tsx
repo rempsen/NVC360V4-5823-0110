@@ -164,6 +164,17 @@ export default function FleetPage() {
         className="h-full w-full"
       />
 
+      {showDrivers && techs.length - (counts.offline ?? 0) === 0 && (
+        <div className="pointer-events-none absolute inset-0 z-[1000] grid place-items-center">
+          <div className="pointer-events-none rounded-xl border border-white/10 bg-ink/90 px-4 py-3 text-center shadow-lg backdrop-blur-sm">
+            <p className="text-sm font-semibold text-slate-300">No technicians active right now</p>
+            <p className="mt-0.5 text-xs text-slate-500">
+              {techs.length === 0 ? "No technicians on the team yet." : "Everyone on the team is currently offline."}
+            </p>
+          </div>
+        </div>
+      )}
+
       <WorkOrderModal
         open={jobFor !== null}
         editBooking={jobFor ?? undefined}

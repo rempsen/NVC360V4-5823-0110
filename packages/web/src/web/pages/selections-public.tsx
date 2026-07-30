@@ -191,10 +191,12 @@ export default function SelectionsPublic() {
             </div>
 
             <div className="nvc-card space-y-3 p-4">
-              <label className="flex items-center gap-1.5 text-sm font-medium text-slate-300">
+              <label htmlFor="signature-name" className="flex items-center gap-1.5 text-sm font-medium text-slate-300">
                 <PenLine className="h-3.5 w-3.5" /> Type your name to confirm these selections
               </label>
               <input
+                id="signature-name"
+                aria-label="Type your name to confirm these selections"
                 value={signatureName}
                 onChange={(e) => setSignatureName(e.target.value)}
                 placeholder="Full name"
