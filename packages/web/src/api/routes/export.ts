@@ -95,15 +95,26 @@ export async function toPdf(
 
   let page = doc.addPage([pageW, pageH]);
   let y = pageH - margin;
-  page.drawText(title, { x: margin, y: y - 4, size: 16, font: bold, color: rgb(0.04, 0.65, 0.79) });
+  // Same encoding-crash protection as buildJobPdf below: standard fonts only
+  // support WinAnsi, so any emoji/unsupported character in row data (e.g. a
+  // customer name) would otherwise throw and 500 the whole bulk export.
+  const dt = (text: string, opts: Parameters<typeof page.drawText>[1]) => {
+    try {
+      page.drawText(text, opts);
+    } catch {
+      const ascii = Array.from(text).filter((ch) => (ch.codePointAt(0) ?? 0) <= 0x7f).join("").trim();
+      page.drawText(ascii || "(unsupported character)", opts);
+    }
+  };
+  dt(title, { x: margin, y: y - 4, size: 16, font: bold, color: rgb(0.04, 0.65, 0.79) });
   y -= 22;
-  if (subtitle) { page.drawText(subtitle, { x: margin, y, size: 9, font, color: rgb(0.4, 0.45, 0.5) }); y -= 16; }
+  if (subtitle) { dt(subtitle, { x: margin, y, size: 9, font, color: rgb(0.4, 0.45, 0.5) }); y -= 16; }
   y -= 6;
 
   const drawHeader = () => {
     page.drawRectangle({ x: margin, y: y - 16, width: usableW, height: 18, color: rgb(0.06, 0.09, 0.16) });
     columns.forEach((c, i) => {
-      page.drawText(c.label.slice(0, 18), { x: margin + i * colW + 4, y: y - 12, size: 8, font: bold, color: rgb(1, 1, 1) });
+      dt(c.label.slice(0, 18), { x: margin + i * colW + 4, y: y - 12, size: 8, font: bold, color: rgb(1, 1, 1) });
     });
     y -= 20;
   };
@@ -117,7 +128,7 @@ export async function toPdf(
     }
     if (ri % 2 === 0) page.drawRectangle({ x: margin, y: y - 13, width: usableW, height: 15, color: rgb(0.96, 0.97, 0.98) });
     columns.forEach((c, i) => {
-      page.drawText(fmt(r[c.key], c.kind), { x: margin + i * colW + 4, y: y - 10, size: 8, font, color: rgb(0.1, 0.12, 0.15) });
+      dt(fmt(r[c.key], c.kind), { x: margin + i * colW + 4, y: y - 10, size: 8, font, color: rgb(0.1, 0.12, 0.15) });
     });
     y -= 15;
   });
@@ -155,6 +166,24 @@ export async function buildJobPdf(
   const usableW = pageW - margin * 2;
   const money = (v: any) => `${Number(v || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const num = (v: any) => Number(v || 0).toLocaleString("en-US", { maximumFractionDigits: 2 });
+  // Standard PDF fonts (Helvetica/HelveticaBold) only support WinAnsi
+  // encoding. It actually covers plenty of "fancy" punctuation (em-dash,
+  // ellipsis, curly quotes) just fine — the real crash risk is emoji and
+  // other characters outside WinAnsi entirely, which throw at draw time
+  // ("WinAnsi cannot encode ...") and previously took down the WHOLE export
+  // with a 500 the moment any job photo caption (or other free-text field)
+  // contained one. Try the real text first (keeps existing punctuation
+  // working exactly as before); only on an actual encoding failure fall
+  // back to stripping to plain ASCII and retry, so one bad character can
+  // never crash the export.
+  const dt = (text: string, opts: Parameters<typeof page.drawText>[1]) => {
+    try {
+      page.drawText(text, opts);
+    } catch {
+      const ascii = Array.from(text).filter((ch) => (ch.codePointAt(0) ?? 0) <= 0x7f).join("").trim();
+      page.drawText(ascii || "(unsupported character)", opts);
+    }
+  };
 
   let page = doc.addPage([pageW, pageH]);
   let y = pageH - margin;
@@ -162,22 +191,22 @@ export async function buildJobPdf(
     if (y < margin + need) { page = doc.addPage([pageW, pageH]); y = pageH - margin; }
   };
 
-  page.drawText(title, { x: margin, y: y - 4, size: 17, font: bold, color: rgb(0.04, 0.65, 0.79) });
+  dt(title, { x: margin, y: y - 4, size: 17, font: bold, color: rgb(0.04, 0.65, 0.79) });
   y -= 24;
-  if (subtitle) { page.drawText(String(subtitle).slice(0, 90), { x: margin, y, size: 9, font, color: rgb(0.4, 0.45, 0.5) }); y -= 14; }
-  page.drawText("INTERNAL COPY — includes tech pay. Not for the customer.", { x: margin, y, size: 8, font: bold, color: rgb(0.78, 0.25, 0.16) });
+  if (subtitle) { dt(String(subtitle).slice(0, 90), { x: margin, y, size: 9, font, color: rgb(0.4, 0.45, 0.5) }); y -= 14; }
+  dt("INTERNAL COPY — includes tech pay. Not for the customer.", { x: margin, y, size: 8, font: bold, color: rgb(0.78, 0.25, 0.16) });
   y -= 18;
 
   // --- details label/value block ---
-  page.drawText("Job details", { x: margin, y, size: 11, font: bold, color: rgb(0.1, 0.12, 0.15) });
+  dt("Job details", { x: margin, y, size: 11, font: bold, color: rgb(0.1, 0.12, 0.15) });
   y -= 16;
   const labelW = 150;
   details.forEach((r, ri) => {
     ensure(20);
     if (ri % 2 === 0) page.drawRectangle({ x: margin, y: y - 11, width: usableW, height: 14, color: rgb(0.96, 0.97, 0.98) });
-    page.drawText(String(r.field).slice(0, 32), { x: margin + 4, y: y - 8, size: 8, font: bold, color: rgb(0.25, 0.3, 0.36) });
+    dt(String(r.field).slice(0, 32), { x: margin + 4, y: y - 8, size: 8, font: bold, color: rgb(0.25, 0.3, 0.36) });
     const val = String(r.value ?? "");
-    page.drawText(val.length > 70 ? val.slice(0, 68) + "…" : val, { x: margin + labelW, y: y - 8, size: 8, font, color: rgb(0.1, 0.12, 0.15) });
+    dt(val.length > 70 ? val.slice(0, 68) + "…" : val, { x: margin + labelW, y: y - 8, size: 8, font, color: rgb(0.1, 0.12, 0.15) });
     y -= 14;
   });
   y -= 12;
@@ -185,7 +214,7 @@ export async function buildJobPdf(
   // --- per-unit breakdown table ---
   if (unitLines.length) {
     ensure(60);
-    page.drawText("Per-unit work & pay", { x: margin, y, size: 11, font: bold, color: rgb(0.1, 0.12, 0.15) });
+    dt("Per-unit work & pay", { x: margin, y, size: 11, font: bold, color: rgb(0.1, 0.12, 0.15) });
     y -= 16;
     const cols = [
       { label: "Description", w: 0.30, align: "l" as const },
@@ -203,10 +232,10 @@ export async function buildJobPdf(
       const cw = c.w * usableW;
       if (c.align === "r") {
         const tw = f.widthOfTextAtSize(text, 8);
-        page.drawText(text, { x: cx + cw - tw - 4, y: yy, size: 8, font: f, color });
+        dt(text, { x: cx + cw - tw - 4, y: yy, size: 8, font: f, color });
       } else {
         const max = c.label === "Description" ? 30 : 12;
-        page.drawText(text.length > max ? text.slice(0, max - 1) + "…" : text, { x: cx + 4, y: yy, size: 8, font: f, color });
+        dt(text.length > max ? text.slice(0, max - 1) + "…" : text, { x: cx + 4, y: yy, size: 8, font: f, color });
       }
     };
     const drawHead = () => {
@@ -244,17 +273,17 @@ export async function buildJobPdf(
   // --- photos section ---
   if (photos && photos.length > 0) {
     ensure(40);
-    page.drawText("Field Photos", { x: margin, y, size: 11, font: bold, color: rgb(0.1, 0.12, 0.15) });
+    dt("Field Photos", { x: margin, y, size: 11, font: bold, color: rgb(0.1, 0.12, 0.15) });
     y -= 14;
 
     // Attempt to embed each photo from its URL
     for (const ph of photos) {
       ensure(24);
       // Show caption/URL as text (image embedding not guaranteed for all URLs)
-      const caption = ph.caption ? `📷 ${ph.caption}` : "📷 Photo";
-      page.drawText(caption, { x: margin + 4, y: y - 8, size: 8, font: bold, color: rgb(0.25, 0.3, 0.36) });
+      const caption = ph.caption ? `Photo: ${ph.caption}` : "Photo";
+      dt(caption, { x: margin + 4, y: y - 8, size: 8, font: bold, color: rgb(0.25, 0.3, 0.36) });
       const urlText = ph.url.length > 80 ? ph.url.slice(0, 78) + "…" : ph.url;
-      page.drawText(urlText, { x: margin + 4, y: y - 18, size: 7, font, color: rgb(0.04, 0.42, 0.72) });
+      dt(urlText, { x: margin + 4, y: y - 18, size: 7, font, color: rgb(0.04, 0.42, 0.72) });
       y -= 28;
     }
 
