@@ -4,7 +4,7 @@ import { api } from "../../lib/api";
 import { FullLoader } from "../../components/loader";
 import { PageWrap } from "../../components/brand";
 import { PageHead } from "./shell";
-import { fmtDateShort, dismiss } from "../../lib/utils";
+import { fmtDateShort, dismiss, activate } from "../../lib/utils";
 import {
   Modal,
   Field,
@@ -17,6 +17,7 @@ import { AddressAutocomplete } from "../../components/address-autocomplete";
 import { TagPicker } from "../../components/tag-picker";
 import { AttachmentManager } from "../../components/attachment-manager";
 import { CustomFieldsForm } from "../../components/custom-fields";
+import { WorkOrderModal } from "../../components/work-order-modal";
 import { Search, UserPlus, Trash2, Plus, X, Mail, Phone, ClipboardList } from "lucide-react";
 import { useWorkerNoun, useCustomerNoun } from "../../lib/use-brand";
 
@@ -328,6 +329,7 @@ function applyAddressParts(prev: any, formatted: string) {
 function ClientDrawer({ user, onClose }: { user: any; onClose: () => void }) {
   const qc = useQueryClient();
   const [tab, setTab] = useState<"profile" | "jobs" | "files">("profile");
+  const [viewJob, setViewJob] = useState<any>(null);
   const [form, setForm] = useState<any>({
     name: "",
     email: "",
@@ -640,7 +642,12 @@ function ClientDrawer({ user, onClose }: { user: any; onClose: () => void }) {
                   })();
                   const totalNum = Number(b?.total);
                   return (
-                  <div key={b?.id ?? idx} className="flex items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] px-3 py-2.5">
+                  <div
+                    key={b?.id ?? idx}
+                    {...activate(() => setViewJob(b))}
+                    aria-label={`View ${b?.title || b?.service?.name || b?.serviceName || "job"} from ${dateLabel}`}
+                    className="flex cursor-pointer items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] px-3 py-2.5 transition hover:border-brand/30 hover:bg-white/[0.05]"
+                  >
                     <span className="grid h-9 w-9 place-items-center rounded-lg bg-brand/15 text-cyan-glow"><ClipboardList className="h-4 w-4" /></span>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold text-white">{b?.title || b?.service?.name || b?.serviceName || "Service"}</p>
@@ -660,6 +667,12 @@ function ClientDrawer({ user, onClose }: { user: any; onClose: () => void }) {
           {tab === "files" && <AttachmentManager entityType="client" entityId={user.id} />}
         </div>
       </div>
+
+      <WorkOrderModal
+        open={viewJob !== null}
+        editBooking={viewJob ?? undefined}
+        onClose={() => setViewJob(null)}
+      />
     </div>
   );
 }

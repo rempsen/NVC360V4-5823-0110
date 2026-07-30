@@ -35,7 +35,12 @@ export function Modal({
     size === "sm" ? "max-w-sm" : size === "lg" ? "max-w-2xl" : "max-w-lg";
 
   return createPortal(
-    <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center">
+    // z-[1050]: must sit above slide-in side drawers (z-[1000] — Directory's
+    // ClientDrawer, Technicians & Managers' detail panel) so opening a work
+    // order (or any Modal) from within one of those drawers doesn't render
+    // invisibly behind it. Still below the nested modal-over-modal pattern
+    // used elsewhere (z-[9999], e.g. a confirm dialog on top of a modal).
+    <div className="fixed inset-0 z-[1050] flex items-end justify-center sm:items-center">
       <button
         type="button"
         aria-label="Close dialog"
