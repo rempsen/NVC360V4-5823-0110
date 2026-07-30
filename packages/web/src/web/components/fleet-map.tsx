@@ -50,20 +50,26 @@ function techIcon(
   dim: boolean,
   photoUrl?: string | null,
 ) {
+  // Bigger + high-contrast: a white ring (photo avatars) / white border
+  // (initials) makes the status-colored circle pop against the dark map
+  // tiles instead of blending in, and the dot itself is now noticeably
+  // larger than before.
+  const SIZE = 52;
+  const DOT = 38;
   const pulse = active
-    ? `<div style="position:absolute;width:46px;height:46px;border-radius:9999px;background:${color}33;animation:pulse-ring 1.8s ease-out infinite"></div>`
+    ? `<div style="position:absolute;width:${SIZE + 10}px;height:${SIZE + 10}px;border-radius:9999px;background:${color}40;animation:pulse-ring 1.8s ease-out infinite"></div>`
     : "";
   const inner = photoUrl
-    ? `<div style="position:relative;width:34px;height:34px;border-radius:9999px;border:3px solid #0c1220;box-shadow:0 4px 14px rgba(0,0,0,0.5);background-image:url('${photoUrl}');background-size:cover;background-position:center"></div>`
-    : `<div style="position:relative;width:34px;height:34px;border-radius:9999px;background:${color};border:3px solid #0c1220;box-shadow:0 4px 14px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;color:#051018;font-weight:800;font-size:12px;font-family:Inter,sans-serif">${initials}</div>`;
+    ? `<div style="position:relative;width:${DOT}px;height:${DOT}px;border-radius:9999px;border:4px solid ${color};box-shadow:0 0 0 2px #0c1220,0 4px 14px rgba(0,0,0,0.6);background-image:url('${photoUrl}');background-size:cover;background-position:center"></div>`
+    : `<div style="position:relative;width:${DOT}px;height:${DOT}px;border-radius:9999px;background:${color};border:3px solid #ffffff;box-shadow:0 0 0 2px ${color}99,0 4px 14px rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;color:#051018;font-weight:800;font-size:13px;font-family:Inter,sans-serif">${initials}</div>`;
   return L.divIcon({
     className: "",
-    html: `<div style="position:relative;width:46px;height:46px;display:flex;align-items:center;justify-content:center;opacity:${dim ? 0.45 : 1}">
+    html: `<div style="position:relative;width:${SIZE}px;height:${SIZE}px;display:flex;align-items:center;justify-content:center;opacity:${dim ? 0.45 : 1}">
       ${pulse}
       ${inner}
     </div>`,
-    iconSize: [46, 46],
-    iconAnchor: [23, 23],
+    iconSize: [SIZE, SIZE],
+    iconAnchor: [SIZE / 2, SIZE / 2],
   });
 }
 
@@ -117,9 +123,9 @@ function jobIcon(color: string) {
 
 const STATUS_META: Record<string, { label: string; color: string }> = {
   enroute: { label: "En route", color: "#38bdf8" },
-  onsite: { label: "On site", color: "#34d399" },
-  busy: { label: "Busy", color: "#fbbf24" },
-  available: { label: "Available", color: "#4ade80" },
+  onsite: { label: "On site", color: "#f59e0b" },
+  busy: { label: "Busy", color: "#ef4444" },
+  available: { label: "Available", color: "#22c55e" },
   idle: { label: "Idle", color: "#94a3b8" },
   offline: { label: "Offline", color: "#64748b" },
 };
@@ -210,7 +216,14 @@ export function FleetMap({
         .join("");
       const active = ["enroute", "onsite", "busy"].includes(t.status);
       const dim = t.status === "offline";
-      const icon = techIcon(t.color, initials, active, dim && selectedId !== t.id, t.photoUrl);
+      // Marker color reflects LIVE STATUS (green = available, red = busy,
+      // etc.) — not the tech's fixed per-person identity color (t.color),
+      // which is assigned once at random when they're added to the team and
+      // has nothing to do with whether they're actually free right now. That
+      // mismatch is what made an available tech's dot look like a faint,
+      // arbitrary color instead of a clear, unmistakable "available" signal.
+      const statusColor = STATUS_META[t.status]?.color ?? t.color;
+      const icon = techIcon(statusColor, initials, active, dim && selectedId !== t.id, t.photoUrl);
       const tip = techTooltip(t, noun);
       if (markers.current[t.id]) {
         markers.current[t.id].setLatLng([t.lat, t.lng]).setIcon(icon);
