@@ -8,6 +8,7 @@ import { haversineKm, isInsideGeofence } from "../../shared/geo-distance";
 import { applyBookingStatus, pauseClock, resumeClock } from "../../services/booking-status";
 import { pingLimiter } from "../lib/rate-limit";
 import { publishTrack } from "../../services/realtime";
+import { isAdminRole } from "../lib/permissions";
 
 // throttle ETA recomputation per booking (avoid hammering Distance Matrix)
 const ETA_THROTTLE_MS = 30_000;
@@ -205,6 +206,29 @@ export const trackingRoutes = new Hono()
         riderLocation,
         route,
         etaMins,
+      },
+      200,
+    );
+  })
+
+  // Full historical GPS breadcrumb trail for a booking — powers the route
+  // map on the completed-job report. Distinct from the GET /:bookingId
+  // above, which only returns the LATEST ping (for live tracking while a
+  // job is still en route). Staff-only: this is an internal ops view, not
+  // the customer-facing live-tracking page.
+  .get("/:bookingId/route-history", requireAuth, async (c) => {
+    const u = c.get("user") as { role?: string };
+    if (!isAdminRole(u?.role) && u?.role !== "dispatcher") return c.json({ message: "Forbidden" }, 403);
+    const bookingId = c.req.param("bookingId");
+    const t = tx(c);
+    const b = await t.selectOne(schema.bookings, eq(schema.bookings.id, bookingId));
+    if (!b) return c.json({ message: "Not found" }, 404);
+    const rows = await t.select(schema.trackingPings, eq(schema.trackingPings.bookingId, bookingId));
+    rows.sort((a, z) => Number(a.createdAt) - Number(z.createdAt));
+    return c.json(
+      {
+        pings: rows.map((r) => ({ lat: r.lat, lng: r.lng, phase: r.phase, createdAt: r.createdAt })),
+        destination: b.lat != null && b.lng != null ? { lat: b.lat, lng: b.lng } : null,
       },
       200,
     );

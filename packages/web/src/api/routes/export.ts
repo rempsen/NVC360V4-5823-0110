@@ -150,6 +150,34 @@ export type JobUnitLine = {
   cost: number;      // line tech pay
 };
 export type JobPhoto = { url: string; caption?: string };
+export type JobBrand = { name?: string; logo?: string; brandColor?: string };
+export type JobRoutePoint = { lat: number; lng: number; phase: string };
+
+/** "#0ea5e9" -> pdf-lib rgb(). Falls back to the app's default brand cyan on
+ *  anything unparsable so a bad/missing tenant color never breaks the PDF. */
+function hexRgb(hex?: string) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex ?? "");
+  const h = m ? m[1] : "0ea5e9";
+  return rgb(
+    parseInt(h.slice(0, 2), 16) / 255,
+    parseInt(h.slice(2, 4), 16) / 255,
+    parseInt(h.slice(4, 6), 16) / 255,
+  );
+}
+
+/** Resolve a stored file URL (often a relative "/api/public/file/..." or
+ *  "/uploads/..." path — fine for a browser, meaningless to server-side
+ *  fetch()) to an absolute URL so the PDF builder can actually download and
+ *  embed it. Uses the CURRENT request's own origin rather than a
+ *  separately-configured base-URL env var, so this is correct in every
+ *  environment (local dev, sandbox preview, production) without needing to
+ *  keep an env var in sync with wherever the app actually happens to be
+ *  running — the file-serving proxy route lives on this same server. */
+function absoluteUrl(url: string, baseUrl: string): string {
+  if (/^https?:\/\//i.test(url)) return url;
+  const base = baseUrl.replace(/\/$/, "");
+  return `${base}${url.startsWith("/") ? "" : "/"}${url}`;
+}
 
 export async function buildJobPdf(
   details: { field: string; value: any }[],
@@ -157,6 +185,9 @@ export async function buildJobPdf(
   title: string,
   subtitle?: string,
   photos?: JobPhoto[],
+  brand?: JobBrand | null,
+  route?: JobRoutePoint[],
+  baseUrl?: string,
 ): Promise<Buffer> {
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
@@ -164,6 +195,9 @@ export async function buildJobPdf(
   const pageW = 612, pageH = 792; // portrait letter
   const margin = 40;
   const usableW = pageW - margin * 2;
+  const brandColor = hexRgb(brand?.brandColor);
+  const ink = rgb(0.1, 0.12, 0.15);
+  const muted = rgb(0.45, 0.5, 0.56);
   const money = (v: any) => `${Number(v || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const num = (v: any) => Number(v || 0).toLocaleString("en-US", { maximumFractionDigits: 2 });
   // Standard PDF fonts (Helvetica/HelveticaBold) only support WinAnsi
@@ -184,6 +218,16 @@ export async function buildJobPdf(
       page.drawText(ascii || "(unsupported character)", opts);
     }
   };
+  /** Small colored square + bold label — the section-header treatment used
+   *  throughout, so each block reads as a distinct card like the in-app
+   *  report page instead of one long undifferentiated dump. */
+  const sectionHeader = (label: string) => {
+    page.drawRectangle({ x: margin, y: y - 10, width: 9, height: 9, color: brandColor });
+    dt(label, { x: margin + 15, y: y - 8, size: 11, font: bold, color: ink });
+    y -= 8;
+    page.drawLine({ start: { x: margin, y: y - 6 }, end: { x: pageW - margin, y: y - 6 }, thickness: 0.75, color: rgb(0.88, 0.9, 0.93) });
+    y -= 18;
+  };
 
   let page = doc.addPage([pageW, pageH]);
   let y = pageH - margin;
@@ -191,31 +235,95 @@ export async function buildJobPdf(
     if (y < margin + need) { page = doc.addPage([pageW, pageH]); y = pageH - margin; }
   };
 
-  dt(title, { x: margin, y: y - 4, size: 17, font: bold, color: rgb(0.04, 0.65, 0.79) });
+  // --- branded header ---
+  let logoImg: any = null;
+  if (brand?.logo) {
+    try {
+      const resp = await fetch(absoluteUrl(brand.logo, baseUrl || ""));
+      if (resp.ok) {
+        const buf = Buffer.from(await resp.arrayBuffer());
+        const ct = resp.headers.get("content-type") || "";
+        logoImg = ct.includes("png") ? await doc.embedPng(buf) : await doc.embedJpg(buf);
+      }
+    } catch { /* no logo — header just skips it */ }
+  }
+  const headerTop = y;
+  if (logoImg) {
+    const maxH = 34, maxW = 110;
+    const scale = Math.min(maxW / logoImg.width, maxH / logoImg.height, 1);
+    const w = logoImg.width * scale, h = logoImg.height * scale;
+    page.drawImage(logoImg, { x: margin, y: headerTop - h, width: w, height: h });
+    if (brand?.name) dt(brand.name, { x: margin + w + 10, y: headerTop - h / 2 - 4, size: 12, font: bold, color: ink });
+    y -= Math.max(h, 20) + 14;
+  } else if (brand?.name) {
+    dt(brand.name, { x: margin, y: y - 4, size: 12, font: bold, color: ink });
+    y -= 22;
+  }
+  page.drawLine({ start: { x: margin, y }, end: { x: pageW - margin, y }, thickness: 2, color: brandColor });
+  y -= 20;
+
+  dt(title, { x: margin, y: y - 4, size: 17, font: bold, color: brandColor });
   y -= 24;
-  if (subtitle) { dt(String(subtitle).slice(0, 90), { x: margin, y, size: 9, font, color: rgb(0.4, 0.45, 0.5) }); y -= 14; }
+  if (subtitle) { dt(String(subtitle).slice(0, 90), { x: margin, y, size: 9, font, color: muted }); y -= 14; }
   dt("INTERNAL COPY — includes tech pay. Not for the customer.", { x: margin, y, size: 8, font: bold, color: rgb(0.78, 0.25, 0.16) });
-  y -= 18;
+  y -= 22;
 
   // --- details label/value block ---
-  dt("Job details", { x: margin, y, size: 11, font: bold, color: rgb(0.1, 0.12, 0.15) });
-  y -= 16;
+  sectionHeader("Job Details");
   const labelW = 150;
   details.forEach((r, ri) => {
     ensure(20);
     if (ri % 2 === 0) page.drawRectangle({ x: margin, y: y - 11, width: usableW, height: 14, color: rgb(0.96, 0.97, 0.98) });
     dt(String(r.field).slice(0, 32), { x: margin + 4, y: y - 8, size: 8, font: bold, color: rgb(0.25, 0.3, 0.36) });
     const val = String(r.value ?? "");
-    dt(val.length > 70 ? val.slice(0, 68) + "…" : val, { x: margin + labelW, y: y - 8, size: 8, font, color: rgb(0.1, 0.12, 0.15) });
+    dt(val.length > 70 ? val.slice(0, 68) + "…" : val, { x: margin + labelW, y: y - 8, size: 8, font, color: ink });
     y -= 14;
   });
-  y -= 12;
+  y -= 18;
+
+  // --- route diagram: a simple vector sketch of the driven GPS path, colored
+  // by phase (en route / on site / return) — not a real basemap (no tile
+  // rendering server-side), but a genuine graphical read on the trip shape
+  // instead of just raw mileage numbers. ---
+  if (route && route.length > 1) {
+    ensure(190);
+    sectionHeader("Route Driven");
+    const boxH = 150;
+    const boxY = y - boxH;
+    page.drawRectangle({ x: margin, y: boxY, width: usableW, height: boxH, color: rgb(0.07, 0.09, 0.14) });
+    const lats = route.map((p) => p.lat), lngs = route.map((p) => p.lng);
+    const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+    const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+    const pad = 14;
+    const spanLat = Math.max(maxLat - minLat, 0.0005);
+    const spanLng = Math.max(maxLng - minLng, 0.0005);
+    const toXY = (lat: number, lng: number) => ({
+      x: margin + pad + ((lng - minLng) / spanLng) * (usableW - pad * 2),
+      y: boxY + pad + ((lat - minLat) / spanLat) * (boxH - pad * 2),
+    });
+    const PHASE_COLOR: Record<string, ReturnType<typeof rgb>> = {
+      enroute: rgb(0.06, 0.65, 0.91),
+      onsite: rgb(0.96, 0.62, 0.04),
+      return: rgb(0.13, 0.77, 0.37),
+    };
+    for (let i = 1; i < route.length; i++) {
+      const a = toXY(route[i - 1].lat, route[i - 1].lng);
+      const b = toXY(route[i].lat, route[i].lng);
+      page.drawLine({ start: a, end: b, thickness: 2.5, color: PHASE_COLOR[route[i].phase] ?? rgb(0.6, 0.65, 0.7) });
+    }
+    const start = toXY(route[0].lat, route[0].lng);
+    const end = toXY(route[route.length - 1].lat, route[route.length - 1].lng);
+    page.drawCircle({ x: start.x, y: start.y, size: 6, color: rgb(0.06, 0.65, 0.91), borderColor: rgb(1, 1, 1), borderWidth: 1.5 });
+    page.drawCircle({ x: end.x, y: end.y, size: 6, color: rgb(0.94, 0.27, 0.27), borderColor: rgb(1, 1, 1), borderWidth: 1.5 });
+    y = boxY - 10;
+    dt("● En route   ● On site   ● Return   A = start   B = finish", { x: margin, y, size: 7.5, font, color: muted });
+    y -= 20;
+  }
 
   // --- per-unit breakdown table ---
   if (unitLines.length) {
     ensure(60);
-    dt("Per-unit work & pay", { x: margin, y, size: 11, font: bold, color: rgb(0.1, 0.12, 0.15) });
-    y -= 16;
+    sectionHeader("Per-Unit Work & Pay");
     const cols = [
       { label: "Description", w: 0.30, align: "l" as const },
       { label: "Unit", w: 0.10, align: "l" as const },
@@ -226,7 +334,7 @@ export async function buildJobPdf(
       { label: "Line pay", w: 0.13, align: "r" as const },
     ];
     const xAt = (i: number) => margin + cols.slice(0, i).reduce((s, c) => s + c.w * usableW, 0);
-    const drawCell = (text: string, i: number, yy: number, f = font, color = rgb(0.1, 0.12, 0.15)) => {
+    const drawCell = (text: string, i: number, yy: number, f = font, color = ink) => {
       const c = cols[i];
       const cx = xAt(i);
       const cw = c.w * usableW;
@@ -270,44 +378,39 @@ export async function buildJobPdf(
     y -= 18;
   }
 
-  // --- photos section ---
+  // --- photos section: a real thumbnail grid (2 per row), not a wall of
+  // links — absoluteUrl() fixes the relative-path bug that silently
+  // prevented every photo from actually embedding before. ---
   if (photos && photos.length > 0) {
     ensure(40);
-    dt("Field Photos", { x: margin, y, size: 11, font: bold, color: rgb(0.1, 0.12, 0.15) });
-    y -= 14;
-
-    // Attempt to embed each photo from its URL
+    sectionHeader("Field Photos");
+    const cols2 = 2;
+    const gap = 12;
+    const cellW = (usableW - gap) / cols2;
+    const cellH = 140;
+    let col = 0;
     for (const ph of photos) {
-      ensure(24);
-      // Show caption/URL as text (image embedding not guaranteed for all URLs)
-      const caption = ph.caption ? `Photo: ${ph.caption}` : "Photo";
-      dt(caption, { x: margin + 4, y: y - 8, size: 8, font: bold, color: rgb(0.25, 0.3, 0.36) });
-      const urlText = ph.url.length > 80 ? ph.url.slice(0, 78) + "…" : ph.url;
-      dt(urlText, { x: margin + 4, y: y - 18, size: 7, font, color: rgb(0.04, 0.42, 0.72) });
-      y -= 28;
-    }
-
-    // Attempt to embed actual images (best-effort: skip on failure)
-    let _imgY = y; void _imgY;
-    for (const ph of photos) {
+      if (col === 0) ensure(cellH + 24);
+      const cx = margin + col * (cellW + gap);
       try {
-        const resp = await fetch(ph.url);
-        if (!resp.ok) continue;
+        const resp = await fetch(absoluteUrl(ph.url, baseUrl || ""));
+        if (!resp.ok) throw new Error("fetch failed");
         const buf = Buffer.from(await resp.arrayBuffer());
         const ct = resp.headers.get("content-type") || "";
-        let img;
-        if (ct.includes("png")) img = await doc.embedPng(buf);
-        else img = await doc.embedJpg(buf);
-        const maxW = usableW / 2 - 10;
-        const maxH = 160;
-        const scale = Math.min(maxW / img.width, maxH / img.height, 1);
-        const w = img.width * scale;
-        const h = img.height * scale;
-        ensure(h + 16);
-        page.drawImage(img, { x: margin, y: y - h, width: w, height: h });
-        y -= h + 12;
-      } catch { /* skip unembeddable images */ }
+        const img = ct.includes("png") ? await doc.embedPng(buf) : await doc.embedJpg(buf);
+        const scale = Math.min(cellW / img.width, cellH / img.height, 1);
+        const w = img.width * scale, h = img.height * scale;
+        page.drawRectangle({ x: cx, y: y - cellH, width: cellW, height: cellH, color: rgb(0.94, 0.95, 0.96) });
+        page.drawImage(img, { x: cx + (cellW - w) / 2, y: y - cellH + (cellH - h) / 2, width: w, height: h });
+      } catch {
+        page.drawRectangle({ x: cx, y: y - cellH, width: cellW, height: cellH, color: rgb(0.94, 0.95, 0.96) });
+        dt("Photo unavailable", { x: cx + 10, y: y - cellH / 2, size: 8, font, color: muted });
+      }
+      if (ph.caption) dt(ph.caption.slice(0, 60), { x: cx, y: y - cellH - 12, size: 7.5, font, color: muted });
+      col++;
+      if (col >= cols2) { col = 0; y -= cellH + 24; }
     }
+    if (col !== 0) y -= cellH + 24;
   }
 
   const bytes = await doc.save();
@@ -315,6 +418,7 @@ export async function buildJobPdf(
 }
 
 /* ------------------------- dataset definitions ---------------------- */
+
 export const DATASET_COLUMNS: Record<string, { key: string; label: string; kind?: string }[]> = {
   "work-orders": [
     { key: "id", label: "ID" }, { key: "title", label: "Title" }, { key: "service", label: "Service" },

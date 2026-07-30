@@ -410,8 +410,104 @@ export const jobSearchRoutes = new Hono()
       jobPhotos = photoRows.map((p: any) => ({ url: p.url, caption: p.caption ?? "" }));
     } catch { /* skip photos if query fails */ }
 
-    const buf = await buildJobPdf(rows, unitLines, `Job ${jobNumber(b.id)} — ${enriched.customerName}`, enriched.address, jobPhotos);
+    // Tenant branding (logo + name + color) for the PDF header, and the raw
+    // GPS route for a simple graphical route diagram.
+    const brandRow = await db.select().from(schema.companySettings).where(eq(schema.companySettings.companyId, tenantId(c))).then((r) => r[0]).catch(() => null);
+    const brand = brandRow ? { name: brandRow.name, logo: brandRow.logo, brandColor: brandRow.brandColor } : null;
+    let route: { lat: number; lng: number; phase: string }[] = [];
+    try {
+      const pingRows = await db.select().from(schema.trackingPings).where(eq(schema.trackingPings.bookingId, id));
+      pingRows.sort((x, y) => Number(x.createdAt) - Number(y.createdAt));
+      route = pingRows.map((p) => ({ lat: p.lat, lng: p.lng, phase: p.phase }));
+    } catch { /* skip route if query fails */ }
+
+    const baseUrl = new URL(c.req.url).origin;
+    const buf = await buildJobPdf(rows, unitLines, `Job ${jobNumber(b.id)} — ${enriched.customerName}`, enriched.address, jobPhotos, brand, route, baseUrl);
     return fileResponse(buf, `nvc360-job-${jobNumber(b.id)}-${stamp}.pdf`, "application/pdf");
+  })
+
+  // Consolidated read-only report for the completed-job report page: every
+  // field the report needs in one call (times, mileage, route breadcrumbs,
+  // photos, line-item + tech-pay breakdown) instead of the report page
+  // stitching together several separate requests.
+  .get("/:id/report", requireAuth, async (c) => {
+    const u = c.get("user") as SessionUser;
+    if (!isStaff(u)) return c.json({ message: "Forbidden" }, 403);
+    const id = c.req.param("id");
+    const b = await db.select().from(schema.bookings).where(and(eq(schema.bookings.id, id), eq(schema.bookings.companyId, tenantId(c)))).then((r) => r[0]);
+    if (!b) return c.json({ message: "Not found" }, 404);
+
+    const svc = b.serviceId ? await db.select().from(schema.services).where(eq(schema.services.id, b.serviceId)).then((r) => r[0]) : null;
+    const cust = b.customerId ? await db.select().from(schema.user).where(eq(schema.user.id, b.customerId)).then((r) => r[0]) : null;
+    let rider: any = null;
+    if (b.riderId) {
+      const rp = await db.select().from(schema.riders).where(eq(schema.riders.id, b.riderId)).then((r) => r[0]);
+      if (rp) {
+        const ru = await db.select().from(schema.user).where(eq(schema.user.id, rp.userId)).then((r) => r[0]);
+        rider = { id: rp.id, name: ru?.name, phone: ru?.phone, photoUrl: rp.photoUrl, vehicle: rp.vehicle };
+      }
+    }
+
+    const photoRows = await db.select().from(schema.jobPhotos).where(eq(schema.jobPhotos.bookingId, id));
+    photoRows.sort((x, y) => Number(x.createdAt) - Number(y.createdAt));
+
+    const pingRows = await db.select().from(schema.trackingPings).where(eq(schema.trackingPings.bookingId, id));
+    pingRows.sort((x, y) => Number(x.createdAt) - Number(y.createdAt));
+
+    let lineItems: any[] = [];
+    try {
+      const li = JSON.parse(b.lineItems || "[]");
+      if (Array.isArray(li)) lineItems = li;
+    } catch { /* ignore malformed lineItems */ }
+
+    return c.json(
+      {
+        id: b.id,
+        jobNumber: jobNumber(b.id),
+        title: b.title,
+        status: b.status,
+        priority: b.priority,
+        service: svc?.name ?? "",
+        address: b.address,
+        region: b.region,
+        lat: b.lat ?? null,
+        lng: b.lng ?? null,
+        notes: b.notes,
+        customer: cust ? { id: cust.id, name: cust.name, phone: b.customerPhone || cust.phone, email: cust.email } : null,
+        technician: rider,
+        timeline: {
+          scheduledAt: b.scheduledAt,
+          assignedAt: b.assignedAt,
+          acceptedAt: b.acceptedAt,
+          enrouteAt: b.enrouteAt,
+          startedAt: b.startedAt,
+          finishedAt: b.finishedAt,
+          createdAt: b.createdAt,
+        },
+        transitMinutes: b.transitMinutes,
+        onSiteMinutes: b.onSiteMinutes,
+        mileageKm: b.mileageKm,
+        route: pingRows.map((p) => ({ lat: p.lat, lng: p.lng, phase: p.phase, createdAt: p.createdAt })),
+        photos: photoRows.map((p) => ({ id: p.id, url: p.url, caption: p.caption, createdAt: p.createdAt })),
+        pricing: {
+          lineItems,
+          subtotal: b.subtotal,
+          taxAmount: b.taxAmount,
+          taxLabel: b.taxLabel,
+          total: b.total || b.price,
+          paymentStatus: b.paymentStatus,
+          lineItemsCost: b.lineItemsCost,
+          lineItemsPrice: b.lineItemsPrice,
+        },
+        techPay: {
+          total: b.techPay,
+          breakdown: (() => {
+            try { return JSON.parse(b.techPayBreakdown || "null"); } catch { return null; }
+          })(),
+        },
+      },
+      200,
+    );
   })
 
   // soft-delete (archive) a job — never lose data

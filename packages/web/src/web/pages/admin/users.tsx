@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { FullLoader } from "../../components/loader";
@@ -330,6 +331,13 @@ function ClientDrawer({ user, onClose }: { user: any; onClose: () => void }) {
   const qc = useQueryClient();
   const [tab, setTab] = useState<"profile" | "jobs" | "files">("profile");
   const [viewJob, setViewJob] = useState<any>(null);
+  const [, navigate] = useLocation();
+  // Completed jobs are historical now — open the read-only report instead
+  // of the editable work order.
+  const openJob = (b: any) => {
+    if (b.status === "completed") navigate(`/admin/jobs/${b.id}/report`);
+    else setViewJob(b);
+  };
   const [form, setForm] = useState<any>({
     name: "",
     email: "",
@@ -644,7 +652,7 @@ function ClientDrawer({ user, onClose }: { user: any; onClose: () => void }) {
                   return (
                   <div
                     key={b?.id ?? idx}
-                    {...activate(() => setViewJob(b))}
+                    {...activate(() => openJob(b))}
                     aria-label={`View ${b?.title || b?.service?.name || b?.serviceName || "job"} from ${dateLabel}`}
                     className="flex cursor-pointer items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] px-3 py-2.5 transition hover:border-brand/30 hover:bg-white/[0.05]"
                   >

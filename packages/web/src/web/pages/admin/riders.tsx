@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
+import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, apiHeaders } from "../../lib/api";
 import { FullLoader } from "../../components/loader";
 import { PageWrap } from "../../components/brand";
 import { PageHead } from "./shell";
-import { TECH_STATUS, activate, dismiss } from "../../lib/utils";
+import { TECH_STATUS, activate, dismiss, fmtDateShort } from "../../lib/utils";
 import { useWorkerNoun } from "../../lib/use-brand";
 import {
   Modal,
@@ -20,7 +21,8 @@ import { SkillPicker } from "../../components/skill-picker";
 import { AttachmentManager } from "../../components/attachment-manager";
 import { CustomFieldsForm } from "../../components/custom-fields";
 import { TechShifts } from "../../components/tech-shifts";
-import { Star, Phone, Mail, Truck, Plus, Trash2, UserPlus, X, Camera, Wrench, Users, ShieldCheck, KeyRound } from "lucide-react";
+import { WorkOrderModal } from "../../components/work-order-modal";
+import { Star, Phone, Mail, Truck, Plus, Trash2, UserPlus, X, Camera, Wrench, Users, ShieldCheck, KeyRound, ClipboardList } from "lucide-react";
 import { TechAvatar } from "../../components/tech-avatar";
 import { InternalTeamTab, RolesPermissionsTab } from "./team-tabs";
 
@@ -349,11 +351,12 @@ function FieldStaffTab() {
 
 function TechDrawer({ riderId, onClose }: { riderId: string | null; onClose: () => void }) {
   const qc = useQueryClient();
-  const [tab, setTab] = useState<"profile" | "shifts" | "files">("profile");
+  const [tab, setTab] = useState<"profile" | "jobs" | "shifts" | "files">("profile");
   const [form, setForm] = useState<any>(null);
   const [newPw, setNewPw] = useState("");
   const [pwMsg, setPwMsg] = useState("");
   const [pwErr, setPwErr] = useState("");
+  const [, navigate] = useLocation();
 
   const detail = useQuery({
     queryKey: ["riders"],
@@ -362,6 +365,26 @@ function TechDrawer({ riderId, onClose }: { riderId: string | null; onClose: () 
   });
 
   const rider = ((detail.data as any)?.riders ?? []).find((r: any) => r.id === riderId) || null;
+
+  const bookingsQ = useQuery({
+    queryKey: ["admin-bookings"],
+    enabled: tab === "jobs" && !!riderId,
+    queryFn: async () => (await api.bookings.$get()).json(),
+  });
+  const techJobs = (() => {
+    const d: any = bookingsQ.data;
+    const all = Array.isArray(d) ? d : Array.isArray(d?.bookings) ? d.bookings : [];
+    return all
+      .filter((b: any) => b && b.riderId === riderId)
+      .sort((a: any, b: any) => Number(b.createdAt) - Number(a.createdAt));
+  })();
+  const [editJob, setEditJob] = useState<any>(null);
+  // Completed jobs are historical now — open the read-only report instead
+  // of the editable work order.
+  const openJob = (b: any) => {
+    if (b.status === "completed") navigate(`/admin/jobs/${b.id}/report`);
+    else setEditJob(b);
+  };
 
   useEffect(() => {
     if (rider) {
@@ -440,7 +463,7 @@ function TechDrawer({ riderId, onClose }: { riderId: string | null; onClose: () 
             </div>
 
             <div className="flex gap-1 border-b border-white/10 px-5 pt-3">
-              {(["profile", "shifts", "files"] as const).map((t) => (
+              {(["profile", "jobs", "shifts", "files"] as const).map((t) => (
                 <button key={t} onClick={() => setTab(t)}
                   className={`rounded-t-lg px-3 py-2 text-sm font-semibold capitalize transition ${tab === t ? "border-b-2 border-brand text-white" : "text-slate-400 hover:text-white"}`}>
                   {t}
@@ -525,6 +548,34 @@ function TechDrawer({ riderId, onClose }: { riderId: string | null; onClose: () 
                 </>
               )}
 
+              {tab === "jobs" && (
+                bookingsQ.isLoading ? (
+                  <p className="py-8 text-center text-sm text-slate-500">Loading job history…</p>
+                ) : techJobs.length === 0 ? (
+                  <p className="py-8 text-center text-sm text-slate-500">No jobs assigned to this technician yet.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {techJobs.map((b: any) => (
+                      <div
+                        key={b.id}
+                        {...activate(() => openJob(b))}
+                        aria-label={`${b.status === "completed" ? "View report for" : "Edit"} ${b.title || b.service?.name || "job"}`}
+                        className="flex cursor-pointer items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] px-3 py-2.5 transition hover:border-brand/30 hover:bg-white/[0.05]"
+                      >
+                        <span className="grid h-9 w-9 place-items-center rounded-lg bg-brand/15 text-cyan-glow"><ClipboardList className="h-4 w-4" /></span>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold text-white">{b.title || b.service?.name || "Service"}</p>
+                          <p className="text-[11px] text-slate-500">
+                            {b.createdAt ? fmtDateShort(b.createdAt) : "—"} · {b.status}
+                          </p>
+                        </div>
+                        {Number.isFinite(Number(b.total)) && <span className="text-sm font-bold text-emerald-live">${Number(b.total).toFixed(2)}</span>}
+                      </div>
+                    ))}
+                  </div>
+                )
+              )}
+
               {tab === "shifts" && <TechShifts riderId={riderId} />}
 
               {tab === "files" && <AttachmentManager entityType="tech" entityId={riderId} />}
@@ -532,6 +583,12 @@ function TechDrawer({ riderId, onClose }: { riderId: string | null; onClose: () 
           </>
         )}
       </div>
+
+      <WorkOrderModal
+        open={editJob !== null}
+        editBooking={editJob ?? undefined}
+        onClose={() => setEditJob(null)}
+      />
     </div>
   );
 }

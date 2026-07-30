@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
+import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, apiHeaders } from "../../lib/api";
 import { StatusBadge, PageWrap } from "../../components/brand";
@@ -7,7 +8,7 @@ import { fmtDate, money, PRIORITY_META, dismiss } from "../../lib/utils";
 import {
   X, UserPlus, MapPin, Search, Sparkles, Plus, Pencil,
   Download, Filter, Trash2, RotateCcw, Printer, ChevronLeft, ChevronRight,
-  Columns3, FileJson, FileText, FileSpreadsheet, Loader2, ChevronDown,
+  Columns3, FileJson, FileText, FileSpreadsheet, Loader2, ChevronDown, ClipboardList,
 } from "lucide-react";
 import { useWorkerNoun, useCustomerNoun, useJobNoun } from "../../lib/use-brand";
 import { TechAvatar } from "../../components/tech-avatar";
@@ -79,6 +80,14 @@ export default function AdminWorkOrders() {
   const [assignFor, setAssignFor] = useState<any>(null);
   const [newOpen, setNewOpen] = useState(false);
   const [editJob, setEditJob] = useState<any>(null);
+  const [, navigate] = useLocation();
+  // Completed jobs are historical records now — clicking one opens the
+  // read-only report page instead of the editable work-order form.
+  // Cancelled (and every other status) keep the old edit-modal behavior.
+  const openJob = (b: any) => {
+    if (b.status === "completed") navigate(`/admin/jobs/${b.id}/report`);
+    else setEditJob(b);
+  };
 
   const [quick, setQuick] = useState(
     QUICK.some((x) => x.key === initialStatus) ? initialStatus : "",
@@ -344,7 +353,7 @@ export default function AdminWorkOrders() {
                         className={`px-3 py-3 lg:px-4 ${archived ? "" : "cursor-pointer"}`}
                         aria-label={b.title || b.service || b.jobNumber}
                         onClick={() => {
-                          if (!archived) setEditJob(b);
+                          if (!archived) openJob(b);
                         }}
                       >
                         <div className="min-w-0">
@@ -411,13 +420,15 @@ export default function AdminWorkOrders() {
                             )}
                           {!archived && (
                             <button
-                              onClick={() => setEditJob(b)}
-                              title="Edit work order"
-                              aria-label="Edit work order"
+                              onClick={() => openJob(b)}
+                              title={b.status === "completed" ? "View job report" : "Edit work order"}
+                              aria-label={b.status === "completed" ? "View job report" : "Edit work order"}
                               className="inline-flex items-center gap-1.5 rounded-full border border-white/10 px-2.5 py-1.5 text-xs font-semibold text-slate-300 hover:border-brand/50 hover:text-white lg:px-3"
                             >
-                              <Pencil className="h-3.5 w-3.5" />{" "}
-                              <span className="hidden lg:inline">Edit</span>
+                              {b.status === "completed"
+                                ? <ClipboardList className="h-3.5 w-3.5" />
+                                : <Pencil className="h-3.5 w-3.5" />}{" "}
+                              <span className="hidden lg:inline">{b.status === "completed" ? "Report" : "Edit"}</span>
                             </button>
                           )}
                           <RowExportMenu jobId={b.id} jobNumber={b.jobNumber} />

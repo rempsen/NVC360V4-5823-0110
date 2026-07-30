@@ -28,6 +28,7 @@ const NotificationsPage = lazy(() => import("./notifications"));
 const ApiAccessPage = lazy(() => import("./api-access"));
 const IntakeFormsPage = lazy(() => import("./intake-forms"));
 const CompaniesPage = lazy(() => import("./companies"));
+const JobReportPage = lazy(() => import("./job-report"));
 
 function AdminNotFound() {
   return (
@@ -71,6 +72,7 @@ export default function AdminApp() {
           <Route path="/admin/fleet" component={FleetPage} />
           <Route path="/admin/scheduler" component={SchedulerPage} />
           <Route path="/admin/work-orders" component={WorkOrdersPage} />
+          <Route path="/admin/jobs/:id/report" component={JobReportPage} />
           <Route path="/admin/builder" component={BuilderPage} />
           <Route path="/admin/techs" component={TechsPage} />
           <Route path="/admin/clients" component={ClientsPage} />

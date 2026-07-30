@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { FullLoader } from "../../components/loader";
@@ -57,6 +58,14 @@ export default function SchedulerPage() {
   const [anchor, setAnchor] = useState(() => new Date());
   const [newDate, setNewDate] = useState<Date | null>(null);
   const [editJob, setEditJob] = useState<any | null>(null);
+  const [, navigate] = useLocation();
+  // Completed jobs are historical now — open the read-only report instead
+  // of the editable work order. Everything else (including cancelled)
+  // keeps the existing edit-modal behavior.
+  const openJob = (b: any) => {
+    if (b.status === "completed") navigate(`/admin/jobs/${b.id}/report`);
+    else setEditJob(b);
+  };
 
   const bookings = useQuery({
     queryKey: ["bookings"],
@@ -454,13 +463,13 @@ export default function SchedulerPage() {
                           aria-label={`Edit job ${b.id}`}
                           onClick={(e) => {
                             e.stopPropagation();
-                            setEditJob(b);
+                            openJob(b);
                           }}
                           onKeyDown={(e) => {
                             if (e.key === "Enter" || e.key === " ") {
                               e.preventDefault();
                               e.stopPropagation();
-                              setEditJob(b);
+                              openJob(b);
                             }
                           }}
                           className="group/chip flex cursor-pointer items-center gap-1 truncate rounded px-1 py-0.5 text-[10px] font-medium text-white hover:brightness-125"
@@ -608,11 +617,11 @@ export default function SchedulerPage() {
                             key={b.id}
                             // eslint-disable-next-line jsx-a11y/prefer-tag-over-role
                             role="button"
-                            onClick={() => setEditJob(b)}
+                            onClick={() => openJob(b)}
                             onKeyDown={(e) => {
                               if (e.key === "Enter" || e.key === " ") {
                                 e.preventDefault();
-                                setEditJob(b);
+                                openJob(b);
                               }
                             }}
                             title="Click to edit"
@@ -686,12 +695,12 @@ export default function SchedulerPage() {
                   tabIndex={0}
                   title="Click to view & edit"
                   onClick={() => {
-                    if (!dragId) setEditJob(b);
+                    if (!dragId) openJob(b);
                   }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
-                      setEditJob(b);
+                      openJob(b);
                     }
                   }}
                   onDragStart={() => setDragId(b.id)}
@@ -763,7 +772,7 @@ export default function SchedulerPage() {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            setEditJob(b);
+                            openJob(b);
                           }}
                           className="flex items-center gap-1 text-xs font-semibold text-slate-400 hover:text-white"
                         >
@@ -961,7 +970,7 @@ export default function SchedulerPage() {
                         className="group/chip flex items-center gap-1.5 rounded-lg border border-white/10 bg-ink-3/60 pl-2.5 pr-1.5 py-1.5 text-xs transition hover:border-brand/50 hover:bg-ink-3"
                       >
                         <button
-                          onClick={() => setEditJob(b)}
+                          onClick={() => openJob(b)}
                           title="Click to edit"
                           className="flex items-center gap-2"
                         >

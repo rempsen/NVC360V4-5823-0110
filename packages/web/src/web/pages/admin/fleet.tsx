@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { TechAvatar } from "../../components/tech-avatar";
@@ -35,6 +36,7 @@ export default function FleetPage() {
   const [smsFor, setSmsFor] = useState<any>(null);
   const [chatFor, setChatFor] = useState<any>(null);
   const [jobFor, setJobFor] = useState<any>(null);
+  const [, navigate] = useLocation();
 
   // map filters
   const [showDrivers, setShowDrivers] = useState(true);
@@ -159,7 +161,11 @@ export default function FleetPage() {
         }}
         onSelectJob={(id) => {
           const b = allBookings.find((x: any) => x.id === id) ?? jobs.find((x: any) => x.id === id);
-          if (b) setJobFor(b);
+          if (!b) return;
+          // Completed jobs are historical now — open the read-only report
+          // instead of the editable work order.
+          if (b.status === "completed") navigate(`/admin/jobs/${b.id}/report`);
+          else setJobFor(b);
         }}
         className="h-full w-full"
       />

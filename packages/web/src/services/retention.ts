@@ -6,6 +6,12 @@
  * and purge older ones. Mileage totals are already persisted on the booking,
  * so purging history is lossless for billing.
  *
+ * EXCEPTION: pings belonging to a COMPLETED booking are never purged by this
+ * sweep — the completed-job report page draws the driver's actual route from
+ * this raw history, and that has to stay available indefinitely, not just for
+ * the retention window. Non-completed bookings (still open, or cancelled)
+ * still purge on the normal schedule.
+ *
  * NOTE: this runs in-process today (single node). When moving to multi-node,
  * this should run from ONE worker (or a DB-level scheduled job / cron) to avoid
  * every replica issuing the same DELETE.
@@ -16,7 +22,8 @@ import { log, captureException } from "../api/lib/logger";
 
 const PING_RETENTION_DAYS = Number(process.env.PING_RETENTION_DAYS ?? 7);
 
-/** Delete tracking pings older than the retention window (in batches). */
+/** Delete tracking pings older than the retention window (in batches),
+ *  skipping any ping whose booking has status = 'completed'. */
 export async function purgeOldPings(): Promise<number> {
   const cutoff = Date.now() - PING_RETENTION_DAYS * 24 * 60 * 60 * 1000;
   try {
@@ -25,7 +32,11 @@ export async function purgeOldPings(): Promise<number> {
     for (let i = 0; i < 50; i++) {
       const res = await db.run(
         sql`DELETE FROM tracking_pings WHERE id IN (
-          SELECT id FROM tracking_pings WHERE created_at < ${cutoff} LIMIT 5000
+          SELECT tp.id FROM tracking_pings tp
+          LEFT JOIN bookings b ON b.id = tp.booking_id
+          WHERE tp.created_at < ${cutoff}
+            AND (b.status IS NULL OR b.status != 'completed')
+          LIMIT 5000
         )`,
       );
       const n = Number((res as any)?.rowsAffected ?? 0);
