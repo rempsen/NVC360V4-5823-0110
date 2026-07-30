@@ -6,7 +6,7 @@ import { PageWrap } from "../../components/brand";
 import { PageHead } from "./shell";
 import { Modal, Field, inputCls, BtnPrimary, BtnGhost, ConfirmModal } from "../../components/modal";
 import { Plus, Trash2, Tag as TagIcon, ListPlus, GripVertical } from "lucide-react";
-import { useWorkerNoun, useCustomerNoun } from "../../lib/use-brand";
+import { useWorkerNoun, useCustomerNoun, useJobNoun } from "../../lib/use-brand";
 
 const SCOPES = ["both", "client", "tech"];
 const ENTITIES = [

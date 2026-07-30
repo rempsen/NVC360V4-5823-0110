@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { cn } from "../lib/utils";
 
 function initials(name?: string | null): string {
@@ -34,7 +35,8 @@ export function TechAvatar({
     "grid place-items-center overflow-hidden rounded-full bg-cover bg-center font-extrabold text-ink shrink-0",
     className,
   );
-  if (photoUrl) {
+  const [failed, setFailed] = useState(false);
+  if (photoUrl && !failed) {
     return (
       <span
         className={base}
@@ -45,6 +47,7 @@ export function TechAvatar({
           src={photoUrl}
           alt={name ?? "Technician"}
           className="h-full w-full object-cover"
+          onError={() => setFailed(true)}
         />
       </span>
     );

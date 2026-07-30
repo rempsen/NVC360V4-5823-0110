@@ -29,6 +29,20 @@ const ApiAccessPage = lazy(() => import("./api-access"));
 const IntakeFormsPage = lazy(() => import("./intake-forms"));
 const CompaniesPage = lazy(() => import("./companies"));
 
+function AdminNotFound() {
+  return (
+    <div style={{ padding: "4rem 2rem", textAlign: "center", color: "#94a3b8" }}>
+      <div style={{ fontSize: 40, fontWeight: 800, color: "#0ea5e9", marginBottom: "0.5rem" }}>
+        404
+      </div>
+      <p style={{ marginBottom: "1rem" }}>This admin page doesn't exist or the link is out of date.</p>
+      <a href="/admin" style={{ color: "#0ea5e9", fontWeight: 600, textDecoration: "none" }}>
+        ← Back to Dashboard
+      </a>
+    </div>
+  );
+}
+
 function PageFallback() {
   return (
     <div style={{ padding: 32, display: "flex", justifyContent: "center" }}>
@@ -76,6 +90,9 @@ export default function AdminApp() {
           <Route path="/admin/reviews" component={ReviewsPage} />
           <Route path="/admin/notifications" component={NotificationsPage} />
           <Route path="/admin/companies" component={CompaniesPage} />
+          <Route>
+            <AdminNotFound />
+          </Route>
         </Switch>
       </Suspense>
     </AdminShell>

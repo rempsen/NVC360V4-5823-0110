@@ -6,7 +6,7 @@ import { PageWrap } from "../../components/brand";
 import { PageHead } from "./shell";
 import { Modal, Field, inputCls, BtnPrimary, BtnGhost } from "../../components/modal";
 import { Plus, CheckCircle2, Clock, DollarSign } from "lucide-react";
-import { useWorkerNoun } from "../../lib/use-brand";
+import { useWorkerNoun, useJobNoun } from "../../lib/use-brand";
 
 const money = (n: number) => `$${(n ?? 0).toFixed(2)}`;
 const fmtDate = (d: string) => new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric" });

@@ -106,6 +106,45 @@ const CustomerApp = lazy(() => import("./pages/customer"));
 const RiderApp = lazy(() => import("./pages/rider"));
 const AdminApp = lazy(() => import("./pages/admin"));
 
+function NotFound() {
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "#070b12",
+        padding: "2rem",
+        textAlign: "center",
+      }}
+    >
+      <div>
+        <div style={{ fontSize: 48, fontWeight: 800, color: "#0ea5e9", marginBottom: "0.5rem" }}>
+          404
+        </div>
+        <p style={{ color: "#94a3b8", marginBottom: "1.5rem" }}>
+          This page doesn't exist or the link is out of date.
+        </p>
+        <a
+          href="/"
+          style={{
+            background: "#0ea5e9",
+            color: "#fff",
+            borderRadius: 8,
+            padding: "0.5rem 1.5rem",
+            fontWeight: 600,
+            fontSize: "0.875rem",
+            textDecoration: "none",
+          }}
+        >
+          Go home
+        </a>
+      </div>
+    </div>
+  );
+}
+
 function RouteFallback() {
   return (
     <div
@@ -162,6 +201,9 @@ function App() {
             <ProtectedRoute roles={["admin", "superadmin"]}>
               <AdminApp />
             </ProtectedRoute>
+          </Route>
+          <Route>
+            <NotFound />
           </Route>
         </Switch>
       </Suspense>

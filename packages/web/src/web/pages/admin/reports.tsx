@@ -13,7 +13,7 @@ import {
   DollarSign, Wrench, ClipboardList, Wallet, Boxes, Users, Receipt, Map,
   Database, Table as TableIcon,
 } from "lucide-react";
-import { useWorkerNoun, useCustomerNoun } from "../../lib/use-brand";
+import { useWorkerNoun, useCustomerNoun, useJobNoun } from "../../lib/use-brand";
 
 /* ------------------------------ config ------------------------------ */
 type ReportId =

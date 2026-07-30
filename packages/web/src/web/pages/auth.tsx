@@ -34,6 +34,18 @@ export default function AuthPage({ mode }: { mode: "sign-in" | "sign-up" }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  // Clear a stale error banner as soon as the user edits any field again —
+  // otherwise "Invalid email" (from a previous failed submit) keeps showing
+  // even after the field holds valid input, until the next submit.
+  const withClearError = (setter: (v: string) => void) => (v: string) => {
+    setError("");
+    setter(v);
+  };
+  const onNameChange = withClearError(setName);
+  const onEmailChange = withClearError(setEmail);
+  const onPhoneChange = withClearError(setPhone);
+  const onPasswordChange = withClearError(setPassword);
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
@@ -145,13 +157,13 @@ export default function AuthPage({ mode }: { mode: "sign-in" | "sign-up" }) {
 
           <form onSubmit={submit} className="mt-5 space-y-4">
             {isSignUp && (
-              <Field icon={User} placeholder="Full name" value={name} onChange={setName} required />
+              <Field icon={User} placeholder="Full name" value={name} onChange={onNameChange} required />
             )}
-            <Field icon={Mail} type="email" placeholder="Email address" value={email} onChange={setEmail} required />
+            <Field icon={Mail} type="email" placeholder="Email address" value={email} onChange={onEmailChange} required />
             {isSignUp && (
-              <Field icon={Phone} type="tel" placeholder="Phone number" value={phone} onChange={setPhone} />
+              <Field icon={Phone} type="tel" placeholder="Phone number" value={phone} onChange={onPhoneChange} />
             )}
-            <Field icon={Lock} type="password" placeholder="Password" value={password} onChange={setPassword} required />
+            <Field icon={Lock} type="password" placeholder="Password" value={password} onChange={onPasswordChange} required />
 
             {!isSignUp && (
               <div className="flex justify-end -mt-1">
