@@ -42,6 +42,24 @@ import { getToken } from "./auth";
 
 const BG_TASK = "nvc-location-heartbeat";
 
+/**
+ * Guards a promise with a hard timeout. Critical for anything awaited inside
+ * the native background-location task callback: iOS keeps this whole app
+ * process alive (not suspended) while UIBackgroundModes:["location"] is
+ * active, and a hung network call with no timeout can tie up that execution
+ * indefinitely — a well-known cause of the OS watchdog silently killing an
+ * app in the background (0x8badf00d-style termination). These terminations
+ * happen at the OS level, outside the JS/native exception handlers Sentry
+ * hooks into, so they show up to the user as "app quit unexpectedly" with
+ * NO corresponding Sentry event — exactly the pattern this fixes.
+ */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error("timeout")), ms)),
+  ]);
+}
+
 /** Shared throttle so background + foreground don't double-spam the API. */
 let lastSent = 0;
 async function pushLocation(lat: number, lng: number) {
@@ -50,9 +68,9 @@ async function pushLocation(lat: number, lng: number) {
   if (now - lastSent < 6_000) return; // at most once per 6s
   lastSent = now;
   try {
-    await api.riders.me.$patch({ json: { lat, lng } });
+    await withTimeout(api.riders.me.$patch({ json: { lat, lng } }), 15_000);
   } catch {
-    /* offline / transient — next tick retries */
+    /* offline / transient / timed out — next tick retries */
   }
 }
 
@@ -67,19 +85,25 @@ async function pushLocation(lat: number, lng: number) {
 async function pingOnline() {
   if (!getToken()) return;
   try {
-    await api.riders.me.$patch({ json: { heartbeat: true } });
+    await withTimeout(api.riders.me.$patch({ json: { heartbeat: true } }), 15_000);
   } catch {
-    /* transient — ignore */
+    /* transient / timed out — ignore */
   }
 }
 
 // ---- Background task definition (module scope — required by TaskManager) ----
 TaskManager.defineTask(BG_TASK, async ({ data, error }) => {
   if (error) return;
-  const locs = (data as { locations?: Location.LocationObject[] })?.locations;
-  const loc = locs?.[locs.length - 1];
-  if (loc) {
-    await pushLocation(loc.coords.latitude, loc.coords.longitude);
+  try {
+    const locs = (data as { locations?: Location.LocationObject[] })?.locations;
+    const loc = locs?.[locs.length - 1];
+    if (loc) {
+      await pushLocation(loc.coords.latitude, loc.coords.longitude);
+    }
+  } catch {
+    // Never let an unexpected error inside the background delivery callback
+    // propagate — the native side is holding a background execution slice
+    // open while this runs.
   }
 });
 
@@ -208,21 +232,43 @@ export function useLocationHeartbeat(enabled: boolean) {
 
     (async () => {
       // Kick off background updates first (handles the locked-phone case),
-      // then layer the tighter foreground watcher on top while app is open.
+      // then layer the tighter foreground watcher on top — but only if the
+      // app is actually in the foreground right now. Without this check, a
+      // headless background relaunch (iOS waking the app purely to deliver a
+      // location event while UIBackgroundModes:["location"] is active) would
+      // start the foreground watcher too, running it redundantly alongside
+      // the background task for as long as the process stays alive.
       const ok = await startBackgroundUpdates();
       if (!mounted) return;
       granted.current = ok;
-      await startForeground();
+      if (AppState.currentState === "active") {
+        await startForeground();
+      }
     })();
 
-    // Refresh a fix + online signal whenever the app returns to the foreground.
+    // Foreground watcher vs. background task, on AppState change:
+    //  - going to background/inactive: stop the tighter foreground watcher.
+    //    The native background task (started above) is what's designed to
+    //    keep reporting location while backgrounded/locked — running BOTH
+    //    simultaneously is redundant work (extra GPS callbacks + network
+    //    calls) that keeps the backgrounded process busier than it needs to
+    //    be, for no benefit, while the app is already living on borrowed
+    //    background execution time from the OS.
+    //  - returning to foreground: restart the tighter watcher and force an
+    //    immediate fresh fix + online signal.
     const sub = AppState.addEventListener("change", (s: AppStateStatus) => {
       if (s === "active") {
         pingOnline();
-        if (granted.current) {
+        if (granted.current && !watcher.current) {
           lastSent = 0; // force an immediate GPS send too
           sendOnce();
+          Location.watchPositionAsync(
+            { accuracy: Location.Accuracy.High, timeInterval: 6_000, distanceInterval: 15 },
+            (loc) => pushLocation(loc.coords.latitude, loc.coords.longitude),
+          ).then((w) => { watcher.current = w; });
         }
+      } else {
+        stopForeground();
       }
     });
 
