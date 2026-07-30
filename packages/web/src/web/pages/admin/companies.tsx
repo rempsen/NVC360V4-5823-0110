@@ -343,7 +343,36 @@ export default function CompaniesPage() {
         })}
       </div>
 
-      <Modal open={open} onClose={() => setOpen(false)} title="Provision a new company">
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title="Provision a new company"
+        subtitle={create.isPending ? "⏳ Provisioning — this can take up to a minute, please don't close this window." : undefined}
+        footer={
+          <>
+            <BtnGhost onClick={() => setOpen(false)} disabled={create.isPending}>Cancel</BtnGhost>
+            <BtnPrimary
+              onClick={() => create.mutate()}
+              disabled={
+                create.isPending ||
+                !form.name ||
+                !form.industry ||
+                (form.industry === "other" && !form.industryOther.trim()) ||
+                !form.adminEmail ||
+                !form.adminPassword
+              }
+            >
+              {create.isPending ? (
+                <span className="inline-flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Provisioning…
+                </span>
+              ) : (
+                "Create company"
+              )}
+            </BtnPrimary>
+          </>
+        }
+      >
         <div className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Company name">
@@ -513,23 +542,6 @@ export default function CompaniesPage() {
           </div>
 
           {err && <p className="text-sm text-red-400">{err}</p>}
-
-          <div className="flex justify-end gap-2 pt-1">
-            <BtnGhost onClick={() => setOpen(false)}>Cancel</BtnGhost>
-            <BtnPrimary
-              onClick={() => create.mutate()}
-              disabled={
-                create.isPending ||
-                !form.name ||
-                !form.industry ||
-                (form.industry === "other" && !form.industryOther.trim()) ||
-                !form.adminEmail ||
-                !form.adminPassword
-              }
-            >
-              {create.isPending ? "Provisioning…" : "Create company"}
-            </BtnPrimary>
-          </div>
         </div>
       </Modal>
     </div>
