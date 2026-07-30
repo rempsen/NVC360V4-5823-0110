@@ -19,11 +19,30 @@ const baseURL =
   (Constants.expoConfig?.extra?.apiUrl as string) ??
   process.env.EXPO_PUBLIC_API_URL;
 
+// BUG (root cause of a real production crash): `isWeb` was defined but never
+// used to gate the fallback path below — `localStorage` doesn't exist at all
+// in the React Native/Hermes runtime (it's a browser-only global). On native,
+// SecureStore's Keychain-backed calls CAN throw — most commonly when a
+// background task (e.g. the location heartbeat) tries to read the token while
+// the device is locked, since Keychain items stored with the default
+// "when-unlocked" accessibility reject reads from a locked device. That threw
+// a normal, catchable Error — but the `catch` block then called
+// `localStorage.getItem(...)`, which throws its OWN uncaught
+// `ReferenceError: localStorage is not defined` (nothing wraps the catch body
+// itself). That second exception propagated all the way up through
+// getToken() -> pushLocation() -> the native background-location task
+// callback with no further try/catch above it, which is exactly what
+// escalates to RN's fatal-JS-exception path (RCTExceptionsManager
+// reportFatal -> RCTFatal -> SIGABRT) — a real TestFlight crash seen ~90-180s
+// after backgrounding while on shift. `localStorage` must only ever be used
+// on the web build; on native, a SecureStore failure should just mean
+// "no token available" (safe no-op), not a second crash.
 export function getToken(): string {
   try {
     return SecureStore.getItem(TOKEN_KEY) ?? "";
   } catch {
-    return localStorage.getItem(TOKEN_KEY) ?? "";
+    if (isWeb) return localStorage.getItem(TOKEN_KEY) ?? "";
+    return "";
   }
 }
 
@@ -31,7 +50,7 @@ function setToken(token: string) {
   try {
     SecureStore.setItem(TOKEN_KEY, token);
   } catch {
-    localStorage.setItem(TOKEN_KEY, token);
+    if (isWeb) localStorage.setItem(TOKEN_KEY, token);
   }
 }
 
@@ -39,7 +58,7 @@ async function removeToken() {
   try {
     await SecureStore.deleteItemAsync(TOKEN_KEY);
   } catch {
-    localStorage.removeItem(TOKEN_KEY);
+    if (isWeb) localStorage.removeItem(TOKEN_KEY);
   }
 }
 
