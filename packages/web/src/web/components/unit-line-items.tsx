@@ -4,22 +4,40 @@
 // so a job priced from either place uses identical UI + math, including the
 // tech-pay-per-unit rate (e.g. $6.00/sq-yd charge to client, $3.50/sq-yd pay
 // to the tech — set charge to $0 for a pay-only line).
+//
+// Description can be filled two ways (dispatcher's choice, same field):
+//  1. Pick from the catalog — type a few letters, pick a match from the
+//     dropdown; name, unit, charge/unit and pay/unit all prefill from that
+//     catalog item's price/cost (still fully editable afterward).
+//  2. Type a fully custom line — nothing catalog-backed required. Every rate
+//     and the unit stay manually editable either way, so a dispatcher can
+//     always override a prefilled rate for a one-off job.
+// This is what lets one work order carry multiple scopes of work in a single
+// visit (e.g. Carpet Tile in the living room + LVP in the kitchen) as
+// separate priced lines instead of a single flat custom field.
 
+import { useMemo, useState } from "react";
 import { Plus, Ruler, X } from "lucide-react";
 import { money } from "../lib/utils";
-import type { LineItem } from "../../shared/catalog";
+import { itemUnitCost, itemUnitPrice, type CatalogItem, type LineItem } from "../../shared/catalog";
 
-export const UNIT_OPTIONS = ["sq/ft", "sq/yd", "linear ft", "piece", "each", "hour"];
+// sq/ft, sq/yd, LF (linear feet), and Each cover the common flooring/material
+// measurement units; piece/hour kept for other trades already relying on them.
+export const UNIT_OPTIONS = ["sq/ft", "sq/yd", "LF", "each", "piece", "hour"];
 
 export function UnitLineItems({
   lines,
   workerNoun,
+  catalogItems,
   onAdd,
   onChange,
   onRemove,
 }: {
   lines: LineItem[];
   workerNoun: string;
+  /** Optional — when provided, the description field also offers a
+   *  catalog-item typeahead. Omit to keep description fully manual-only. */
+  catalogItems?: CatalogItem[];
   onAdd: () => void;
   onChange: (
     itemId: string,
@@ -29,6 +47,29 @@ export function UnitLineItems({
 }) {
   const totalCharge = lines.reduce((s, l) => s + (l.price || 0), 0);
   const totalPay = lines.reduce((s, l) => s + (l.cost || 0), 0);
+  const [openFor, setOpenFor] = useState<string | null>(null);
+
+  const catalogById = useMemo(
+    () => new Map((catalogItems ?? []).map((i) => [i.id, i])),
+    [catalogItems],
+  );
+  const lookup = (id: string) => catalogById.get(id);
+
+  function matchesFor(text: string): CatalogItem[] {
+    if (!catalogItems?.length || !text.trim()) return [];
+    const q = text.toLowerCase();
+    return catalogItems.filter((i) => i.active !== false && i.name.toLowerCase().includes(q)).slice(0, 6);
+  }
+
+  function pickCatalogItem(itemId: string, item: CatalogItem) {
+    onChange(itemId, {
+      name: item.name,
+      unit: item.unit || "each",
+      unitPrice: itemUnitPrice(item, lookup),
+      unitPayRate: itemUnitCost(item, lookup),
+    });
+    setOpenFor(null);
+  }
 
   return (
     <div className="overflow-hidden rounded-xl border border-white/10 bg-white/[0.03] p-4">
@@ -39,7 +80,8 @@ export function UnitLineItems({
           </p>
           <p className="text-xs text-slate-500">
             Charge the client and pay the {workerNoun.toLowerCase()} by measured unit
-            (e.g. $6.00/sq-yd carpet install). Set charge to $0 for a pay-only line.
+            (e.g. $6.00/sq-yd carpet install). Type a description to search the catalog,
+            or enter a fully custom line — add as many lines as this visit needs.
           </p>
         </div>
         <button
@@ -70,19 +112,39 @@ export function UnitLineItems({
             const lineCharge = l.price || 0;
             const linePay = l.cost || 0;
             const customUnit = !UNIT_OPTIONS.includes(l.unit);
+            const matches = openFor === l.itemId ? matchesFor(l.name) : [];
             return (
               <div
                 key={l.itemId}
                 className="grid grid-cols-2 gap-1.5 rounded-lg bg-white/5 p-2 sm:grid-cols-[1fr_80px_52px_82px_82px_72px_24px] sm:items-center sm:bg-transparent sm:p-1"
               >
-                {/* description */}
-                <input
-                  aria-label="Line description"
-                  value={l.name}
-                  onChange={(e) => onChange(l.itemId, { name: e.target.value })}
-                  placeholder="e.g. LVP install"
-                  className="col-span-2 rounded-md border border-white/10 bg-ink-2 px-2 py-1.5 text-sm outline-none focus:border-brand sm:col-span-1"
-                />
+                {/* description — free text, or type to search the catalog */}
+                <div className="relative col-span-2 sm:col-span-1">
+                  <input
+                    aria-label="Line description"
+                    value={l.name}
+                    onChange={(e) => onChange(l.itemId, { name: e.target.value })}
+                    onFocus={() => setOpenFor(l.itemId)}
+                    onBlur={() => setTimeout(() => setOpenFor((v) => (v === l.itemId ? null : v)), 150)}
+                    placeholder={catalogItems?.length ? "e.g. Carpet Tile — search catalog or type your own" : "e.g. LVP install"}
+                    className="w-full rounded-md border border-white/10 bg-ink-2 px-2 py-1.5 text-sm outline-none focus:border-brand"
+                  />
+                  {matches.length > 0 && (
+                    <div className="absolute left-0 top-full z-10 mt-1 w-full overflow-hidden rounded-lg border border-white/10 bg-ink-2 shadow-xl">
+                      {matches.map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onMouseDown={(e) => { e.preventDefault(); pickCatalogItem(l.itemId, m); }}
+                          className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs hover:bg-white/10"
+                        >
+                          <span className="truncate text-slate-200">{m.name}</span>
+                          <span className="shrink-0 text-slate-500">{money(itemUnitPrice(m, lookup))}/{m.unit || "ea"}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
                 {/* unit */}
                 <div className="flex flex-col gap-1">

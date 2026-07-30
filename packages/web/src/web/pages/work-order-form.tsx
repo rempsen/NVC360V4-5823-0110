@@ -539,6 +539,7 @@ function WorkOrderBuilder({ companyId, slug, cfg, services, brand, publicKey }: 
               <UnitLineItems
                 lines={lineItems.filter((l) => l.kind === "unit")}
                 workerNoun={cfg.workerNoun || "Technician"}
+                catalogItems={catalog}
                 onAdd={addUnitLine}
                 onChange={changeUnitLine}
                 onRemove={removeUnitLine}

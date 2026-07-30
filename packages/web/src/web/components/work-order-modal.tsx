@@ -1183,6 +1183,7 @@ export function WorkOrderModal({
           <UnitLineItems
             lines={lineItems.filter((l) => l.kind === "unit")}
             workerNoun="Technician"
+            catalogItems={catalogItems}
             onAdd={addUnitLine}
             onChange={changeUnitLine}
             onRemove={removeUnitLine}
