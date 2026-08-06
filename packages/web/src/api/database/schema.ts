@@ -214,6 +214,10 @@ export const bookings = sqliteTable("bookings", {
   // pending | confirmed | assigned | enroute | arrived | in_progress | completed | cancelled
   scheduledAt: integer("scheduled_at", { mode: "timestamp_ms" }).notNull(),
   address: text("address").notNull(),
+  // resolved-or-created from `address` on save — links this job into the
+  // property's permanent service history. Nullable: legacy rows + any job
+  // whose address can't be normalised still work exactly as before.
+  propertyId: text("property_id"),
   lat: real("lat").notNull().default(43.6532),
   lng: real("lng").notNull().default(-79.3832),
   notes: text("notes").notNull().default(""),
@@ -1027,6 +1031,121 @@ export const icpKnowledgeBase = sqliteTable("icp_knowledge_base", {
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }),
   createdAt: now(),
 });
+
+/**
+ * Physical service locations — the "property" a job happens at.
+ *
+ * One row per distinct address per tenant (addressNormalized is the dedupe
+ * key). Bookings link to it via bookings.propertyId, which is what turns a
+ * pile of unrelated jobs into a permanent service history for that address
+ * ("CarFax for buildings").
+ *
+ * publicToken backs the no-login customer property hub at /p/:token — a
+ * persistent magic link that survives across jobs, unlike the per-job
+ * tracking token which is scoped to one work order.
+ */
+export const properties = sqliteTable(
+  "properties",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    companyId: text("company_id").notNull().default("default"),
+    // dedupe key: lowercased, punctuation-stripped, whitespace-collapsed address
+    addressNormalized: text("address_normalized").notNull(),
+    // what we actually show the user — the address as originally entered
+    addressDisplay: text("address_display").notNull().default(""),
+    lat: real("lat"),
+    lng: real("lng"),
+    // most recent customer associated with this address (properties outlive customers)
+    customerId: text("customer_id").references(() => user.id),
+    // persistent public token for /p/:token — rotatable from admin for PII safety
+    publicToken: text("public_token")
+      .notNull()
+      .$defaultFn(() => crypto.randomUUID().replace(/-/g, "").slice(0, 16)),
+    notes: text("notes").notNull().default(""),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }),
+    createdAt: now(),
+  },
+  (t) => ({
+    companyIdx: index("prop_company_idx").on(t.companyId),
+    addrIdx: index("prop_addr_idx").on(t.companyId, t.addressNormalized),
+    tokenIdx: index("prop_token_idx").on(t.publicToken),
+  }),
+);
+
+/**
+ * Timestamped history of everything that happened on a job.
+ *
+ * The bookings table stores current *state* (status, startedAt, finishedAt).
+ * This stores the *narrative* — an append-only event log. It's what powers the
+ * customer-facing job timeline ("8:15 AM Technician arrived · 11:20 AM
+ * Moisture testing complete") and the permanent job record.
+ *
+ * customerVisible gates what the homeowner sees on /t/:token — internal events
+ * (staff notes, tech declined, pricing changes) stay office-only.
+ */
+export const jobEvents = sqliteTable(
+  "job_events",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    companyId: text("company_id").notNull().default("default"),
+    bookingId: text("booking_id")
+      .notNull()
+      .references(() => bookings.id, { onDelete: "cascade" }),
+    // machine key: created | assigned | accepted | declined | enroute | arrived |
+    // started | completed | cancelled | photo_added | signature_captured |
+    // note_added | checklist_completed | message | review_submitted
+    kind: text("kind").notNull(),
+    actorRole: text("actor_role").notNull().default("system"), // system | dispatch | tech | client
+    actorName: text("actor_name").notNull().default(""),
+    // human-readable one-liner rendered directly in the timeline
+    label: text("label").notNull().default(""),
+    detail: text("detail").notNull().default(""),
+    meta: text("meta").notNull().default("{}"), // JSON — photo url, duration, etc.
+    customerVisible: integer("customer_visible", { mode: "boolean" }).notNull().default(false),
+    createdAt: now(),
+  },
+  (t) => ({
+    companyIdx: index("jobev_company_idx").on(t.companyId),
+    bookingIdx: index("jobev_booking_idx").on(t.bookingId),
+    createdIdx: index("jobev_created_idx").on(t.createdAt),
+  }),
+);
+
+/**
+ * Deferred work queue — the thing that lets anything happen *later*.
+ *
+ * Until this existed, every notification in the system was reactive (fired the
+ * instant a lifecycle event happened). This backs review requests ("2h after
+ * completion"), maintenance reminders ("in 90 days"), warranty expiry nudges,
+ * and the time-based automation triggers (tech_idle, sla_risk).
+ *
+ * Claimed by services/scheduler.ts with a conditional UPDATE so two server
+ * instances can never double-fire the same task.
+ */
+export const scheduledTasks = sqliteTable(
+  "scheduled_tasks",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    companyId: text("company_id").notNull().default("default"),
+    // handler key registered in services/scheduler.ts
+    kind: text("kind").notNull(), // review_request | maintenance_reminder | warranty_expiry | automation_check
+    bookingId: text("booking_id").references(() => bookings.id, { onDelete: "cascade" }),
+    propertyId: text("property_id").references(() => properties.id, { onDelete: "cascade" }),
+    runAt: integer("run_at", { mode: "timestamp_ms" }).notNull(),
+    payload: text("payload").notNull().default("{}"), // JSON handler args
+    status: text("status").notNull().default("pending"), // pending | running | done | failed | cancelled
+    attempts: integer("attempts").notNull().default(0),
+    lastError: text("last_error").notNull().default(""),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+    createdAt: now(),
+  },
+  (t) => ({
+    companyIdx: index("schedtask_company_idx").on(t.companyId),
+    // the hot query: claim due pending work
+    dueIdx: index("schedtask_due_idx").on(t.status, t.runAt),
+    bookingIdx: index("schedtask_booking_idx").on(t.bookingId),
+  }),
+);
 
 /**
  * Per-tenant outgoing email sending domains (Resend).

@@ -16,6 +16,7 @@ import { verifiedDomainsForCompany } from "./email-domains";
 import { sendSms, trackingUrl } from "./sms";
 import { sendPush } from "./push";
 import { applyNotificationOverrides } from "./notification-presets";
+import { logJobEvent, type JobEventKind } from "./job-events";
 
 export type NvcEvent =
   | "created"
@@ -321,6 +322,21 @@ export async function fireEvent(event: NvcEvent, bookingId: string) {
     const ctx = await context(bookingId);
     if (!ctx) return;
     const { b, companyId, cust, rider, riderUser, vars } = ctx;
+
+    // Append to the job's permanent timeline. Every lifecycle event in the
+    // system funnels through fireEvent, so this single call is what gives the
+    // customer-facing timeline and the permanent job record their history.
+    // Visibility policy lives in job-events.ts, not here.
+    await logJobEvent({
+      companyId,
+      bookingId: b.id,
+      kind: event as JobEventKind,
+      actorRole: event === "accepted" || event === "declined" ? "tech" : "system",
+      actorName: riderUser?.name || "",
+      detail:
+        event === "declined" && b.declineReason ? b.declineReason : "",
+      meta: { status: b.status, service: vars.service },
+    });
 
     const rules = await db
       .select()

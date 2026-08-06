@@ -3,6 +3,7 @@ import { reconcileAllRiders } from "./services/presence";
 import { rowsNeedingPoll, triggerVerify } from "./services/email-domains";
 import { seedRolePermissions } from "./api/routes/team";
 import { startRetentionSweeps } from "./services/retention";
+import { startScheduler } from "./services/scheduler";
 import { log, captureException } from "./api/lib/logger";
 import { initRealtimeBus } from "./services/realtime";
 import { initRateLimitStore } from "./api/lib/rate-limit";
@@ -63,6 +64,11 @@ reconcileAllRiders().catch((e) => console.error("presence sweep (boot) failed", 
 setInterval(() => {
   reconcileAllRiders().catch((e) => console.error("presence sweep failed", e));
 }, 2 * 60 * 1000);
+
+// Deferred task queue: review requests, maintenance reminders, warranty
+// nudges, time-based automation. Ticks every 60s; claims are race-safe so a
+// rolling deploy running two instances can't double-fire a task.
+startScheduler();
 
 // Auto-poll pending/verifying email sending domains and flip to verified.
 async function pollEmailDomains() {

@@ -15,6 +15,7 @@ import { capture } from "../lib/analytics";
 import { incr } from "../lib/metrics";
 import { publishTrack } from "../../services/realtime";
 import { isInAnyZone } from "../../shared/zone-utils";
+import { linkBookingToProperty } from "../../services/properties";
 
 type SessionUser = { id: string; role?: string; email: string; name: string };
 
@@ -171,6 +172,10 @@ export const bookingsRoutes = new Hono()
       total: bill?.total ?? +(amount + tax).toFixed(2),
     });
 
+    // Attach to the property record for this address (creates it on first
+    // job there). Best-effort — a failure here must not fail the booking.
+    await linkBookingToProperty(b.id);
+
     // fire "created" event through the configurable dispatch engine
     await fireEvent("created", b.id);
 
@@ -285,6 +290,7 @@ export const bookingsRoutes = new Hono()
       await reconcileRiderStatus(co, assignedRider);
     }
 
+    await linkBookingToProperty(b.id);
     await fireEvent("created", b.id);
     incr("bookings_created_total");
     capture("booking.created", co, { bookingId: b.id, serviceId: body.serviceId, source: "admin" });
