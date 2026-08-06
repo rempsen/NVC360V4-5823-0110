@@ -16,6 +16,7 @@ import { incr } from "../lib/metrics";
 import { publishTrack } from "../../services/realtime";
 import { isInAnyZone } from "../../shared/zone-utils";
 import { linkBookingToProperty } from "../../services/properties";
+import { logJobEvent } from "../../services/job-events";
 
 type SessionUser = { id: string; role?: string; email: string; name: string };
 
@@ -536,6 +537,19 @@ export const bookingsRoutes = new Hono()
       caption,
       source: "upload",
     });
+    // Timeline entry so the photo shows up in the customer's job history and
+    // permanent record, not just the admin gallery.
+    const me = c.get("user") as SessionUser;
+    await logJobEvent({
+      companyId: b.companyId,
+      bookingId: id,
+      kind: "photo_added",
+      actorRole: "tech",
+      actorName: me?.name || "",
+      label: caption ? `Photo added — ${caption}` : "Photo added",
+      meta: { photoId: p.id, url: stored.url, caption },
+    });
+
     // Notify dispatch in real-time so the office sees the new photo immediately
     if (b.publicToken) {
       void publishTrack({

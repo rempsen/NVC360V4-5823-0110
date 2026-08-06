@@ -100,6 +100,7 @@ const ForgotPasswordPage = lazy(() => import("./pages/forgot-password"));
 const ResetPasswordPage = lazy(() => import("./pages/reset-password"));
 const TrackPublic = lazy(() => import("./pages/track-public"));
 const SelectionsPublic = lazy(() => import("./pages/selections-public"));
+const PropertyPublic = lazy(() => import("./pages/property-public"));
 const IntakeForm = lazy(() => import("./pages/intake-form"));
 const JoinTech = lazy(() => import("./pages/join-tech"));
 const CustomerApp = lazy(() => import("./pages/customer"));
@@ -184,6 +185,8 @@ function App() {
           <Route path="/reset-password" component={ResetPasswordPage} />
           <Route path="/t/:token" component={TrackPublic} />
           <Route path="/s/:token" component={SelectionsPublic} />
+          {/* Persistent, no-login property service history hub */}
+          <Route path="/p/:token" component={PropertyPublic} />
           <Route path="/f/:companyId/:slug" component={IntakeForm} />
           <Route path="/join/:token" component={JoinTech} />
 

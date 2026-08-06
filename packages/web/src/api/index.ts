@@ -17,6 +17,7 @@ import { paymentsWebhookRoutes } from "./routes/payments-webhook";
 import { notificationsRoutes } from "./routes/notifications";
 import { adminRoutes } from "./routes/admin";
 import { trackRoutes } from "./routes/track";
+import { propertyPublicRoutes } from "./routes/property-public";
 import { optionCatalogRoutes } from "./routes/option-catalog";
 import { optionSelectionsRoutes } from "./routes/option-selections";
 import { messagesRoutes } from "./routes/messages";
@@ -256,6 +257,8 @@ const app = new Hono<{ Variables: Variables }>()
   .route("/notifications", notificationsRoutes)
   .route("/admin", adminRoutes)
   .route("/track", trackRoutes)
+  // Public, persistent property hub (no auth) — /p/:token service history.
+  .route("/property", propertyPublicRoutes)
   // Public options/selections page (no auth) — token-based, same trust model as /track.
   .route("/selections", optionSelectionsRoutes)
   // Admin-authenticated options/tier catalog CRUD + attach-rate reporting.

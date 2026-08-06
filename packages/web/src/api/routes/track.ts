@@ -8,6 +8,8 @@ import { computeRoute } from "./geo";
 import { trackLimiter } from "../lib/rate-limit";
 import { streamSSE } from "hono/streaming";
 import { subscribeTrack } from "../../services/realtime";
+import { jobTimeline } from "../../services/job-events";
+import { propertyUrl } from "../../services/properties";
 
 // Resolve a booking by its public token, enforcing expiry. Returns null when
 // the token is unknown OR has expired (PII link safety).
@@ -17,6 +19,11 @@ async function resolveByToken(token: string) {
     .from(schema.bookings)
     .where(eq(schema.bookings.publicToken, token));
   if (!b) return null;
+  // A completed job's link is the customer's permanent record — it must keep
+  // resolving forever. Expiry only protects LIVE links (which expose the
+  // technician's real-time location); once the job is done there's no live
+  // location to protect.
+  if (b.status === "completed") return b;
   if (b.tokenExpiresAt && b.tokenExpiresAt < Date.now()) return null;
   return b;
 }
@@ -120,11 +127,66 @@ async function buildSnapshot(b: typeof schema.bookings.$inferSelect) {
     }
   }
 
+  // ── Customer-facing job history ─────────────────────────────────────────
+  // Only events flagged customerVisible (policy lives in services/job-events.ts)
+  // so internal activity — declines, staff notes — never leaks to the client.
+  const timeline = await jobTimeline(b.id, { onlyCustomerVisible: true });
+
+  const photoRows = await t.select(
+    schema.jobPhotos,
+    eq(schema.jobPhotos.bookingId, b.id),
+  );
+  photoRows.sort((a, z) => Number(a.createdAt) - Number(z.createdAt));
+  const photos = photoRows.map((p) => ({
+    id: p.id,
+    url: p.url,
+    caption: p.caption,
+    at: p.createdAt,
+  }));
+
+  // Materials/services used — WHAT was done, deliberately WITHOUT pricing.
+  // Invoicing is out of scope; this is a record of work, not a bill.
+  let materials: { name: string; qty: number; unit: string }[] = [];
+  try {
+    const li = JSON.parse(b.lineItems || "[]");
+    if (Array.isArray(li)) {
+      materials = li
+        .filter((x: any) => x?.name)
+        .map((x: any) => ({
+          name: String(x.name),
+          qty: Number(x.qty) || 1,
+          unit: String(x.unit || ""),
+        }));
+    }
+  } catch {
+    /* malformed lineItems — show nothing rather than break the page */
+  }
+
+  // Persistent property hub link, so the customer can reach their full
+  // service history for this address from any single job.
+  let propertyLink: string | null = null;
+  if (b.propertyId) {
+    const [prop] = await db
+      .select()
+      .from(schema.properties)
+      .where(eq(schema.properties.id, b.propertyId));
+    if (prop) propertyLink = propertyUrl(prop.publicToken);
+  }
+
   return {
     id: b.id,
     token: b.publicToken,
     title: b.title || svc?.name || "Service",
     status: b.status,
+    timeline,
+    photos,
+    materials,
+    propertyLink,
+    scheduledAt: b.scheduledAt,
+    startedAt: b.startedAt,
+    finishedAt: b.finishedAt,
+    onSiteMinutes: b.onSiteMinutes,
+    address: b.address,
     etaMins,
     etaDistanceKm,
     service: svc ? { name: svc.name, icon: svc.icon } : null,

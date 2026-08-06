@@ -24,7 +24,193 @@ import {
   Wrench,
   CalendarCheck,
   UserCheck,
+  Camera,
+  Package,
+  History,
+  X,
+  FileText,
+  ExternalLink,
 } from "lucide-react";
+
+// ─── Formatting helpers ───────────────────────────────────────────────────────
+function fmtTime(v: string | number | null | undefined) {
+  if (!v) return "";
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+function fmtDate(v: string | number | null | undefined) {
+  if (!v) return "";
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+}
+function fmtDateTime(v: string | number | null | undefined) {
+  if (!v) return "—";
+  const s = `${fmtDate(v)} · ${fmtTime(v)}`;
+  return s === " · " ? "—" : s;
+}
+
+/** Icon per timeline event kind. Unknown kinds fall back to a neutral dot. */
+const EVENT_ICON: Record<string, typeof CheckCircle2> = {
+  created: CalendarCheck,
+  assigned: UserCheck,
+  enroute: Navigation,
+  arrived: MapPin,
+  started: Wrench,
+  completed: CheckCircle2,
+  cancelled: AlertTriangle,
+  photo_added: Camera,
+  signature_captured: FileText,
+  checklist_completed: CheckCircle2,
+};
+
+// ─── Job timeline ─────────────────────────────────────────────────────────────
+// The narrative of the job: every customer-visible event, timestamped, newest
+// last so it reads top-to-bottom like a story. Photos attached to an event get
+// an inline thumbnail.
+function JobTimeline({
+  events,
+  onPhoto,
+}: {
+  events: any[];
+  onPhoto: (url: string) => void;
+}) {
+  if (!events?.length) return null;
+  return (
+    <div className="nvc-card p-4">
+      <div className="mb-3 flex items-center gap-2">
+        <History className="h-4 w-4 text-cyan-glow" />
+        <p className="font-bold text-white">Job timeline</p>
+      </div>
+      <ol className="relative space-y-4 pl-1">
+        {events.map((e, i) => {
+          const Icon = EVENT_ICON[e.kind] ?? Clock;
+          const last = i === events.length - 1;
+          const photoUrl = e.meta?.url as string | undefined;
+          return (
+            <li key={e.id ?? i} className="relative flex gap-3">
+              {!last && (
+                <span className="absolute left-[13px] top-7 h-[calc(100%+0.25rem)] w-px bg-white/10" />
+              )}
+              <span className="relative z-10 mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full border border-white/10 bg-ink-3 text-cyan-glow">
+                <Icon className="h-3.5 w-3.5" />
+              </span>
+              <div className="min-w-0 flex-1 pb-1">
+                <p className="text-sm font-semibold leading-tight text-white">
+                  {e.label || e.kind}
+                </p>
+                <p className="mt-0.5 text-[11px] text-slate-500">
+                  {fmtTime(e.at)}
+                  {e.actorName ? ` · ${e.actorName}` : ""}
+                  {e.detail ? ` · ${e.detail}` : ""}
+                </p>
+                {photoUrl && (
+                  <button
+                    onClick={() => onPhoto(photoUrl)}
+                    className="mt-2 block overflow-hidden rounded-lg border border-white/10 transition hover:border-cyan-glow/50"
+                  >
+                    <img src={photoUrl} alt="Job photo" className="h-20 w-28 object-cover" />
+                  </button>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
+// ─── Photo gallery ────────────────────────────────────────────────────────────
+function PhotoGallery({
+  photos,
+  onPhoto,
+}: {
+  photos: any[];
+  onPhoto: (url: string) => void;
+}) {
+  if (!photos?.length) return null;
+  return (
+    <div className="nvc-card p-4">
+      <div className="mb-3 flex items-center gap-2">
+        <Camera className="h-4 w-4 text-cyan-glow" />
+        <p className="font-bold text-white">Photos</p>
+        <span className="text-xs text-slate-500">({photos.length})</span>
+      </div>
+      <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+        {photos.map((p: any) => (
+          <button
+            key={p.id}
+            onClick={() => onPhoto(p.url)}
+            className="group relative overflow-hidden rounded-lg border border-white/10 transition hover:border-cyan-glow/50"
+          >
+            <img
+              src={p.url}
+              alt={p.caption || "Job photo"}
+              className="aspect-square w-full object-cover transition group-hover:scale-105"
+            />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Materials used ───────────────────────────────────────────────────────────
+// Deliberately shows WHAT was used, never what it cost. Pricing never appears
+// on a customer-facing surface.
+function MaterialsUsed({ materials }: { materials: any[] }) {
+  if (!materials?.length) return null;
+  return (
+    <div className="nvc-card p-4">
+      <div className="mb-3 flex items-center gap-2">
+        <Package className="h-4 w-4 text-cyan-glow" />
+        <p className="font-bold text-white">Materials &amp; work performed</p>
+      </div>
+      <ul className="divide-y divide-white/5">
+        {materials.map((m: any, i: number) => (
+          <li key={i} className="flex items-center justify-between gap-3 py-2">
+            <span className="text-sm text-slate-200">{m.name}</span>
+            <span className="shrink-0 text-xs font-semibold text-slate-400">
+              {m.qty}
+              {m.unit ? ` ${m.unit}` : ""}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// ─── Lightbox ─────────────────────────────────────────────────────────────────
+function Lightbox({ url, onClose }: { url: string; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-[1000] grid place-items-center bg-black/85 p-4 backdrop-blur-sm"
+    >
+      <button
+        onClick={onClose}
+        aria-label="Close photo"
+        className="absolute right-4 top-4 grid h-10 w-10 place-items-center rounded-full bg-white/10 text-white hover:bg-white/20"
+      >
+        <X className="h-5 w-5" />
+      </button>
+      <img
+        src={url}
+        alt="Job photo"
+        onClick={(e) => e.stopPropagation()}
+        className="max-h-[85vh] max-w-full rounded-xl object-contain"
+      />
+    </div>
+  );
+}
 
 // ─── Status stepper ───────────────────────────────────────────────────────────
 const STEPS = [
@@ -161,6 +347,7 @@ export default function TrackPublic() {
   const [reviewHover, setReviewHover] = useState(0);
   const [reviewComment, setReviewComment] = useState("");
   const [reviewSubmitted, setReviewSubmitted] = useState(false);
+  const [lightbox, setLightbox] = useState<string | null>(null);
 
   const track = useQuery({
     queryKey: ["track", token],
@@ -290,6 +477,10 @@ export default function TrackPublic() {
   } | null;
   const workerNoun: string = data.workerNoun || "Technician";
   const isEnroute = data.status === "enroute" || data.status === "assigned";
+  const timeline: any[] = data.timeline ?? [];
+  const photos: any[] = data.photos ?? [];
+  const materials: any[] = data.materials ?? [];
+  const isComplete = data.status === "completed";
   const isArrived = data.status === "arrived" || data.status === "in_progress";
 
   return (
@@ -344,13 +535,7 @@ export default function TrackPublic() {
         {/* ── Status stepper ── */}
         {!isDone && <div className="mb-4"><StatusStepper status={data.status} /></div>}
 
-        <div
-          className={
-            isDone
-              ? "mx-auto max-w-md"
-              : "grid gap-4 lg:grid-cols-[1fr_360px]"
-          }
-        >
+        <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
           {/* ── Left column ── */}
           <div className="space-y-4">
             {isDone ? (
@@ -545,12 +730,85 @@ export default function TrackPublic() {
                 </div>
               </>
             )}
+
+            {/* ── Permanent job record (completed jobs) ── */}
+            {isComplete && (
+              <div className="nvc-card p-4">
+                <div className="mb-3 flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-cyan-glow" />
+                  <p className="font-bold text-white">Service record</p>
+                </div>
+                <dl className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
+                  <div>
+                    <dt className="text-[11px] uppercase tracking-wide text-slate-500">Service</dt>
+                    <dd className="text-sm text-slate-200">{data.service?.name || data.title}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-[11px] uppercase tracking-wide text-slate-500">{workerNoun}</dt>
+                    <dd className="text-sm text-slate-200">{data.tech?.name || "—"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-[11px] uppercase tracking-wide text-slate-500">Scheduled</dt>
+                    <dd className="text-sm text-slate-200">{fmtDateTime(data.scheduledAt)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-[11px] uppercase tracking-wide text-slate-500">Completed</dt>
+                    <dd className="text-sm text-slate-200">{fmtDateTime(data.finishedAt)}</dd>
+                  </div>
+                  {data.onSiteMinutes > 0 && (
+                    <div>
+                      <dt className="text-[11px] uppercase tracking-wide text-slate-500">Time on site</dt>
+                      <dd className="text-sm text-slate-200">
+                        {data.onSiteMinutes >= 60
+                          ? `${Math.floor(data.onSiteMinutes / 60)}h ${Math.round(data.onSiteMinutes % 60)}m`
+                          : `${Math.round(data.onSiteMinutes)} min`}
+                      </dd>
+                    </div>
+                  )}
+                  {data.address && (
+                    <div className="sm:col-span-2">
+                      <dt className="text-[11px] uppercase tracking-wide text-slate-500">Address</dt>
+                      <dd className="text-sm text-slate-200">{data.address}</dd>
+                    </div>
+                  )}
+                </dl>
+                <p className="mt-4 rounded-lg border border-white/5 bg-ink-3/40 px-3 py-2 text-[11px] text-slate-500">
+                  This link is permanent — bookmark it to keep a record of this
+                  visit.
+                </p>
+              </div>
+            )}
+
+            {/* ── Shared: narrative, photos, materials ── */}
+            <JobTimeline events={timeline} onPhoto={setLightbox} />
+            <PhotoGallery photos={photos} onPhoto={setLightbox} />
+            <MaterialsUsed materials={materials} />
+
+            {/* ── Property hub ── */}
+            {data.propertyLink && (
+              <a
+                href={data.propertyLink}
+                className="nvc-card flex items-center gap-3 p-4 transition hover:border-cyan-glow/40"
+              >
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-cyan-glow/15 text-cyan-glow">
+                  <Building2 className="h-5 w-5" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-bold text-white">
+                    Full service history for this address
+                  </p>
+                  <p className="truncate text-xs text-slate-500">
+                    Every visit, photo and material — no login needed
+                  </p>
+                </div>
+                <ExternalLink className="h-4 w-4 shrink-0 text-slate-500" />
+              </a>
+            )}
           </div>
 
           {/* ── Right column: tech card + messaging ── */}
-          {!isDone && (
-            <div className="space-y-4">
-              {data.tech && (
+          <div className="space-y-4">
+              {data.tech && !isDone && (
                 <div className="nvc-card p-4">
                   <div className="flex items-center gap-3">
                     <TechAvatar
@@ -660,9 +918,9 @@ export default function TrackPublic() {
                 </form>
               </div>
             </div>
-          )}
         </div>
       </div>
+      {lightbox && <Lightbox url={lightbox} onClose={() => setLightbox(null)} />}
     </div>
   );
 }

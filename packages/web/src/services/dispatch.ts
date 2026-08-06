@@ -17,6 +17,7 @@ import { sendSms, trackingUrl } from "./sms";
 import { sendPush } from "./push";
 import { applyNotificationOverrides } from "./notification-presets";
 import { logJobEvent, type JobEventKind } from "./job-events";
+import { propertyUrl } from "./properties";
 
 export type NvcEvent =
   | "created"
@@ -75,7 +76,12 @@ function defaultMessage(event: NvcEvent, recipient: Recipient, v: Vars): string 
       if (recipient === "client") return `${co}: ${v.techName} has started your ${v.service}.`;
       return `${co}: Service started on #${v.shortId}.`;
     case "completed":
-      if (recipient === "client") return `${co}: Your ${v.service} is complete. Thank you! We'd love your feedback.`;
+      if (recipient === "client")
+        return (
+          `${co}: Your ${v.service} is complete. Thank you! ` +
+          `Your record (photos, work done) + feedback: ${v.trackUrl}` +
+          (v.propertyUrl ? ` · Full history for this address: ${v.propertyUrl}` : "")
+        );
       return `${co}: #${v.shortId} completed by ${v.techName}.`;
     case "cancelled":
       return `${co}: Work order #${v.shortId} (${v.service}) was cancelled.`;
@@ -99,6 +105,8 @@ interface Vars {
   trackUrl: string;
   bookingUrl: string;
   workerNoun: string;
+  /** Permanent, no-login property service-history hub. "" when unlinked. */
+  propertyUrl: string;
 }
 
 function interpolate(tpl: string, v: Vars): string {
@@ -120,6 +128,7 @@ export const TEMPLATE_VARS: { key: keyof Vars; label: string }[] = [
   { key: "shortId", label: "Work order # (short)" },
   { key: "trackUrl", label: "Live tracking link" },
   { key: "bookingUrl", label: "Booking link" },
+  { key: "propertyUrl", label: "Property service-history link" },
 ];
 
 /** Sample values used for live preview in the template editor. */
@@ -137,6 +146,8 @@ const SAMPLE_VARS: Vars = {
   shortId: "A1B2C3",
   trackUrl: "https://nvc360.app/t/abc123",
   bookingUrl: "https://nvc360.app/t/abc123",
+  workerNoun: "Technician",
+  propertyUrl: "https://nvc360.app/p/abc123def456",
 };
 
 /** Default copy for a given event+recipient (exposed so the editor can show/restore it). */
@@ -204,7 +215,7 @@ export async function sendDesignTest(companyId: string, to: string, subject: str
   let emailFrom: string | undefined;
   if (cfg?.emailFromAddress) {
     const fromDomain = cfg.emailFromAddress.split("@")[1]?.toLowerCase() || "";
-    const verified = await verifiedDomainsForCompany(companyId).catch(() => []);
+    const verified = await verifiedDomainsForCompany(companyId).catch((): string[] => []);
     if (fromDomain && verified.includes(fromDomain))
       emailFrom = `${cfg.emailFromName || SAMPLE_VARS.company} <${cfg.emailFromAddress}>`;
   }
@@ -278,6 +289,20 @@ async function context(bookingId: string) {
   const when = b.scheduledAt
     ? new Date(b.scheduledAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
     : "TBD";
+  // Best-effort: the property hub link is a nice-to-have, never a reason to
+  // fail a notification.
+  let propToken = "";
+  try {
+    if (b.propertyId) {
+      const [prop] = await db
+        .select()
+        .from(schema.properties)
+        .where(eq(schema.properties.id, b.propertyId));
+      propToken = prop?.publicToken ?? "";
+    }
+  } catch {
+    /* ignore */
+  }
   const vars: Vars = {
     company: co?.name || "NVC360",
     service: svc?.name || b.title || "service",
@@ -293,6 +318,7 @@ async function context(bookingId: string) {
     trackUrl: trackingUrl(b.publicToken),
     bookingUrl: trackingUrl(b.publicToken),
     workerNoun: co?.workerNoun || "Technician",
+    propertyUrl: propToken ? propertyUrl(propToken) : "",
   };
   return { b, companyId, svc, cust, rider, riderUser, co, vars };
 }
@@ -359,7 +385,7 @@ export async function fireEvent(event: NvcEvent, bookingId: string) {
     let emailFrom: string | undefined;
     if (chanCfg?.emailFromAddress) {
       const fromDomain = chanCfg.emailFromAddress.split("@")[1]?.toLowerCase() || "";
-      const verified = await verifiedDomainsForCompany(companyId).catch(() => []);
+      const verified = await verifiedDomainsForCompany(companyId).catch((): string[] => []);
       if (fromDomain && verified.includes(fromDomain)) {
         emailFrom = `${chanCfg.emailFromName || vars.company} <${chanCfg.emailFromAddress}>`;
       }

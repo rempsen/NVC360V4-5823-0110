@@ -81,6 +81,12 @@ export async function applyBookingStatus(
 
   if (status === "completed") {
     extra.finishedAt = now;
+    // The tracking link becomes the customer's PERMANENT job record once the
+    // work is done — it stops being a live-location link (which is what the
+    // expiry was protecting) and becomes their receipt of what was done, by
+    // whom, with photos. Clearing the expiry is what makes "one conversation,
+    // forever" true instead of a link that dies in 24h.
+    extra.tokenExpiresAt = null;
     // finalize banked time: add the currently-running segment, if any
     let totalMs = prevB.accumulatedMs ?? 0;
     if (prevB.clockState === "running" && prevB.lastResumeAt) {

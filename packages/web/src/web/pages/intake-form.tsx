@@ -60,7 +60,14 @@ export default function IntakeForm() {
   const [cfg, setCfg] = useState<FormCfg | null>(null);
   const [services, setServices] = useState<Service[]>([]);
   const [loadErr, setLoadErr] = useState("");
-  const [v, setV] = useState<Record<string, string>>({});
+  // A property-hub "Request service" link arrives with ?address= prefilled so
+  // the homeowner never retypes an address we already know.
+  const [v, setV] = useState<Record<string, string>>(() => {
+    const a = new URLSearchParams(window.location.search).get("address");
+    const init: Record<string, string> = {};
+    if (a) init.address = a;
+    return init;
+  });
   const [addrCoords, setAddrCoords] = useState<{ lat: number | null; lng: number | null }>({ lat: null, lng: null });
   const [photo, setPhoto] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
