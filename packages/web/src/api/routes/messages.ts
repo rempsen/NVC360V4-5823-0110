@@ -9,6 +9,8 @@ import { isAdminRole } from "../lib/permissions";
 import { sendSms, trackingUrl } from "../../services/sms";
 import { sendPush } from "../../services/push";
 import { publishMsg, subscribeMsg } from "../../services/realtime";
+import { z } from "zod";
+import { parseBody, shortText, longText, id as idField } from "../lib/validate";
 
 type SessionUser = { id: string; role?: string; name: string };
 
@@ -49,6 +51,40 @@ async function officeUsersForNotify(companyId: string) {
     .from(schema.user)
     .where(and(inArray(schema.user.role, ["admin", "superadmin"]), eq(schema.user.companyId, companyId)));
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Request bodies                                                            */
+/*                                                                            */
+/*  All four message bodies were raw `const { body } = await c.req.json()`,    */
+/*  guarded only by `body?.trim()`. Reproduced live before this pass:          */
+/*                                                                            */
+/*   - POST /direct { body: 123 } -> 500. `123?.trim` is not a function, so a  */
+/*     number crashed the handler.                                            */
+/*   - POST /direct with a 100,000-character body -> written straight in.      */
+/*   - POST /dispatch/:techId { body: 123 } -> 500, same cause, and that one   */
+/*     ALSO fires a push notification.                                        */
+/*   - POST /broadcast { body: {} } -> 500; { target: "everyone-everywhere" }  */
+/*     reached the target dispatcher as a bare string.                        */
+/*   - POST /:bookingId inserted the message BEFORE looking the booking up, so */
+/*     a bad or cross-tenant bookingId left an orphaned message in the thread. */
+/* -------------------------------------------------------------------------- */
+
+/** The message text itself. One rule, used by all four routes. */
+const messageText = shortText("Message", 5_000);
+
+const DirectBody = z.object({ body: messageText });
+
+const BroadcastBody = z.object({
+  body: messageText,
+  target: z.object({
+    type: z.enum(["all", "available", "tag", "skillClass", "skill"], {
+      error: "Target must be all, available, tag, skillClass or skill",
+    }),
+    tagId: idField("Tag id").optional(),
+    skillClass: longText(120).optional(),
+    skill: longText(120).optional(),
+  }, { error: "A broadcast target is required" }),
+});
 
 export const messagesRoutes = new Hono()
   // ── Direct dispatcher<->tech thread ──────────────────────────────────────
@@ -120,13 +156,19 @@ export const messagesRoutes = new Hono()
   .post("/direct", requireAuth, async (c) => {
     const u = c.get("user") as SessionUser;
     if (u.role !== "rider") return c.json({ message: "Forbidden" }, 403);
+    // `co` was never declared in this handler — it only existed in the
+    // dispatch-side handler below — so the publishMsg("inbox", co) line at the
+    // end threw a ReferenceError AFTER the message row and the admin
+    // notifications had already been written. Every technician message to
+    // dispatch returned 500 while actually being delivered, so the app
+    // retried and each retry duplicated the message and the notification.
+    const co = tenantId(c);
     const t = tx(c);
 
     const rider = await t.selectOne(schema.riders, eq(schema.riders.userId, u.id));
     if (!rider) return c.json({ message: "Rider not found" }, 404);
 
-    const { body } = await c.req.json();
-    if (!body?.trim()) return c.json({ message: "Message is required" }, 400);
+    const { body } = await parseBody(c, DirectBody);
 
     const [m] = await t.insert(schema.messages, {
       riderId: rider.id,
@@ -300,8 +342,7 @@ export const messagesRoutes = new Hono()
     const rider = await t.selectOne(schema.riders, eq(schema.riders.id, techId));
     if (!rider) return c.json({ message: "Tech not found" }, 404);
 
-    const { body } = await c.req.json();
-    if (!body?.trim()) return c.json({ message: "Message is required" }, 400);
+    const { body } = await parseBody(c, DirectBody);
 
     const [m] = await t.insert(schema.messages, {
       riderId: techId,
@@ -343,10 +384,7 @@ export const messagesRoutes = new Hono()
     const t = tx(c);
     const cId = tenantId(c);
 
-    const { body, target } = await c.req.json();
-    // target: { type: "all" | "available" | "tag", tagId?: string }
-    if (!body?.trim()) return c.json({ message: "Message is required" }, 400);
-    if (!target?.type) return c.json({ message: "target.type required" }, 400);
+    const { body, target } = await parseBody(c, BroadcastBody);
 
     // get all riders
     let riders = await t.select(schema.riders);
@@ -367,9 +405,8 @@ export const messagesRoutes = new Hono()
       const ids = new Set(taggedEntityIds.map((e) => e.entityId));
       riders = riders.filter((r) => ids.has(r.id));
     } else if (target.type === "skillClass" && target.skillClass) {
-      riders = riders.filter(
-        (r) => (r.skillClass ?? "General").toLowerCase() === target.skillClass.toLowerCase(),
-      );
+      const wanted = target.skillClass.toLowerCase();
+      riders = riders.filter((r) => (r.skillClass ?? "General").toLowerCase() === wanted);
     } else if (target.type === "skill" && target.skill) {
       // skill is a csv tag stored on riders.skills
       const needle = target.skill.toLowerCase();
@@ -683,9 +720,16 @@ export const messagesRoutes = new Hono()
   // POST /api/messages/:bookingId — tech, dispatch, or client posts to job thread
   .post("/:bookingId", requireAuth, async (c) => {
     const u = c.get("user") as SessionUser;
-    const { body } = await c.req.json();
+    const { body } = await parseBody(c, DirectBody);
     const bookingId = c.req.param("bookingId");
     const t = tx(c);
+
+    // Resolve the booking BEFORE writing. This used to insert first and look
+    // up second, so a bad or cross-tenant bookingId left an orphaned message
+    // hanging in a thread that belongs to nobody.
+    const b = await t.selectOne(schema.bookings, eq(schema.bookings.id, bookingId));
+    if (!b) return c.json({ message: "Work order not found" }, 404);
+
     const [m] = await t.insert(schema.messages, {
       bookingId,
       senderRole: roleLabel(u.role),
@@ -694,10 +738,7 @@ export const messagesRoutes = new Hono()
       channel: "app",
     });
 
-    // look up booking for SMS/notification
-    const b = await t.selectOne(schema.bookings, eq(schema.bookings.id, bookingId));
-
-    if (b) {
+    {
       if (u.role !== "customer") {
         await t.insert(schema.notifications, {
           userId: b.customerId,

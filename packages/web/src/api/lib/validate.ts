@@ -288,3 +288,37 @@ export const outboundUrl = (label = "URL") =>
 /** A real boolean — never the string "no", which is truthy in JS. */
 export const bool = (label: string) =>
   z.boolean({ error: `${label} must be true or false` });
+
+/**
+ * A signed money amount — a price DELTA that may legitimately be negative (a
+ * downgrade credit) but still must be a real, bounded number. Separate from
+ * `money()` so a negative can't sneak into a total-facing field.
+ */
+export const signedMoney = (label = "Amount") =>
+  z
+    .number({ error: `${label} must be a number` })
+    .finite(`${label} must be a real number`)
+    .min(-10_000_000, `${label} is unrealistically large`)
+    .max(10_000_000, `${label} is unrealistically large`);
+
+/** A display-order integer. Bounded so a 1e12 can't wreck the sort. */
+export const sortOrder = z
+  .number({ error: "Sort order must be a number" })
+  .int("Sort order must be a whole number")
+  .min(0, "Sort order can't be negative")
+  .max(100_000, "Sort order is too large");
+
+/**
+ * An image reference we will render in an <img src> — either a full http(s)
+ * URL or an app-relative path. Rejects `javascript:` and `data:` so a stored
+ * value can't become an XSS payload on the customer-facing options page.
+ */
+export const imageRef = (label = "Image") =>
+  z
+    .string()
+    .trim()
+    .max(2_000, `${label} must be 2000 characters or fewer`)
+    .refine(
+      (v) => v === "" || v.startsWith("/") || /^https?:\/\//i.test(v),
+      `${label} must be an https:// URL or an app path`,
+    );

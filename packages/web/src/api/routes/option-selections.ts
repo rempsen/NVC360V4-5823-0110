@@ -12,6 +12,27 @@ import * as schema from "../database/schema";
 import { eq } from "drizzle-orm";
 import { buildUnitLineItem, parseLineItems } from "../../shared/catalog";
 import { recomputeBooking } from "../../services/billing";
+import { z } from "zod";
+import { parseBody, id as idField, shortText } from "../lib/validate";
+
+/**
+ * PUBLIC, token-only body. Prices are already resolved server-side from the
+ * catalog (never trusted from the client), but the body itself was raw: an
+ * unbounded `selections` array meant one request could drive thousands of
+ * inserts, and two selections for the SAME category were both accepted and
+ * both billed as separate line items.
+ */
+const SubmitBody = z.object({
+  selections: z
+    .array(z.object({ categoryId: idField("Category id"), itemId: idField("Option id") }))
+    .min(1, "No selections provided")
+    .max(50, "Too many selections")
+    .refine(
+      (arr) => new Set(arr.map((s) => s.categoryId)).size === arr.length,
+      "Only one option can be chosen per category",
+    ),
+  signatureName: shortText("Signature name", 120),
+});
 
 async function resolveByToken(token: string) {
   const [b] = await db
@@ -85,11 +106,7 @@ export const optionSelectionsRoutes = new Hono()
     const b = await resolveByToken(token);
     if (!b) return c.json({ message: "Not found" }, 404);
 
-    const body = await c.req.json().catch(() => ({}));
-    const selections: { categoryId: string; itemId: string }[] = Array.isArray(body.selections) ? body.selections : [];
-    const signatureName = String(body.signatureName ?? "").trim();
-    if (selections.length === 0) return c.json({ message: "No selections provided" }, 400);
-    if (!signatureName) return c.json({ message: "A typed signature name is required" }, 400);
+    const { selections, signatureName } = await parseBody(c, SubmitBody);
 
     const t = tdb(b.companyId);
     const cats = new Map((await t.select(schema.optionCategories)).map((x) => [x.id, x]));

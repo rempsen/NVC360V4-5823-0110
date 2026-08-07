@@ -8,6 +8,75 @@ import { Hono } from "hono";
 import * as schema from "../database/schema";
 import { eq, and } from "drizzle-orm";
 import { requireAdmin, tx } from "../middleware/auth";
+import { z } from "zod";
+import {
+  parseBody,
+  shortText,
+  longText,
+  money,
+  signedMoney,
+  sortOrder,
+  imageRef,
+  bool,
+} from "../lib/validate";
+
+/* -------------------------------------------------------------------------- */
+/*  Request bodies                                                            */
+/*                                                                            */
+/*  This file hand-coerced every field, which hid money bugs rather than       */
+/*  rejecting them. Reproduced live before this pass:                          */
+/*                                                                            */
+/*   - POST /categories/:id/items { priceDelta: "1,200" } -> 201 with          */
+/*     priceDelta 0. Number("1,200") is NaN and `|| 0` swallowed it, so the    */
+/*     "Best" upgrade tier was published to customers as FREE. Same for        */
+/*     "lots", "$1200", and any pasted value with a comma or currency sign.    */
+/*     This is the worst class of bug in the file: it bills the wrong amount   */
+/*     silently instead of erroring.                                           */
+/*   - priceDelta: 1e308 and unitCost: "free" were accepted the same way.      */
+/*   - POST /categories with a 20,000-character name -> 201.                   */
+/*   - PATCH /categories/:id { sortOrder: 1e12 } -> 200.                       */
+/*   - PATCH /categories/:id {} and { companyId: "other-co" } -> bare 500:     */
+/*     nothing survived the field filter, so drizzle got an empty SET clause   */
+/*     and threw "No values to set".                                           */
+/*   - PATCH item { image: "javascript:alert(1)" } -> 200, and that value is   */
+/*     rendered in an <img src> on the PUBLIC customer options page.           */
+/*   - DELETE /categories/<bogus id> -> 200 ok:true, reporting a delete that   */
+/*     never happened.                                                        */
+/* -------------------------------------------------------------------------- */
+
+const CategoryCreate = z.object({
+  name: shortText("Name", 120),
+  description: longText(1_000).optional(),
+  sortOrder: sortOrder.optional(),
+});
+const CategoryPatch = z
+  .object({
+    name: shortText("Name", 120),
+    description: longText(1_000),
+    sortOrder: sortOrder,
+    active: bool("Active"),
+  })
+  .partial()
+  .refine((b) => Object.keys(b).length > 0, { error: "Nothing to update" });
+
+const ItemFields = {
+  name: shortText("Name", 120),
+  tierLabel: longText(60).optional(),
+  description: longText(1_000).optional(),
+  image: imageRef("Image").optional(),
+  // A tier delta may be negative (a downgrade credit) but must be a real
+  // number — never a string we quietly turn into 0.
+  priceDelta: signedMoney("Price delta").optional(),
+  unitCost: money("Unit cost").optional(),
+  isDefault: bool("Default tier").optional(),
+  sortOrder: sortOrder.optional(),
+  active: bool("Active").optional(),
+};
+const ItemCreate = z.object(ItemFields);
+const ItemPatch = z
+  .object({ ...ItemFields, name: shortText("Name", 120).optional() })
+  .partial()
+  .refine((b) => Object.keys(b).length > 0, { error: "Nothing to update" });
 
 function sortByOrder<T extends { sortOrder: number; name?: string }>(rows: T[]): T[] {
   return [...rows].sort((a, b) => a.sortOrder - b.sortOrder || (a.name ?? "").localeCompare(b.name ?? ""));
@@ -33,34 +102,29 @@ export const optionCatalogRoutes = new Hono()
   })
   .post("/categories", requireAdmin, async (c) => {
     const t = tx(c);
-    const b = await c.req.json().catch(() => ({}));
-    const name = String(b.name ?? "").trim();
-    if (!name) return c.json({ message: "name required" }, 400);
+    const b = await parseBody(c, CategoryCreate);
     const existing = await t.select(schema.optionCategories);
     const maxOrder = existing.reduce((m, r) => Math.max(m, r.sortOrder), -1);
     const [row] = await t.insert(schema.optionCategories, {
-      name,
-      description: String(b.description ?? "").trim(),
-      sortOrder: typeof b.sortOrder === "number" ? b.sortOrder : maxOrder + 1,
+      name: b.name,
+      description: b.description ?? "",
+      sortOrder: b.sortOrder ?? maxOrder + 1,
     });
     return c.json({ category: { ...row, items: [] } }, 201);
   })
   .patch("/categories/:id", requireAdmin, async (c) => {
     const t = tx(c);
     const id = c.req.param("id");
-    const b = await c.req.json().catch(() => ({}));
-    const patch: Record<string, unknown> = {};
-    if (typeof b.name === "string" && b.name.trim()) patch.name = b.name.trim();
-    if (typeof b.description === "string") patch.description = b.description.trim();
-    if (typeof b.sortOrder === "number") patch.sortOrder = b.sortOrder;
-    if (typeof b.active === "boolean") patch.active = b.active;
-    const [row] = await t.update(schema.optionCategories, patch, eq(schema.optionCategories.id, id));
+    const b = await parseBody(c, CategoryPatch);
+    const [row] = await t.update(schema.optionCategories, b, eq(schema.optionCategories.id, id));
     if (!row) return c.json({ message: "Not found" }, 404);
     return c.json({ category: row }, 200);
   })
   .delete("/categories/:id", requireAdmin, async (c) => {
     const t = tx(c);
     const id = c.req.param("id");
+    const cat = await t.selectOne(schema.optionCategories, eq(schema.optionCategories.id, id));
+    if (!cat) return c.json({ message: "Not found" }, 404);
     await t.delete(schema.optionCategoryItems, eq(schema.optionCategoryItems.categoryId, id));
     await t.delete(schema.optionCategories, eq(schema.optionCategories.id, id));
     return c.json({ ok: true }, 200);
@@ -71,9 +135,7 @@ export const optionCatalogRoutes = new Hono()
     const categoryId = c.req.param("id");
     const cat = await t.selectOne(schema.optionCategories, eq(schema.optionCategories.id, categoryId));
     if (!cat) return c.json({ message: "Category not found" }, 404);
-    const b = await c.req.json().catch(() => ({}));
-    const name = String(b.name ?? "").trim();
-    if (!name) return c.json({ message: "name required" }, 400);
+    const b = await parseBody(c, ItemCreate);
     const existing = await t.select(schema.optionCategoryItems, eq(schema.optionCategoryItems.categoryId, categoryId));
     const maxOrder = existing.reduce((m, r) => Math.max(m, r.sortOrder), -1);
     // only one default tier per category — clear any existing default if this one is marked default
@@ -86,14 +148,14 @@ export const optionCatalogRoutes = new Hono()
     }
     const [row] = await t.insert(schema.optionCategoryItems, {
       categoryId,
-      tierLabel: String(b.tierLabel ?? "").trim(),
-      name,
-      description: String(b.description ?? "").trim(),
-      image: String(b.image ?? "").trim(),
-      priceDelta: Number(b.priceDelta) || 0,
-      unitCost: Number(b.unitCost) || 0,
-      isDefault: !!b.isDefault,
-      sortOrder: typeof b.sortOrder === "number" ? b.sortOrder : maxOrder + 1,
+      tierLabel: b.tierLabel ?? "",
+      name: b.name,
+      description: b.description ?? "",
+      image: b.image ?? "",
+      priceDelta: b.priceDelta ?? 0,
+      unitCost: b.unitCost ?? 0,
+      isDefault: b.isDefault ?? false,
+      sortOrder: b.sortOrder ?? maxOrder + 1,
     });
     return c.json({ item: row }, 201);
   })
@@ -101,7 +163,7 @@ export const optionCatalogRoutes = new Hono()
     const t = tx(c);
     const categoryId = c.req.param("id");
     const itemId = c.req.param("itemId");
-    const b = await c.req.json().catch(() => ({}));
+    const b = await parseBody(c, ItemPatch);
     if (b.isDefault) {
       const siblings = await t.select(schema.optionCategoryItems, eq(schema.optionCategoryItems.categoryId, categoryId));
       for (const it of siblings) {
@@ -110,19 +172,9 @@ export const optionCatalogRoutes = new Hono()
         }
       }
     }
-    const patch: Record<string, unknown> = {};
-    if (typeof b.name === "string" && b.name.trim()) patch.name = b.name.trim();
-    if (typeof b.tierLabel === "string") patch.tierLabel = b.tierLabel.trim();
-    if (typeof b.description === "string") patch.description = b.description.trim();
-    if (typeof b.image === "string") patch.image = b.image.trim();
-    if (b.priceDelta !== undefined) patch.priceDelta = Number(b.priceDelta) || 0;
-    if (b.unitCost !== undefined) patch.unitCost = Number(b.unitCost) || 0;
-    if (typeof b.isDefault === "boolean") patch.isDefault = b.isDefault;
-    if (typeof b.sortOrder === "number") patch.sortOrder = b.sortOrder;
-    if (typeof b.active === "boolean") patch.active = b.active;
     const [row] = await t.update(
       schema.optionCategoryItems,
-      patch,
+      b,
       and(eq(schema.optionCategoryItems.id, itemId), eq(schema.optionCategoryItems.categoryId, categoryId)),
     );
     if (!row) return c.json({ message: "Not found" }, 404);
@@ -131,6 +183,11 @@ export const optionCatalogRoutes = new Hono()
   .delete("/categories/:id/items/:itemId", requireAdmin, async (c) => {
     const t = tx(c);
     const itemId = c.req.param("itemId");
+    const item = await t.selectOne(
+      schema.optionCategoryItems,
+      and(eq(schema.optionCategoryItems.id, itemId), eq(schema.optionCategoryItems.categoryId, c.req.param("id"))),
+    );
+    if (!item) return c.json({ message: "Not found" }, 404);
     await t.delete(schema.optionCategoryItems, eq(schema.optionCategoryItems.id, itemId));
     return c.json({ ok: true }, 200);
   })
