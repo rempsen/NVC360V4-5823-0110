@@ -24,7 +24,7 @@ import {
   Briefcase,
   Layers,
 } from "lucide-react";
-import { useWorkerNoun } from "../../lib/use-brand";
+import { useWorkerNoun, useJobNoun } from "../../lib/use-brand";
 
 function todayStr() {
   const d = new Date();
@@ -37,6 +37,12 @@ export default function FleetPage() {
   const [chatFor, setChatFor] = useState<any>(null);
   const [jobFor, setJobFor] = useState<any>(null);
   const [, navigate] = useLocation();
+  // This line used to read `jobNoun` from nowhere at all — it was never
+  // declared in this component. Any mapped work order with no title AND no
+  // service name (a service row that no longer resolves) threw
+  // "jobNoun is not defined" and took the entire Fleet page — map, dispatch,
+  // the whole screen — down to the error boundary.
+  const { noun: jobNoun } = useJobNoun();
 
   // map filters
   const [showDrivers, setShowDrivers] = useState(true);
