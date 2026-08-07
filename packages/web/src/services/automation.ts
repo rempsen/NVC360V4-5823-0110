@@ -20,6 +20,7 @@ import * as schema from "../api/database/schema";
 import { and, eq, isNull, or } from "drizzle-orm";
 import { sendSms, trackingUrl } from "./sms";
 import { logJobEvent } from "./job-events";
+import { predictDelays } from "./ai-dispatch";
 
 export type AutomationTrigger =
   | "wo_created"
@@ -349,6 +350,41 @@ export async function sweepTimeTriggers(now: Date = new Date()): Promise<number>
               minutesUntil: Math.round(minsUntil),
               minutes: Math.round(minsUntil),
               priority: b.priority,
+              risk: "unassigned",
+            },
+          });
+        }
+
+        // ── sla_risk (Phase 5): jobs ALREADY assigned but projected to finish
+        // late. The check above only ever saw unassigned work approaching its
+        // window — it was blind to a tech running 40 minutes behind.
+        const risks = await predictDelays(companyId, { graceMins: 15 });
+        for (const r of risks) {
+          if (recentlyFlagged(SLA_FLAGGED, r.bookingId)) continue;
+          const [bk] = await db
+            .select()
+            .from(schema.bookings)
+            .where(eq(schema.bookings.id, r.bookingId));
+          if (!bk) continue;
+          fired += await runAutomations("sla_risk", {
+            companyId,
+            bookingId: r.bookingId,
+            vars: {
+              jobName: r.title,
+              shortId: r.bookingId.slice(0, 6).toUpperCase(),
+              address: r.address,
+              techName: r.techName,
+              minutesLate: r.minutesLate,
+              minutesUntil: 0,
+              token: bk.publicToken,
+            },
+            facts: {
+              minutesLate: r.minutesLate,
+              minutes: r.minutesLate,
+              minutesUntil: 0,
+              priority: bk.priority,
+              risk: "running_late",
+              status: r.status,
             },
           });
         }

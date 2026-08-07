@@ -49,7 +49,21 @@ Plan: /home/user/plan.md (approved)
 - [x] verified live: 36/36 checks (`packages/web/verify-phase4.ts`) + browser pass on /admin/inbox (filters, open, reply, unread clearing, Open job link)
 - NOTE: replying to a real client thread sends a REAL SMS to the customer. Use throwaway bookings with rider_id NULL when testing.
 
-## Phase 5 — AI dispatch
+## Phase 5 — AI dispatch ✅ DONE
+- [x] `services/ai-dispatch.ts` — new. Deterministic scorer (`scoreCandidates`) ALWAYS runs and produces a complete answer; the model is then asked only to re-rank that same candidate set and write prose. Model never invents a tech, a distance or an ETA — every number the UI shows is still ours.
+- [x] Scorer extended beyond distance/skill/availability with real workload: `openJobs` + projected `freeInMins`, so a loaded nearby tech can correctly lose to a genuinely free further one. Urgent/high jobs weight "can go now" harder.
+- [x] `rankCandidates()` — Claude Sonnet 4.6 via the already-wired `api/agent/gateway.ts`, `generateObject` with a zod schema, 12s timeout. Falls back to the scorer when: gateway key unset, <2 online candidates (cost control), timeout, error, or the model's ranking doesn't reconcile 1:1 with the real candidate list (hallucination guard). `source: "ai" | "rules"` + `fallbackReason` returned so the UI can label it honestly.
+- [x] `typicalDurationMins()` — this tenant's own trimmed-mean on-site duration per service from completed jobs (falls back to `services.durationMins`). No new tables.
+- [x] `techWorkload()` — open stops + projected free-in per tech, from live statuses.
+- [x] `predictDelays()` — projects which in-flight jobs will finish late from live tech GPS + that tenant's own historical durations. Pure arithmetic, no model call, safe to run every minute for every company.
+- [x] `POST /api/ai/suggest-tech/:bookingId` rewritten on top of it. Response keeps the old shape (`best`, `ranked`, `confident`, `locationAvailable`, `reasoning`) and adds `source`, `fallbackReason`, `typicalMins`, plus per-candidate `rationale`/`openJobs`/`freeInMins`.
+- [x] `GET /api/ai/delay-risk` (requireAdmin, `?graceMins=`) — the at-risk list.
+- [x] `sla_risk` automation trigger now ALSO fires for assigned jobs projected to finish late (`facts.risk = "running_late"`, `vars.minutesLate`). Previously it could only see *unassigned* work approaching its window — it was blind to a tech running 40 min behind.
+- [x] Scheduler: "N jobs projected to run late" banner (click → opens the work order), AI DISPATCH badge on the suggestion, plus the runner-up rationales inline.
+- [x] Work-order assign modal: AI DISPATCH badge + typical-duration note, list re-ordered to the AI ranking, each tech's own rationale under their name.
+- [x] verified live: 61/61 (`packages/web/verify-phase5.ts`) + browser pass on /admin/scheduler and the assign modal (both AI and rules variants rendered).
+- NOTE: with every tech offline the model is deliberately skipped ("no online candidates") and the deterministic scorer answers. Seeded techs are `manual_offline=1`, so a browser check needs that cleared first.
+- NOTE: model path adds ~5-7s to the suggest call. UI already shows a spinner.
 
 ## Notes / decisions
 - Turso: db:generate -> commit -> db:migrate. NEVER db:push.

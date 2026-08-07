@@ -95,6 +95,13 @@ export default function SchedulerPage() {
     },
   });
 
+  // jobs projected to run late (live tech position + this tenant's own history)
+  const risk = useQuery({
+    queryKey: ["delay-risk"],
+    queryFn: async () => (await api.ai["delay-risk"].$get()).json(),
+    refetchInterval: 60_000,
+  });
+
   const suggest = useMutation({
     mutationFn: async (bookingId: string) =>
       (await api.ai["suggest-tech"][":bookingId"].$post({
@@ -302,6 +309,44 @@ export default function SchedulerPage() {
           </div>
         }
       />
+
+      {((risk.data as any)?.risks ?? []).length > 0 && (
+        <div className="mb-4 rounded-xl border border-amber-warn/25 bg-amber-warn/[0.06] p-3">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-warn" />
+            <h3 className="text-sm font-bold text-amber-warn">
+              {(risk.data as any).risks.length} job
+              {(risk.data as any).risks.length === 1 ? "" : "s"} projected to run
+              late
+            </h3>
+          </div>
+          <div className="mt-2 space-y-1.5">
+            {((risk.data as any).risks as any[]).slice(0, 4).map((r) => (
+              <button
+                key={r.bookingId}
+                onClick={() => {
+                  const b = (bookings.data?.bookings ?? []).find(
+                    (x: any) => x.id === r.bookingId,
+                  );
+                  if (b) setEditJob(b);
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-1 py-0.5 text-left text-xs hover:bg-white/5"
+              >
+                <span className="font-semibold text-slate-200">
+                  {r.title || "Work order"}
+                </span>
+                <span className="rounded-full bg-amber-warn/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-warn">
+                  ~{r.minutesLate} min late
+                </span>
+                <span className="truncate text-slate-500">
+                  {r.techName ? `${r.techName} — ` : ""}
+                  {r.reason}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {mode === "calendar" ? (
         <div className="grid gap-4 lg:grid-cols-[240px_1fr]">
@@ -865,9 +910,29 @@ export default function SchedulerPage() {
                               match
                             </p>
                           )}
+                          <p className="mb-1 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-cyan-glow">
+                            <Sparkles className="h-3 w-3" />
+                            {(suggest.data as any).source === "ai"
+                              ? "AI dispatch"
+                              : "Best match"}
+                          </p>
                           <p className="text-slate-300">
                             {suggest.data.reasoning}
                           </p>
+                          {((suggest.data as any).ranked ?? [])
+                            .slice(1, 3)
+                            .filter((r: any) => r.rationale)
+                            .map((r: any) => (
+                              <p
+                                key={r.techId}
+                                className="mt-1 border-t border-white/5 pt-1 text-[11px] leading-snug text-slate-500"
+                              >
+                                <span className="font-semibold text-slate-400">
+                                  {r.name}:
+                                </span>{" "}
+                                {r.rationale}
+                              </p>
+                            ))}
                           <button
                             onClick={(e) => {
                               e.stopPropagation();

@@ -997,6 +997,18 @@ function AssignModal({ booking, onClose, onDone }: any) {
     (r: any) => r.status !== "offline",
   );
   const bestId = (suggest.data as any)?.best?.techId;
+  const sug = suggest.data as any;
+  const rankInfo = new Map<string, { rank: number; rationale: string | null }>(
+    ((sug?.ranked ?? []) as any[]).map((x, i) => [
+      x.techId,
+      { rank: i + 1, rationale: x.rationale ?? null },
+    ]),
+  );
+  // show the ranked order the recommendation actually produced
+  const ordered = [...list].sort(
+    (a: any, b: any) =>
+      (rankInfo.get(a.id)?.rank ?? 99) - (rankInfo.get(b.id)?.rank ?? 99),
+  );
 
   return (
     <div
@@ -1019,12 +1031,20 @@ function AssignModal({ booking, onClose, onDone }: any) {
           </button>
         </div>
 
-        {(suggest.data as any)?.reasoning && (
-          <div className="mx-4 mt-4 flex items-start gap-2 rounded-xl border border-brand/20 bg-brand/5 p-3 text-xs">
-            <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cyan-glow" />
-            <span className="text-slate-300">
-              {(suggest.data as any).reasoning}
-            </span>
+        {sug?.reasoning && (
+          <div className="mx-4 mt-4 rounded-xl border border-brand/20 bg-brand/5 p-3 text-xs">
+            <div className="mb-1.5 flex items-center gap-1.5">
+              <Sparkles className="h-3.5 w-3.5 shrink-0 text-cyan-glow" />
+              <span className="text-[10px] font-bold uppercase tracking-wide text-cyan-glow">
+                {sug.source === "ai" ? "AI dispatch" : "Best match"}
+              </span>
+              {sug.typicalMins ? (
+                <span className="text-[10px] text-slate-500">
+                  · usually ~{sug.typicalMins} min on site
+                </span>
+              ) : null}
+            </div>
+            <span className="text-slate-300">{sug.reasoning}</span>
           </div>
         )}
 
@@ -1036,7 +1056,7 @@ function AssignModal({ booking, onClose, onDone }: any) {
               No available {nounPlural.toLowerCase()} online
             </p>
           ) : (
-            list.map((r: any) => (
+            ordered.map((r: any) => (
               <button
                 key={r.id}
                 disabled={assign.isPending}
@@ -1067,6 +1087,11 @@ function AssignModal({ booking, onClose, onDone }: any) {
                     {r.rating ? `★ ${r.rating.toFixed(1)}` : "New"} ·{" "}
                     {r.skillClass ?? r.vehicle ?? "Van"}
                   </p>
+                  {rankInfo.get(r.id)?.rationale && (
+                    <p className="mt-1 text-[11px] leading-snug text-slate-400">
+                      {rankInfo.get(r.id)!.rationale}
+                    </p>
+                  )}
                 </div>
                 <span
                   className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
