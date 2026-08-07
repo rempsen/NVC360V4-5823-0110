@@ -5,6 +5,8 @@ import { eq } from "drizzle-orm";
 import { requireAdmin, tenantId, tx } from "../middleware/auth";
 import { auth } from "../auth";
 import { isAdminRole, isSuperadmin, canBeSuperadmin, SUPERADMIN_DOMAINS } from "../lib/permissions";
+import { z } from "zod";
+import { parseBody, shortText, longText, email as emailField, phone as phoneField } from "../lib/validate";
 
 type SessionUser = { id: string; role?: string };
 
@@ -16,6 +18,97 @@ function safeParse<T>(v: unknown, fallback: T): T {
     return fallback;
   }
 }
+
+
+/* -------------------------------------------------------------------------- */
+/*  Request bodies                                                            */
+/*                                                                            */
+/*  These four routes read raw `c.req.json()`. The create route leaned on      */
+/*  better-auth to validate the email and password, but everything else was    */
+/*  written straight through. Reproduced live before this pass:                */
+/*                                                                            */
+/*   - POST /users with a 20,000-character name -> 201.                        */
+/*   - POST /users { phone: {} } -> 201, an object written into a text column. */
+/*   - PATCH /users/:id { email: "garbage-not-an-email" } -> 200. That is the  */
+/*     account's LOGIN identity: the person can no longer sign in, and the     */
+/*     email validation better-auth applies on create was bypassed entirely.   */
+/*   - PATCH /users/:id { email: "<an existing user's email>" } -> bare 500 on */
+/*     the unique index. Now a 409.                                            */
+/*   - PATCH /users/:id { name: 123 } -> 200 with the name stored as "123.0".  */
+/*   - PATCH /users/:id { notes: 500,000 chars } and { addresses: 5,000        */
+/*     entries } -> 200. One request could bloat a single user row unbounded.  */
+/*   - POST /users/:id/reset-password { password: "P".repeat(100_000) } ->     */
+/*     200: we then ran the password hasher over 100 KB, which is a cheap way  */
+/*     to burn server CPU. { password: 12345678 } (a number) -> bare 500.      */
+/*                                                                            */
+/*  Note: `role` and `companyId` were already safe on PATCH — the field        */
+/*  whitelist never copied them — and that was confirmed live (a PATCH of      */
+/*  role: "superadmin" left the role untouched). The schema keeps it that way  */
+/*  by stripping unknown keys instead of rejecting them.                       */
+/* -------------------------------------------------------------------------- */
+
+const password = z
+  .string({ message: "Password is required" })
+  .min(8, "Password must be at least 8 characters")
+  .max(200, "Password is too long");
+
+const UserCreate = z.object({
+  name: shortText("Name", 200),
+  email: emailField(),
+  password,
+  phone: phoneField.optional(),
+  role: z.enum(["customer", "admin", "superadmin"], { error: "Unknown role" }).optional(),
+});
+
+/** One CRM address / contact entry. Bounded so a row can't be inflated. */
+const AddressEntry = z
+  .object({
+    label: longText(120).optional(),
+    line1: longText(500).optional(),
+    line2: longText(500).optional(),
+    city: longText(120).optional(),
+    region: longText(120).optional(),
+    postalCode: longText(40).optional(),
+    country: longText(120).optional(),
+    notes: longText(2_000).optional(),
+  })
+  .loose();
+const ContactEntry = z
+  .object({
+    name: longText(200).optional(),
+    email: longText(320).optional(),
+    phone: longText(40).optional(),
+    role: longText(120).optional(),
+    notes: longText(2_000).optional(),
+  })
+  .loose();
+
+const UserPatch = z
+  .object({
+    name: shortText("Name", 200),
+    // A change here changes what the person types to sign in — it has to be a
+    // real address, and it has to still be unique (checked in the handler).
+    email: emailField(),
+    phone: phoneField,
+    altPhone: phoneField,
+    company: longText(200),
+    address: longText(500),
+    city: longText(120),
+    region: longText(120),
+    postalCode: longText(40),
+    country: longText(120),
+    notes: longText(10_000),
+    addresses: z.array(AddressEntry).max(50, "Too many addresses"),
+    contacts: z.array(ContactEntry).max(50, "Too many contacts"),
+  })
+  .partial()
+  .refine((b) => Object.keys(b).length > 0, { error: "Nothing to update" });
+
+const ResetPassword = z.object({ password });
+const ChangePassword = z.object({
+  currentPassword: z.string({ message: "Current password is required" }).min(1, "Current password is required").max(200),
+  newPassword: password,
+});
 
 export const adminRoutes = new Hono()
   .get("/stats", requireAdmin, async (c) => {
@@ -127,9 +220,8 @@ export const adminRoutes = new Hono()
   })
   // create a user account (admin) — clients or dispatchers
   .post("/users", requireAdmin, async (c) => {
-    const body = await c.req.json();
     const me = c.get("user") as SessionUser;
-    const { name, email, password, phone, role } = body;
+    const { name, email, password: pw, phone, role } = await parseBody(c, UserCreate);
     // Admin-tier accounts (admin/superadmin) may only be minted by a superadmin.
     if (isAdminRole(role) && !isSuperadmin(me.role))
       return c.json(
@@ -143,9 +235,6 @@ export const adminRoutes = new Hono()
         { message: `Superadmin is reserved for ${SUPERADMIN_DOMAINS.join(", ")} accounts` },
         403,
       );
-    if (!name || !email || !password)
-      return c.json({ message: "Name, email and password are required" }, 400);
-
     const [exists] = await db
       .select()
       .from(schema.user)
@@ -154,7 +243,7 @@ export const adminRoutes = new Hono()
 
     try {
       await auth.api.signUpEmail({
-        body: { name, email, password, role: r, phone: phone ?? "" } as any,
+        body: { name, email, password: pw, role: r, phone: phone ?? "" } as any,
       });
     } catch (e: any) {
       return c.json({ message: e?.message ?? "Sign-up failed" }, 400);
@@ -176,35 +265,26 @@ export const adminRoutes = new Hono()
   // update a user account (admin) — full CRM-style client record
   .patch("/users/:id", requireAdmin, async (c) => {
     const id = c.req.param("id");
-    const b = await c.req.json();
+    const b = await parseBody(c, UserPatch);
     const me = c.get("user") as SessionUser;
     const [target] = await db.select().from(schema.user).where(eq(schema.user.id, id));
     if (!target || target.companyId !== tenantId(c)) return c.json({ message: "Not found" }, 404);
     // Editing an admin-tier account requires superadmin.
     if (isAdminRole(target.role) && !isSuperadmin(me.role))
       return c.json({ message: "Only a superadmin can modify admin-level accounts" }, 403);
-    const updates: Record<string, any> = {};
-    // simple text fields
-    for (const k of [
-      "name",
-      "email",
-      "phone",
-      "altPhone",
-      "company",
-      "address",
-      "city",
-      "region",
-      "postalCode",
-      "country",
-      "notes",
-    ]) {
-      if (b[k] !== undefined) updates[k] = b[k];
+
+    // Taking an email that already belongs to somebody else used to hit the
+    // unique index and surface as a bare 500.
+    if (b.email && b.email !== target.email) {
+      const [clash] = await db.select().from(schema.user).where(eq(schema.user.email, b.email));
+      if (clash && clash.id !== id) return c.json({ message: "Email already in use" }, 409);
     }
+
+    const { addresses, contacts, ...rest } = b;
+    const updates: Record<string, any> = { ...rest };
     // JSON array fields (multiple addresses / contacts)
-    if (b.addresses !== undefined)
-      updates.addresses = JSON.stringify(Array.isArray(b.addresses) ? b.addresses : []);
-    if (b.contacts !== undefined)
-      updates.contacts = JSON.stringify(Array.isArray(b.contacts) ? b.contacts : []);
+    if (addresses !== undefined) updates.addresses = JSON.stringify(addresses);
+    if (contacts !== undefined) updates.contacts = JSON.stringify(contacts);
     if (Object.keys(updates).length > 0) {
       await db.update(schema.user).set(updates).where(eq(schema.user.id, id));
     }
@@ -224,15 +304,13 @@ export const adminRoutes = new Hono()
   .post("/users/:id/reset-password", requireAdmin, async (c) => {
     const id = c.req.param("id");
     const me = c.get("user") as SessionUser;
-    const { password } = (await c.req.json()) as { password?: string };
-    if (!password || password.length < 8)
-      return c.json({ message: "Password must be at least 8 characters" }, 400);
+    const { password: newPw } = await parseBody(c, ResetPassword);
     const [target] = await db.select().from(schema.user).where(eq(schema.user.id, id));
     if (!target || target.companyId !== tenantId(c)) return c.json({ message: "Not found" }, 404);
     if (isAdminRole(target.role) && !isSuperadmin(me.role))
       return c.json({ message: "Only a superadmin can reset admin-level passwords" }, 403);
     const ctx = await auth.$context;
-    const hash = await ctx.password.hash(password);
+    const hash = await ctx.password.hash(newPw);
     const [cred] = await db
       .select()
       .from(schema.account)
@@ -260,12 +338,7 @@ export const adminRoutes = new Hono()
   // verify identity before swapping in the new one.
   .post("/me/change-password", requireAdmin, async (c) => {
     const me = c.get("user") as SessionUser;
-    const { currentPassword, newPassword } = (await c.req.json()) as {
-      currentPassword?: string;
-      newPassword?: string;
-    };
-    if (!newPassword || newPassword.length < 8)
-      return c.json({ message: "New password must be at least 8 characters" }, 400);
+    const { currentPassword, newPassword } = await parseBody(c, ChangePassword);
     const ctx = await auth.$context;
     const [cred] = await db
       .select()
@@ -273,7 +346,7 @@ export const adminRoutes = new Hono()
       .where(eq(schema.account.userId, me.id));
     if (!cred?.password) return c.json({ message: "No password set on this account" }, 400);
     const valid = await ctx.password.verify({
-      password: currentPassword ?? "",
+      password: currentPassword,
       hash: cred.password,
     });
     if (!valid) return c.json({ message: "Current password is incorrect" }, 400);
