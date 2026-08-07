@@ -17,6 +17,22 @@ import { publishTrack } from "../../services/realtime";
 import { isInAnyZone } from "../../shared/zone-utils";
 import { linkBookingToProperty } from "../../services/properties";
 import { logJobEvent, jobTimeline } from "../../services/job-events";
+import { z } from "zod";
+import {
+  parseBody,
+  id as idField,
+  isoDate,
+  latitude,
+  longitude,
+  rating as ratingField,
+  bookingStatus,
+  priority as priorityField,
+  shortText,
+  longText,
+  jsonBlob,
+  jsonObject,
+  phone,
+} from "../lib/validate";
 
 type SessionUser = { id: string; role?: string; email: string; name: string };
 
@@ -200,6 +216,108 @@ async function enrichById(companyId: string, id: string) {
   return enrich(fresh);
 }
 
+
+/* -------------------------------------------------------------------------- */
+/*  Request schemas                                                            */
+/* -------------------------------------------------------------------------- */
+/**
+ * These routes previously wrote `await c.req.json()` straight into the
+ * bookings table. The consequences were not theoretical:
+ * - `POST /:id/status` accepted ANY string, so a typo'd or hand-crafted status
+ *   ("Completed", "done", "<script>") was written to the row. Every screen and
+ *   every dispatch rule keys off that value, and none of them match it again.
+ * - `POST /:id/review` accepted any rating, so `rating: 500` sailed into the
+ *   reviews table and straight through the technician's rating average.
+ * - Anything doing `new Date(body.scheduledAt)` produced an Invalid Date on
+ *   garbage input and stored it, breaking the row on every calendar view.
+ * - fieldData / rateModel / lineItems were JSON.stringify'd with no size limit.
+ *
+ * Unknown keys are stripped rather than rejected (several clients send extras),
+ * which also removes the mass-assignment surface on the PATCH route.
+ */
+
+/** Fields shared by the customer-facing and admin work-order create routes. */
+const BookingCore = {
+  serviceId: idField("Service"),
+  templateId: idField("Template").nullish(),
+  title: shortText("Title", 200).optional(),
+  priority: priorityField.optional(),
+  scheduledAt: isoDate("Schedule date"),
+  address: shortText("Address", 500),
+  lat: latitude.optional(),
+  lng: longitude.optional(),
+  notes: longText(10_000).optional(),
+  staffNotes: longText(10_000).optional(),
+  region: shortText("Region", 120).optional().or(z.literal("")),
+  phone: phone.optional(),
+  fieldData: jsonObject().optional(),
+  rateModel: jsonBlob().optional(),
+  lineItems: z.array(z.unknown()).max(500, "Too many line items").optional(),
+  requiredSkillClass: shortText("Skill class", 120).optional().or(z.literal("")),
+  requiredSkills: z.union([z.string().max(2_000), z.array(z.string().max(120)).max(50)]).optional(),
+};
+
+const BookingCreate = z.object(BookingCore);
+
+const BookingAdminCreate = z.object({
+  ...BookingCore,
+  customerId: idField("Client"),
+  riderId: idField("Technician").nullish(),
+  status: bookingStatus.optional(),
+});
+
+/** Every field is optional, but a present field must still be the right shape. */
+const BookingPatch = z
+  .object({
+    title: shortText("Title", 200),
+    priority: priorityField,
+    address: shortText("Address", 500),
+    notes: longText(10_000),
+    staffNotes: longText(10_000),
+    customerId: idField("Client"),
+    serviceId: idField("Service"),
+    templateId: idField("Template").nullable().or(z.literal("")),
+    region: shortText("Region", 120).or(z.literal("")),
+    lat: latitude,
+    lng: longitude,
+    customerPhone: phone,
+    scheduledAt: z.union([isoDate("Schedule date"), z.literal("")]),
+    rateModel: jsonBlob(),
+    lineItems: z.array(z.unknown()).max(500, "Too many line items"),
+    requiredSkillClass: shortText("Skill class", 120).or(z.literal("")),
+    requiredSkills: z.union([z.string().max(2_000), z.array(z.string().max(120)).max(50)]),
+    fieldData: jsonObject(),
+    riderId: idField("Technician").nullable().or(z.literal("")),
+  })
+  .partial()
+  .refine((v) => Object.keys(v).length > 0, { message: "Nothing to update" });
+
+const ScheduleBody = z.object({ scheduledAt: isoDate("Schedule date") });
+const AssignBody = z.object({ riderId: idField("Technician") });
+const StatusBody = z.object({ status: bookingStatus });
+const ReviewBody = z.object({ rating: ratingField, comment: longText(4_000).optional() });
+const ChecklistBody = z.object({
+  index: z.number({ message: "Index must be a number" }).int("Index must be a whole number").min(0, "Index must be 0 or greater"),
+  done: z.boolean({ message: "Done must be true or false" }),
+});
+const DriverNotesBody = z.object({ notes: longText(10_000).default("") });
+
+/**
+ * Signature capture. The route already hand-guarded the point count, but the
+ * stroke array itself was unchecked `any[][][]` — a stroke of non-numbers
+ * rendered `MNaN NaN` into the stored SVG.
+ */
+const SignatureBody = z.object({
+  strokes: z
+    .array(z.array(z.tuple([z.number().finite(), z.number().finite()])).max(20_000))
+    .min(1, "Signature is empty")
+    .max(500, "Too many strokes"),
+  width: z.number().finite().min(1).max(10_000).optional(),
+  height: z.number().finite().min(1).max(10_000).optional(),
+  name: shortText("Printed name", 120),
+});
+const DeclineBody = z.object({ reason: longText(2_000).optional().default("") });
+
 export const bookingsRoutes = new Hono()
   // list for current user (customer sees own, rider sees assigned, admin sees all)
   /**
@@ -305,7 +423,7 @@ export const bookingsRoutes = new Hono()
     const u = c.get("user") as SessionUser;
     const co = tenantId(c);
     const t = tx(c);
-    const body = await c.req.json();
+    const body = await parseBody(c, BookingCreate);
     const svc = await t.selectOne(schema.services, eq(schema.services.id, body.serviceId));
     if (!svc) return c.json({ message: "Service not found" }, 404);
 
@@ -368,9 +486,7 @@ export const bookingsRoutes = new Hono()
   .post("/admin", requireAuth, async (c) => {
     const u = c.get("user") as SessionUser;
     if (!isAdminRole(u.role)) return c.json({ message: "Forbidden" }, 403);
-    const body = await c.req.json();
-    if (!body.customerId) return c.json({ message: "Client is required" }, 400);
-    if (!body.scheduledAt) return c.json({ message: "Schedule date is required" }, 400);
+    const body = await parseBody(c, BookingAdminCreate);
 
     const co = tenantId(c);
     const t = tx(c);
@@ -492,12 +608,11 @@ export const bookingsRoutes = new Hono()
     const u = c.get("user") as SessionUser;
     if (!isAdminRole(u.role)) return c.json({ message: "Forbidden" }, 403);
     const id = c.req.param("id");
-    const { scheduledAt } = await c.req.json();
-    if (!scheduledAt) return c.json({ message: "scheduledAt required" }, 400);
+    const { scheduledAt } = await parseBody(c, ScheduleBody);
     const t = tx(c);
     const prev = await t.selectOne(schema.bookings, eq(schema.bookings.id, id));
     if (!prev) return c.json({ message: "Not found" }, 404);
-    const set: Record<string, unknown> = { scheduledAt: new Date(scheduledAt) };
+    const set: Record<string, unknown> = { scheduledAt };
     const [b] = await t.update(schema.bookings, set, eq(schema.bookings.id, id));
     return c.json({ booking: await enrich(b) }, 200);
   })
@@ -508,7 +623,7 @@ export const bookingsRoutes = new Hono()
     const id = c.req.param("id");
     const co = tenantId(c);
     const t = tx(c);
-    const body = await c.req.json();
+    const body = await parseBody(c, BookingPatch);
     const prev = await t.selectOne(schema.bookings, eq(schema.bookings.id, id));
     if (!prev) return c.json({ message: "Not found" }, 404);
 
@@ -525,8 +640,7 @@ export const bookingsRoutes = new Hono()
     if (body.lat !== undefined) set.lat = body.lat;
     if (body.lng !== undefined) set.lng = body.lng;
     if (body.customerPhone !== undefined) set.customerPhone = body.customerPhone;
-    if (body.scheduledAt !== undefined && body.scheduledAt)
-      set.scheduledAt = new Date(body.scheduledAt);
+    if (body.scheduledAt) set.scheduledAt = body.scheduledAt;
     if (body.rateModel !== undefined)
       set.rateModel = body.rateModel ? JSON.stringify(body.rateModel) : "";
     if (body.lineItems !== undefined)
@@ -589,8 +703,13 @@ export const bookingsRoutes = new Hono()
   // assign a rider (admin) -> offers the job; tech must accept before en route
   .post("/:id/assign", requireAuth, async (c) => {
     const co = tenantId(c);
-    const { riderId } = await c.req.json();
+    const { riderId } = await parseBody(c, AssignBody);
     const id = c.req.param("id");
+    // Tenant check: without this an admin could assign a technician belonging to
+    // another company by passing their id — the booking update itself is
+    // tenant-scoped, but riderId was never checked against the same tenant.
+    const assignee = await tx(c).selectOne(schema.riders, eq(schema.riders.id, riderId));
+    if (!assignee) return c.json({ message: "Technician not found" }, 404);
     const [b] = await tx(c).update(
       schema.bookings,
       { riderId, status: "assigned", assignStatus: "offered", assignedAt: new Date(), acceptedAt: null, declineReason: "" },
@@ -620,7 +739,7 @@ export const bookingsRoutes = new Hono()
   // tech declines an offered job -> back to dispatch queue, notify office
   .post("/:id/decline", requireAuth, async (c) => {
     const id = c.req.param("id");
-    const { reason } = await c.req.json().catch(() => ({ reason: "" }));
+    const { reason } = await parseBody(c, DeclineBody);
     const t = tx(c);
     const cur = await t.selectOne(schema.bookings, eq(schema.bookings.id, id));
     // Only an OFFERED job can be declined. Guards against a stale tap after the
@@ -646,7 +765,7 @@ export const bookingsRoutes = new Hono()
   // update status (rider/admin) -> triggers notifications + emails
   .post("/:id/status", requireAuth, async (c) => {
     const co = tenantId(c);
-    const { status } = await c.req.json();
+    const { status } = await parseBody(c, StatusBody);
     const id = c.req.param("id");
     const b = await applyBookingStatus(co, id, status);
     if (!b) return c.json({ error: "not found" }, 404);
@@ -667,7 +786,7 @@ export const bookingsRoutes = new Hono()
   .post("/:id/review", requireAuth, async (c) => {
     const u = c.get("user") as SessionUser;
     const id = c.req.param("id");
-    const { rating, comment } = await c.req.json();
+    const { rating, comment } = await parseBody(c, ReviewBody);
     const t = tx(c);
     const b = await t.selectOne(schema.bookings, eq(schema.bookings.id, id));
     if (!b) return c.json({ message: "Not found" }, 404);
@@ -779,29 +898,22 @@ export const bookingsRoutes = new Hono()
     const b = await t.selectOne(schema.bookings, eq(schema.bookings.id, id));
     if (!b) return c.json({ message: "Not found" }, 404);
 
-    const body = (await c.req.json()) as {
-      strokes?: number[][][];
-      width?: number;
-      height?: number;
-      name?: string;
-    };
-    const strokes = Array.isArray(body.strokes) ? body.strokes : [];
-    const name = String(body.name || "").trim();
-    if (!strokes.length) return c.json({ message: "Signature is empty" }, 400);
-    if (!name) return c.json({ message: "Printed name is required" }, 400);
+    const body = await parseBody(c, SignatureBody);
+    const strokes = body.strokes;
+    const name = body.name;
     // guard against a runaway payload
-    const points = strokes.reduce((n, s) => n + (Array.isArray(s) ? s.length : 0), 0);
-    if (points > 20000) return c.json({ message: "Signature too large" }, 400);
+    const points = strokes.reduce((n, s) => n + s.length, 0);
+    if (points > 20000) throw Err.badRequest("Signature too large");
 
-    const w = Math.max(1, Math.round(Number(body.width) || 600));
-    const h = Math.max(1, Math.round(Number(body.height) || 200));
+    const w = Math.round(body.width ?? 600);
+    const h = Math.round(body.height ?? 200);
     const paths = strokes
-      .filter((s) => Array.isArray(s) && s.length > 0)
+      .filter((s) => s.length > 0)
       .map((s) => {
         const d = s
           .map((pt, i) => {
-            const x = Math.round((Number(pt?.[0]) || 0) * 100) / 100;
-            const y = Math.round((Number(pt?.[1]) || 0) * 100) / 100;
+            const x = Math.round(pt[0] * 100) / 100;
+            const y = Math.round(pt[1] * 100) / 100;
             return `${i === 0 ? "M" : "L"}${x} ${y}`;
           })
           .join(" ");
@@ -895,7 +1007,7 @@ export const bookingsRoutes = new Hono()
   // Tech can check/uncheck individual items. Stored in bookings.checklistState JSON.
   .patch("/:id/checklist", requireAuth, async (c) => {
     const id = c.req.param("id");
-    const { index, done } = await c.req.json();
+    const { index, done } = await parseBody(c, ChecklistBody);
     const t = tx(c);
     const b = await t.selectOne(schema.bookings, eq(schema.bookings.id, id));
     if (!b) return c.json({ message: "Not found" }, 404);
@@ -913,7 +1025,7 @@ export const bookingsRoutes = new Hono()
     const t = tx(c);
     const b = await t.selectOne(schema.bookings, eq(schema.bookings.id, id));
     if (!b) return c.json({ message: "Not found" }, 404);
-    const { notes } = await c.req.json() as { notes: string };
+    const { notes } = await parseBody(c, DriverNotesBody);
     await t.update(schema.bookings, { driverNotes: notes ?? "" }, eq(schema.bookings.id, id));
     return c.json({ ok: true }, 200);
   })

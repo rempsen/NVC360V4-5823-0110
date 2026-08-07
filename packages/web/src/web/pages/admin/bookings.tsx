@@ -579,6 +579,11 @@ function FilterBar({
 }) {
   const { noun } = useWorkerNoun();
   const { noun: customerNoun } = useCustomerNoun();
+  // FilterBar is its own component, so it needs its own brand-noun hooks.
+  // This was previously reading `jobNoun` from the parent's scope, which
+  // doesn't exist here — opening the Filters panel threw
+  // "jobNoun is not defined" and took the whole Jobs page down.
+  const { noun: jobNoun } = useJobNoun();
   const up = (patch: Partial<typeof EMPTY>) =>
     setFilters({ ...filters, ...patch });
   const toggleArr = (key: "status" | "priority" | "paymentStatus", v: string) => {

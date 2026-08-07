@@ -3,7 +3,7 @@ import { z } from "zod";
 import * as schema from "../database/schema";
 import { eq } from "drizzle-orm";
 import { requireAdmin, tx } from "../middleware/auth";
-import { validate, money, durationMins, shortText, longText } from "../lib/validate";
+import { parseBody, money, durationMins, shortText, longText } from "../lib/validate";
 
 /**
  * Service catalog.
@@ -61,9 +61,7 @@ export const servicesRoutes = new Hono()
     return c.json({ service: svc }, 200);
   })
   .post("/", requireAdmin, async (c) => {
-    const parsed = await validate(c, ServiceCreate);
-    if (!parsed.ok) return parsed.response;
-    const body = parsed.data;
+    const body = await parseBody(c, ServiceCreate);
 
     const [svc] = await tx(c).insert(schema.services, {
       name: body.name,
@@ -78,9 +76,7 @@ export const servicesRoutes = new Hono()
     return c.json({ service: svc }, 201);
   })
   .patch("/:id", requireAdmin, async (c) => {
-    const parsed = await validate(c, ServiceUpdate);
-    if (!parsed.ok) return parsed.response;
-    const body = parsed.data;
+    const body = await parseBody(c, ServiceUpdate);
 
     // Only ever write validated, known keys. This also closes the
     // mass-assignment surface that `{ ...body }` used to leave open (id,

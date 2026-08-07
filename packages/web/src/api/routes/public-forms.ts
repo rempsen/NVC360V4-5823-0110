@@ -12,6 +12,53 @@ import { recomputeBooking } from "../../services/billing";
 import { reconcileRiderStatus } from "../../services/presence";
 import { capture } from "../lib/analytics";
 import { incr } from "../lib/metrics";
+import { z } from "zod";
+import {
+  parseBody,
+  id as idField,
+  isoDate,
+  latitude,
+  longitude,
+  longText,
+  optText,
+  priority as priorityField,
+  jsonBlob,
+  jsonObject,
+} from "../lib/validate";
+
+/**
+ * Employee work-order submission body.
+ *
+ * This endpoint is UNAUTHENTICATED (PIN-gated only) and creates a real
+ * booking, a real invoice and fires real customer notifications, so it was the
+ * highest-risk unvalidated body in the API. Previously every field was taken
+ * raw: `lineItems`/`rateModel`/`fieldData` were JSON.stringify'd with no size
+ * cap, free text had no length cap, and `lat`/`lng` were written straight to
+ * the row (with `body.lat && body.lng` also skipping zone enforcement whenever
+ * lat was exactly 0).
+ */
+const WorkOrderSubmit = z.object({
+  customerId: idField("Client").optional(),
+  clientName: optText(200),
+  clientEmail: optText(320),
+  clientPhone: optText(32),
+  clientAddress: optText(500),
+  serviceId: idField("Service").optional(),
+  riderId: idField("Technician").optional(),
+  title: optText(200),
+  priority: priorityField.optional(),
+  scheduledAt: isoDate("Schedule").optional(),
+  address: optText(500),
+  lat: latitude.optional(),
+  lng: longitude.optional(),
+  notes: longText(10_000).optional(),
+  staffNotes: longText(10_000).optional(),
+  region: optText(64),
+  submittedBy: optText(200),
+  fieldData: jsonObject().optional(),
+  rateModel: jsonBlob(50_000).optional(),
+  lineItems: z.array(jsonBlob(20_000)).max(500, "Too many line items").optional(),
+});
 import {
   normalizeCatalogItem,
   itemUnitCost,
@@ -247,8 +294,8 @@ export const publicFormsRoutes = new Hono()
     const form = await loadForm(companyId, slug);
     if (!form || !form.active || form.formType !== "work_order")
       return c.json({ message: "Form not found" }, 404);
-    const b = await c.req.json().catch(() => ({}));
-    const code = String(b.code || "").trim();
+    const b = await parseBody(c, z.object({ code: z.string().max(128).optional() }));
+    const code = (b.code ?? "").trim();
     const ok = !!form.accessCode && code === form.accessCode;
     return c.json({ ok }, ok ? 200 : 401);
   })
@@ -366,13 +413,22 @@ export const publicFormsRoutes = new Hono()
       body = await c.req.json().catch(() => ({}));
     }
 
-    const name = String(body.name || "").trim();
-    const email = String(body.email || "").trim().toLowerCase();
-    const phone = String(body.phone || "").trim();
-    const address = String(body.address || "").trim();
-    const notes = String(body.notes || "").trim();
-    const serviceId = String(body.serviceId || body.serviceType || "").trim();
-    const preferredAt = body.preferredAt ? new Date(String(body.preferredAt)) : null;
+    // This handler can't take a fixed zod schema: the body carries arbitrary
+    // per-form custom-field keys and may arrive as multipart. So the core
+    // fields are capped explicitly instead. Uncapped, a public form could push
+    // a 50k-character "name" into the row and into every notification email.
+    const cap = (v: unknown, max: number) => String(v ?? "").trim().slice(0, max);
+    const name = cap(body.name, 200);
+    const email = cap(body.email, 320).toLowerCase();
+    const phone = cap(body.phone, 32);
+    const address = cap(body.address, 500);
+    const notes = cap(body.notes, 10_000);
+    const serviceId = cap(body.serviceId || body.serviceType, 128);
+    // `new Date("next tuesday")` is an Invalid Date, which drizzle writes
+    // happily and which then breaks every screen that formats the column.
+    const preferredRaw = body.preferredAt ? new Date(String(body.preferredAt)) : null;
+    const preferredAt =
+      preferredRaw && !Number.isNaN(preferredRaw.getTime()) ? preferredRaw : null;
 
     // ---- field config (rich) ----
     type RF = {
@@ -389,7 +445,7 @@ export const publicFormsRoutes = new Hono()
       if (!f.enabled) continue;
       if (CORE_KEYS.has(f.key)) continue;
       const raw = body[f.key];
-      const value = Array.isArray(raw) ? raw.join(", ") : (raw == null ? "" : String(raw)).trim();
+      const value = cap(Array.isArray(raw) ? raw.join(", ") : raw, 5_000);
       customAnswers.push({ label: f.label || f.key, key: f.key, value });
     }
 
@@ -615,16 +671,16 @@ async function notifyRecipient(
  * session-authenticated route.
  */
 async function submitWorkOrder(c: any, companyId: string, form: typeof schema.intakeForms.$inferSelect, origin: string) {
-  const body = await c.req.json().catch(() => ({}));
+  const body = await parseBody(c, WorkOrderSubmit);
   const t = tdb(companyId);
 
   // ---- resolve or create the client ----
-  let customerId: string = String(body.customerId || "").trim();
+  let customerId: string = body.customerId ?? "";
   if (!customerId) {
-    const name = String(body.clientName || "").trim();
-    const email = String(body.clientEmail || "").trim().toLowerCase();
-    const phone = String(body.clientPhone || "").trim();
-    const address = String(body.clientAddress || "").trim();
+    const name = body.clientName ?? "";
+    const email = (body.clientEmail ?? "").toLowerCase();
+    const phone = body.clientPhone ?? "";
+    const address = body.clientAddress ?? "";
     if (!name) return c.json({ message: "Client name is required (or pick an existing client)" }, 400);
 
     let customer = email
@@ -659,12 +715,14 @@ async function submitWorkOrder(c: any, companyId: string, form: typeof schema.in
   // ---- optional technician (only if the form allows it) ----
   let riderId: string | null = null;
   if (form.allowTechAssign && body.riderId) {
-    const rider = await t.selectOne(schema.riders, eq(schema.riders.id, String(body.riderId)));
+    const rider = await t.selectOne(schema.riders, eq(schema.riders.id, body.riderId));
     if (rider) riderId = rider.id;
   }
 
   // ---- zone enforcement, same as the admin route ----
-  if (body.lat && body.lng) {
+  // `!= null`, not truthiness: lat 0 is a real coordinate and the old check
+  // let a submission at the equator skip zone enforcement entirely.
+  if (body.lat != null && body.lng != null) {
     const allZones = await t.select(schema.serviceZones);
     const parsedZones = allZones.map((z) => ({ polygon: JSON.parse(z.polygon || "[]") as [number, number][], active: z.active }));
     const activeZones = parsedZones.filter((z) => z.active && z.polygon.length >= 3);
@@ -677,18 +735,16 @@ async function submitWorkOrder(c: any, companyId: string, form: typeof schema.in
   const fieldData = body.fieldData ? JSON.stringify(body.fieldData) : "{}";
 
   // ---- schedule: optional, default to next business day like the lead path ----
-  const scheduledAt = body.scheduledAt && !isNaN(new Date(body.scheduledAt).getTime())
-    ? new Date(body.scheduledAt)
-    : new Date(Date.now() + 86400_000);
+  const scheduledAt = body.scheduledAt ?? new Date(Date.now() + 86400_000);
 
-  const lineItems = Array.isArray(body.lineItems) ? body.lineItems : [];
+  const lineItems = body.lineItems ?? [];
 
   const [b] = await t.insert(schema.bookings, {
     customerId,
     serviceId: svc.id,
     riderId,
     title: body.title || svc.name,
-    priority: ["low", "normal", "high", "urgent"].includes(body.priority) ? body.priority : "normal",
+    priority: body.priority ?? "normal",
     status: riderId ? "assigned" : "confirmed",
     scheduledAt,
     address: body.address || cu.address || "(no address provided)",

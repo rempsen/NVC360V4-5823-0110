@@ -3,6 +3,20 @@ import { requireAuth, tenantId } from "../middleware/auth";
 import { parseRateModel, computeSubtotal, EMPTY_RATE_MODEL, type RateModel } from "../../shared/pricing";
 import { lookupTax, taxRegionOptions } from "../../shared/tax";
 import { quoteBooking } from "../../services/billing";
+import { parseBody, jsonBlob } from "../lib/validate";
+import { z } from "zod";
+
+/** Non-negative, finite, and capped — this feeds computeSubtotal(). */
+const qty = z.number().finite().min(0).max(1_000_000).optional();
+
+const QuoteBody = z.object({
+  rateModel: jsonBlob(50_000).optional(),
+  actualMinutes: qty,
+  minutes: qty,
+  actualKm: qty,
+  km: qty,
+  region: z.string().trim().max(64).optional(),
+});
 
 function coerceRateModel(input: any): RateModel {
   if (!input) return { ...EMPTY_RATE_MODEL };
@@ -17,10 +31,10 @@ export const pricingRoutes = new Hono()
   })
   // live preview: given a rate model + region + actuals, return the breakdown w/ tax
   .post("/quote", requireAuth, async (c) => {
-    const body = await c.req.json();
+    const body = await parseBody(c, QuoteBody);
     const rm = coerceRateModel(body.rateModel);
-    const actualMinutes = Number(body.actualMinutes ?? body.minutes ?? 0) || 0;
-    const actualKm = Number(body.actualKm ?? body.km ?? 0) || 0;
+    const actualMinutes = body.actualMinutes ?? body.minutes ?? 0;
+    const actualKm = body.actualKm ?? body.km ?? 0;
     const { subtotal, items } = computeSubtotal(rm, actualMinutes, actualKm);
     const tax = lookupTax(body.region);
     const taxRatePct = tax?.rate ?? 0;

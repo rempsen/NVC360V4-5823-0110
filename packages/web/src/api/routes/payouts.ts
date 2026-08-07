@@ -4,6 +4,15 @@ import * as schema from "../database/schema";
 import { eq, and, gte, lte } from "drizzle-orm";
 import { requireAuth, requireAdmin, tx } from "../middleware/auth";
 import { audit } from "../lib/audit";
+import { Err } from "../lib/errors";
+import { parseBody, isoDate, percent } from "../lib/validate";
+import { z } from "zod";
+
+const PayoutGenerate = z.object({
+  periodStart: isoDate("Period start"),
+  periodEnd: isoDate("Period end"),
+  feePct: percent("Platform fee").default(20),
+});
 
 type SessionUser = { id: string; name?: string };
 
@@ -26,10 +35,12 @@ export const payoutsRoutes = new Hono()
   // generate payouts for a period from completed+paid bookings
   .post("/generate", requireAdmin, async (c) => {
     const me = c.get("user") as SessionUser;
-    const { periodStart, periodEnd, feePct = 20 } = await c.req.json();
-    if (!periodStart || !periodEnd) return c.json({ message: "periodStart and periodEnd required" }, 400);
-    const start = new Date(periodStart);
-    const end = new Date(periodEnd);
+    // feePct was unvalidated: a negative percentage makes `fee` negative and
+    // `net = gross - fee` larger than gross, i.e. the platform pays the tech
+    // MORE than the customer paid. And `new Date(periodStart)` on unchecked
+    // input silently produced an Invalid Date that drizzle wrote to the row.
+    const { periodStart: start, periodEnd: end, feePct } = await parseBody(c, PayoutGenerate);
+    if (end < start) throw Err.badRequest("Period end must be after period start");
     const t = tx(c);
     const completed = await t.select(
       schema.bookings,

@@ -6,6 +6,65 @@ import { requireAdmin, tx, tenantId } from "../middleware/auth";
 import { audit } from "../lib/audit";
 import { putObject } from "../lib/storage";
 import { getIndustryPreset } from "../../services/industry-presets";
+import { z } from "zod";
+import { parseBody, money, shortText, longText, optText, id as idField } from "../lib/validate";
+
+/**
+ * Catalog item shape. `PATCH /:id` previously did `set = { ...body }` with a
+ * hand-maintained denylist of five keys — any column not on that list could be
+ * written by a client, and unitCost/markupPct/unitPrice took negative values
+ * that flow straight into quote subtotals and technician pay.
+ */
+const CatalogFields = {
+  kind: z.enum(["product", "service", "assembly"]).optional(),
+  name: shortText("Name", 200),
+  sku: optText(64),
+  category: optText(120),
+  description: longText(5_000).optional(),
+  image: optText(2_000),
+  unit: optText(32),
+  unitCost: money("Unit cost").optional(),
+  // NOT percent(): trades routinely mark material up well past 100%. Capped
+  // at 1000% only to stop a fat-fingered 10000 from wrecking a quote.
+  markupPct: z.number().finite().min(0, "Markup can't be negative").max(1000, "Markup can't exceed 1000%").optional(),
+  priceMode: z.enum(["auto", "manual"]).optional(),
+  unitPrice: money("Unit price").optional(),
+  taxable: z.boolean().optional(),
+  components: z.unknown().optional(),
+  serviceId: idField("Service").nullable().optional(),
+};
+
+const CatalogCreate = z.object(CatalogFields);
+/** Same fields, all optional — and nothing else gets through. */
+const CatalogPatch = z
+  .object({ ...CatalogFields, name: shortText("Name", 200).optional() })
+  .refine((v) => Object.keys(v).length > 0, "Nothing to update");
+
+/**
+ * These three call sites were `audit(c, "create", "catalog_item", ...)` —
+ * positional args against a function that takes a single options object. Every
+ * catalog audit insert therefore had `action: undefined`, failed the NOT NULL
+ * constraint, and was swallowed by audit()'s own try/catch: catalog changes
+ * left no audit trail at all.
+ */
+async function auditItem(c: any, action: string, entityId: string, summary: string) {
+  const me = c.get("user") as { id?: string; name?: string } | undefined;
+  await audit({
+    actorId: me?.id,
+    actorName: me?.name,
+    action,
+    entityType: "catalog_item",
+    entityId,
+    summary,
+    companyId: tenantId(c),
+  });
+}
+
+const CategoryCreate = z.object({ name: shortText("Category name", 120) });
+const CategoryPatch = z.object({
+  name: shortText("Category name", 120).optional(),
+  sortOrder: z.number().int().min(0).max(10_000).optional(),
+});
 import {
   normalizeCatalogItem,
   itemUnitCost,
@@ -97,9 +156,7 @@ export const catalogRoutes = new Hono()
   })
   .post("/categories", requireAdmin, async (c) => {
     const t = tx(c);
-    const body = await c.req.json().catch(() => ({}));
-    const name = String(body.name ?? "").trim();
-    if (!name) return c.json({ message: "name required" }, 400);
+    const { name } = await parseBody(c, CategoryCreate);
     const existing = await t.select(schema.formCategories);
     if (existing.some((r) => r.name.toLowerCase() === name.toLowerCase()))
       return c.json({ message: "A category with this name already exists." }, 409);
@@ -110,10 +167,10 @@ export const catalogRoutes = new Hono()
   .patch("/categories/:id", requireAdmin, async (c) => {
     const t = tx(c);
     const id = c.req.param("id");
-    const body = await c.req.json().catch(() => ({}));
+    const body = await parseBody(c, CategoryPatch);
     const patch: Record<string, unknown> = {};
-    if (typeof body.name === "string" && body.name.trim()) patch.name = body.name.trim();
-    if (typeof body.sortOrder === "number") patch.sortOrder = body.sortOrder;
+    if (body.name) patch.name = body.name;
+    if (body.sortOrder !== undefined) patch.sortOrder = body.sortOrder;
     const before = await t.selectOne(schema.formCategories, eq(schema.formCategories.id, id));
     const [row] = await t.update(schema.formCategories, patch, eq(schema.formCategories.id, id));
     // Renaming a category doesn't retroactively rewrite existing catalog items
@@ -157,7 +214,7 @@ export const catalogRoutes = new Hono()
   })
   // create
   .post("/", requireAdmin, async (c) => {
-    const b = await c.req.json();
+    const b = await parseBody(c, CatalogCreate);
     const [row] = await tx(c).insert(schema.catalogItems, {
       kind: b.kind ?? "product",
       name: b.name,
@@ -174,28 +231,25 @@ export const catalogRoutes = new Hono()
       components: normComponents(b.components),
       serviceId: b.serviceId ?? null,
     });
-    await audit(c, "create", "catalog_item", row.id, `Created ${row.kind} "${row.name}"`);
+    await auditItem(c, "create", row.id, `Created ${row.kind} "${row.name}"`);
     const [dec] = decorate([row]);
     return c.json({ item: dec }, 201);
   })
   // update
   .patch("/:id", requireAdmin, async (c) => {
-    const b = await c.req.json();
+    const b = await parseBody(c, CatalogPatch);
+    // The schema strips unknown keys, so the old delete-list is gone: id,
+    // companyId, createdAt and the derived resolved* fields simply can't
+    // arrive any more.
     const set: Record<string, unknown> = { ...b };
     if (b.components !== undefined) set.components = normComponents(b.components);
-    delete set.id;
-    delete set.createdAt;
-    delete set.companyId;
-    delete set.resolvedUnitCost;
-    delete set.resolvedUnitPrice;
-    delete set.resolvedMarginPct;
     const [row] = await tx(c).update(
       schema.catalogItems,
       set as Partial<typeof schema.catalogItems.$inferInsert>,
       eq(schema.catalogItems.id, c.req.param("id")),
     );
     if (!row) return c.json({ message: "Not found" }, 404);
-    await audit(c, "update", "catalog_item", row.id, `Updated "${row.name}"`);
+    await auditItem(c, "update", row.id, `Updated "${row.name}"`);
     const [dec] = decorate([row]);
     return c.json({ item: dec }, 200);
   })
@@ -206,7 +260,7 @@ export const catalogRoutes = new Hono()
       { active: false },
       eq(schema.catalogItems.id, c.req.param("id")),
     );
-    if (row) await audit(c, "delete", "catalog_item", row.id, `Archived "${row.name}"`);
+    if (row) await auditItem(c, "delete", row.id, `Archived "${row.name}"`);
     return c.json({ success: true }, 200);
   })
   // image upload (multipart: file)

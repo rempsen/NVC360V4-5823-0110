@@ -120,9 +120,17 @@ const app = new Hono<{ Variables: Variables }>()
           message: err.message,
         });
       }
+      // Validation failures carry a per-field map in `details`. Lift it to the
+      // top level (plus a bare `message`) so form screens can highlight the
+      // offending input instead of showing one generic toast.
+      const fields =
+        err.expose && err.details && typeof err.details === "object"
+          ? (err.details as { fields?: Record<string, string> }).fields
+          : undefined;
       return c.json(
         {
           error: { code: err.code, message: err.expose ? err.message : "Internal server error" },
+          ...(fields ? { fields, message: err.message } : {}),
           requestId: reqId,
         },
         err.status as 400,

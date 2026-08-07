@@ -4,7 +4,7 @@ import * as schema from "../database/schema";
 import { eq } from "drizzle-orm";
 import { requireAuth, requireAdmin, tx } from "../middleware/auth";
 import { audit } from "../lib/audit";
-import { validate, shortText } from "../lib/validate";
+import { parseBody, shortText } from "../lib/validate";
 
 type SessionUser = { id: string; name?: string };
 
@@ -52,9 +52,7 @@ export const zonesRoutes = new Hono()
   })
   .post("/", requireAdmin, async (c) => {
     const me = c.get("user") as SessionUser;
-    const parsed = await validate(c, ZoneCreate);
-    if (!parsed.ok) return parsed.response;
-    const b = parsed.data;
+    const b = await parseBody(c, ZoneCreate);
 
     const [zone] = await tx(c).insert(schema.serviceZones, {
       name: b.name,
@@ -69,9 +67,7 @@ export const zonesRoutes = new Hono()
   .put("/:id", requireAdmin, async (c) => {
     const me = c.get("user") as SessionUser;
     const id = c.req.param("id");
-    const parsed = await validate(c, ZoneUpdate);
-    if (!parsed.ok) return parsed.response;
-    const b = parsed.data;
+    const b = await parseBody(c, ZoneUpdate);
 
     const patch: Partial<typeof schema.serviceZones.$inferInsert> = {};
     if (b.name !== undefined) patch.name = b.name;

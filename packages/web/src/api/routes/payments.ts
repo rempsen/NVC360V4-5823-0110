@@ -10,6 +10,13 @@ import { AppError, Err } from "../lib/errors";
 import { log } from "../lib/logger";
 import { capture } from "../lib/analytics";
 import { incr } from "../lib/metrics";
+import { parseBody, money } from "../lib/validate";
+import { z } from "zod";
+
+const RefundBody = z.object({
+  amount: money("Refund amount").positive("Refund amount must be greater than zero").optional(),
+  reason: z.string().trim().max(400, "Reason must be 400 characters or fewer").optional(),
+});
 
 type SessionUser = { id: string };
 
@@ -213,7 +220,11 @@ export const paymentsRoutes = new Hono()
       throw Err.forbidden("Not allowed to issue refunds");
     }
     const bookingId = c.req.param("bookingId");
-    const body = (await c.req.json().catch(() => ({}))) as { amount?: number; reason?: string };
+    // `amount` was unchecked: NaN survives `Math.min(NaN, remaining)` and the
+    // `amount <= 0` guard (both comparisons are false with NaN), so a NaN
+    // refund reached the Stripe API. `reason` was unbounded and goes into
+    // Stripe metadata, which rejects values over 500 chars.
+    const body = await parseBody(c, RefundBody);
 
     const t = tx(c);
     const inv = await t.selectOne(schema.invoices, eq(schema.invoices.bookingId, bookingId));
