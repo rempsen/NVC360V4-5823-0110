@@ -95,3 +95,42 @@ data tables, which fall back to horizontal scroll.
 ## Fix 5 note
 `bunx tsc --noEmit -p tsconfig.app.json` baseline is 247 errors (all known
 false positives). Build with `bunx vite build`, never `bun run build`.
+
+
+## Fix 8 progress — session of Aug 7 2026 (later)
+
+Committed this session:
+- `4dbd126` option-catalog.ts + option-selections.ts + messages.ts validated.
+  Headline finds: `priceDelta: "1,200"` published an upgrade tier as FREE
+  (Number()||0); POST /api/messages/direct 500'd on EVERY call from a
+  `co` ReferenceError thrown AFTER the write, so app retries duplicated
+  the message + notification; POST /:bookingId inserted before resolving
+  the booking (orphans). verify-fix11.ts 108/108.
+- `9bc40bb` admin/fleet.tsx `jobNoun` ReferenceError — whole Fleet page
+  (map + dispatch) hit the error boundary for any mapped work order with
+  a blank title AND an unresolvable service name. Reproduced in Chrome by
+  intercepting /api/jobs/search and blanking those two fields.
+- `1f30ebe` admin.ts (4 raw bodies). Headline finds: PATCH could set a
+  user's email to garbage (that's their login) or to another user's
+  address (bare 500, now 409); `name: 123` stored as "123.0"; 500k notes
+  and 5,000 addresses accepted; reset-password ran the hasher over a
+  100k string and 500'd on a numeric password. role/companyId confirmed
+  already unreachable. verify-fix12.ts 71/71.
+- Also de-flaked verify-fix9.ts (presence.ts legitimately downgrades a
+  heartbeat-less tech to "offline", so asserting "available" raced).
+
+Type-error baseline now **245** (was 247). No TS2304/TS18048 anywhere.
+crash-sweep.py ALL CLEAN. Verifier suite all green.
+
+### OPEN — found live, not yet fixed
+- **PATCH /api/bookings/:id with a serviceId that doesn't exist -> bare
+  500** (FK constraint on bookings.service_id). idField accepts any
+  string, so nothing checks the row exists. Same class likely applies to
+  riderId / customerId / templateId / propertyId on both create and
+  patch, and it doubles as a cross-tenant FK check. Reproduced with
+  `{"serviceId":"zz-deleted-service"}`.
+
+### Remaining fix-8 tail
+tags.ts / superadmin.ts / integrations.ts / custom-fields.ts (3 each),
+track.ts / templates.ts / shifts.ts / notifications.ts / maintenance.ts /
+forms.ts / fleet.ts / automation.ts (2 each), ~12 files with 1.

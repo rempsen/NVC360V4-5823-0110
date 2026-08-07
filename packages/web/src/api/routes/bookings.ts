@@ -499,6 +499,13 @@ export const bookingsRoutes = new Hono()
       .where(eq(schema.user.id, body.customerId));
     if (!cu) return c.json({ message: "Client not found" }, 404);
 
+    // riderId is a foreign key too, and unlike serviceId/customerId it was
+    // never resolved — a bogus technician id was a bare 500 on the FK.
+    if (body.riderId) {
+      const rd = await t.selectOne(schema.riders, eq(schema.riders.id, body.riderId));
+      if (!rd) return c.json({ message: "Technician not found" }, 404);
+    }
+
     // Zone enforcement — only if the booking has a real geocoded lat/lng
     if (body.lat && body.lng) {
       const allZones = await t.select(schema.serviceZones);
@@ -626,6 +633,30 @@ export const bookingsRoutes = new Hono()
     const body = await parseBody(c, BookingPatch);
     const prev = await t.selectOne(schema.bookings, eq(schema.bookings.id, id));
     if (!prev) return c.json({ message: "Not found" }, 404);
+
+    // Every one of these columns is a foreign key. The schema only checks the
+    // SHAPE of an id, so a stale or hand-typed id sailed through and blew up
+    // on the FK constraint as a bare 500 (reproduced live with
+    // { serviceId: "zz-deleted-service" }, and the same for riderId,
+    // customerId and templateId). Resolving them here also keeps the write
+    // inside the caller's tenant instead of pointing a work order at another
+    // company's row.
+    if (body.serviceId !== undefined) {
+      const svc = await t.selectOne(schema.services, eq(schema.services.id, body.serviceId));
+      if (!svc) return c.json({ message: "Service not found" }, 404);
+    }
+    if (body.customerId !== undefined) {
+      const [cu] = await db.select().from(schema.user).where(eq(schema.user.id, body.customerId));
+      if (!cu || cu.companyId !== co) return c.json({ message: "Client not found" }, 404);
+    }
+    if (body.riderId) {
+      const rd = await t.selectOne(schema.riders, eq(schema.riders.id, body.riderId));
+      if (!rd) return c.json({ message: "Technician not found" }, 404);
+    }
+    if (body.templateId) {
+      const tpl = await t.selectOne(schema.taskTemplates, eq(schema.taskTemplates.id, body.templateId));
+      if (!tpl) return c.json({ message: "Template not found" }, 404);
+    }
 
     const set: Record<string, unknown> = {};
     if (body.title !== undefined) set.title = body.title;

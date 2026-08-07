@@ -186,6 +186,43 @@ console.log("\n=== error envelope shape ===");
   })()) === 400);
 }
 
+console.log("\n=== foreign keys on the work-order routes ===");
+// Every one of these columns is an FK. The schema only checks the SHAPE of an
+// id, so a stale or hand-typed id used to sail through and blow up on the FK
+// constraint as a BARE 500. Reproduced live before this pass: PATCH with
+// serviceId / riderId / customerId / templateId set to "zz-nope" -> 500 each,
+// and POST /api/bookings/admin with a bogus riderId -> 500 (serviceId and
+// customerId were already resolved there, riderId never was).
+{
+  const fk = async (label: string, patch: Record<string, unknown>, wantMsg: string) => {
+    const r = await req("PATCH", `/api/bookings/${bookingId}`, patch);
+    check(`PATCH ${label} → 404 (was a bare 500)`, r.status === 404, `status=${r.status} ${JSON.stringify(r.json)?.slice(0, 90)}`);
+    check(`   says "${wantMsg}"`, String(r.json?.message ?? "").includes(wantMsg), String(r.json?.message));
+  };
+  await fk("serviceId that doesn't exist", { serviceId: "zz-nope" }, "Service not found");
+  await fk("riderId that doesn't exist", { riderId: "zz-nope" }, "Technician not found");
+  await fk("customerId that doesn't exist", { customerId: "zz-nope" }, "Client not found");
+  await fk("templateId that doesn't exist", { templateId: "zz-nope" }, "Template not found");
+
+  const svcs = (await req("GET", "/api/services")).json?.services ?? [];
+  const me = (await req("GET", `/api/bookings/${bookingId}`)).json?.booking;
+  const soon = new Date(Date.now() + 4 * 3600_000).toISOString();
+  const badRider = await req("POST", "/api/bookings/admin", {
+    serviceId: svcs[0]?.id,
+    customerId: me?.customerId,
+    riderId: "zz-nope",
+    scheduledAt: soon,
+    address: "ZZ Fix8 FK probe",
+    title: "ZZ Fix8 FK probe",
+  });
+  check("POST /admin with a bogus riderId → 404 (was a bare 500)", badRider.status === 404, `status=${badRider.status} ${JSON.stringify(badRider.json)?.slice(0, 90)}`);
+  check("   no work order was created", badRider.json?.booking === undefined, JSON.stringify(badRider.json)?.slice(0, 90));
+
+  // and a real edit still saves
+  const ok = await req("PATCH", `/api/bookings/${bookingId}`, { title: "ZZ Fix8 FK ok", serviceId: svcs[0]?.id });
+  check("a valid serviceId patch still saves", ok.status === 200, `status=${ok.status}`);
+}
+
 console.log("\n=== cleanup ===");
 for (const fn of cleanup) {
   try {
