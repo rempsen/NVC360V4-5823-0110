@@ -7,7 +7,39 @@ import { auth } from "../auth";
 import { sendEmail, loadEmailBrand, resolveLogo } from "../../services/email";
 import { sendSms } from "../../services/sms";
 
+import { z } from "zod";
+import { parseBody, shortText, optText, email as emailField, phone as phoneField } from "../lib/validate";
+
 type SessionUser = { id: string; name?: string };
+
+/* -------------------------------------------------------------------------- */
+/*  Request schemas                                                            */
+/*                                                                             */
+/*  POST / took `email` as any non-empty string, so an invite could be sent to  */
+/*  "not an email" (a hard bounce against the tenant's own sending domain --    */
+/*  bounces are what get a domain's reputation shredded), and name/phone/       */
+/*  skillClass were unbounded strings interpolated into an outbound email.      */
+/*                                                                             */
+/*  POST /accept/:token is PUBLIC and unauthenticated: it accepted an arbitrary */
+/*  length `name` and `phone` straight into a new login account, and enforced   */
+/*  a 6-character minimum password while better-auth itself wants 8, so the     */
+/*  hand-rolled check produced a confusing 400 from the auth layer instead.     */
+/* -------------------------------------------------------------------------- */
+const InviteCreate = z.object({
+  email: emailField(),
+  name: optText(120),
+  phone: phoneField.optional(),
+  skillClass: optText(60),
+});
+
+const InviteAccept = z.object({
+  name: shortText("Name", 120).optional(),
+  password: z
+    .string({ message: "Password is required" })
+    .min(8, "Password must be at least 8 characters")
+    .max(200, "Password is too long"),
+  phone: phoneField.optional(),
+});
 
 const SITE = (process.env.WEBSITE_URL || "http://localhost:4200").replace(/\/$/, "");
 
@@ -38,8 +70,7 @@ export const invitesRoutes = new Hono()
   // create + send an invite (admin)
   .post("/", requireAdmin, async (c) => {
     const u = c.get("user") as SessionUser;
-    const b = await c.req.json();
-    if (!b.email) return c.json({ message: "Email required" }, 400);
+    const b = await parseBody(c, InviteCreate);
     const [exists] = await db.select().from(schema.user).where(eq(schema.user.email, b.email));
     if (exists) return c.json({ message: "A user with that email already exists" }, 409);
 
@@ -112,10 +143,9 @@ export const invitesRoutes = new Hono()
   // ---- PUBLIC: accept an invite -> create user(role=rider) + active rider profile ----
   .post("/accept/:token", async (c) => {
     const token = c.req.param("token");
-    const { name, password, phone } = await c.req.json();
+    const { name, password, phone } = await parseBody(c, InviteAccept);
     const [inv] = await db.select().from(schema.techInvites).where(eq(schema.techInvites.token, token));
     if (!inv || inv.status !== "pending") return c.json({ message: "Invite not found or already used" }, 404);
-    if (!password || password.length < 6) return c.json({ message: "Password must be at least 6 characters" }, 400);
 
     const [exists] = await db.select().from(schema.user).where(eq(schema.user.email, inv.email));
     if (exists) return c.json({ message: "Account already exists — please sign in" }, 409);

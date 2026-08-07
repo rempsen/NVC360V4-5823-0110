@@ -10,6 +10,8 @@ import {
   tenantId,
   tx,
 } from "../middleware/auth";
+import { z } from "zod";
+import { parseBody, shortText, optText, email as emailField, phone as phoneField, money, id as idField, longText } from "../lib/validate";
 import {
   PERMISSION_CATALOG,
   ALL_PERMISSIONS,
@@ -34,6 +36,65 @@ const INTERNAL = [
   "rider",
 ];
 const FIELD_STAFF_ROLE = "rider";
+
+/* -------------------------------------------------------------------------- */
+/*  Request schemas                                                            */
+/*                                                                             */
+/*  These routes mint and mutate LOGIN accounts, and they took the body raw.    */
+/*  A live probe against :4200 proved all of the following were accepted with   */
+/*  a 200/201:                                                                 */
+/*    - POST /api/team with a 20,000-character name                            */
+/*    - POST /api/team with payRatePerHour: -999 (written straight to the       */
+/*      rider profile, where it feeds payout gross pay) and skills as a plain   */
+/*      string instead of an array (silently discarded)                        */
+/*    - PATCH /api/team/:id with email: "totally not an email", which is a      */
+/*      LOCKOUT: the row no longer matches better-auth's account table, so      */
+/*      that person can't sign in or reset their password                       */
+/*    - PATCH /api/team/:id with managerId: "does-not-exist-id" (dangling       */
+/*      reference, and nothing stopped a manager id from another tenant)        */
+/*  and PATCH to an email already in use returned a raw 500 from the unique     */
+/*  index instead of a 409.                                                     */
+/* -------------------------------------------------------------------------- */
+const roleField = z.enum(INTERNAL as [string, ...string[]], { message: "Invalid role" });
+const staffTypeField = z.enum(["driver", "technician"], {
+  message: "Staff type must be driver or technician",
+});
+
+const TeamCreate = z.object({
+  name: shortText("Name", 120),
+  email: emailField(),
+  // better-auth enforces its own minimum; this is the outer sanity bound.
+  password: z.string({ message: "Password is required" }).min(8, "Password must be at least 8 characters").max(200, "Password is too long"),
+  phone: phoneField.optional(),
+  role: roleField,
+  staffType: staffTypeField.optional(),
+  managerId: idField("Manager").nullish(),
+  // rider-profile fields, only read when role === "rider"
+  vehicle: optText(120),
+  skillClass: optText(60),
+  color: optText(32),
+  licensePlate: optText(32),
+  skills: z.array(shortText("Skill", 60)).max(50, "Too many skills").optional(),
+  address: optText(300),
+  notes: longText(2_000).optional(),
+  payRatePerHour: money("Pay rate").optional(),
+});
+
+const TeamPatch = z
+  .object({
+    name: shortText("Name", 120).optional(),
+    email: emailField().optional(),
+    phone: phoneField.optional(),
+    role: roleField.optional(),
+    staffType: staffTypeField.optional(),
+    // "" and null both mean "clear the manager"
+    managerId: z.union([idField("Manager"), z.literal(""), z.null()]).optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, { message: "Nothing to update" });
+
+const PermissionsBody = z.object({
+  permissions: z.union([z.array(z.string().max(120)).max(500), z.null()]).optional(),
+});
 
 function sanitizePerms(input: unknown): string[] {
   if (!Array.isArray(input)) return [];
@@ -89,13 +150,9 @@ export const teamRoutes = new Hono()
 
   // ---- create an internal employee of any role --------------------------
   .post("/", requirePermission("techs:create"), async (c) => {
-    const b = await c.req.json();
+    const b = await parseBody(c, TeamCreate);
     const me = c.get("user") as SessionUser;
     const { name, email, password, phone, role, staffType, managerId } = b;
-    if (!name || !email || !password)
-      return c.json({ message: "Name, email and password are required" }, 400);
-    if (!INTERNAL.includes(role))
-      return c.json({ message: "Invalid role" }, 400);
     // Only a superadmin can mint admin-tier employees.
     if (isAdminRole(role) && !isSuperadmin(me.role))
       return c.json(
@@ -114,6 +171,15 @@ export const teamRoutes = new Hono()
       .from(schema.user)
       .where(eq(schema.user.email, email));
     if (exists) return c.json({ message: "Email already in use" }, 409);
+
+    // Validate the manager BEFORE minting the account. A manager from another
+    // company would leak this employee into that company's org chart, and
+    // checking after signUpEmail() left an orphaned login behind on rejection.
+    if (managerId) {
+      const [mgr] = await db.select().from(schema.user).where(eq(schema.user.id, managerId));
+      if (!mgr || mgr.companyId !== tenantId(c))
+        return c.json({ message: "Manager not found" }, 400);
+    }
 
     try {
       await auth.api.signUpEmail({
@@ -142,10 +208,10 @@ export const teamRoutes = new Hono()
         phone: phone ?? "",
         vehicle: staffType === "driver" ? "Van" : "Van",
         skillClass: b.skillClass ?? "General",
-        skills: Array.isArray(b.skills) ? b.skills.join(",") : "",
+        skills: b.skills?.join(",") ?? "",
         address: b.address ?? "",
         notes: b.notes ?? "",
-        payRatePerHour: Number(b.payRatePerHour) || 0,
+        payRatePerHour: b.payRatePerHour ?? 0,
       });
     }
     return c.json({ user: { id: u.id, name, email, role } }, 201);
@@ -154,7 +220,7 @@ export const teamRoutes = new Hono()
   // ---- update an employee (role / type / manager / basics) --------------
   .patch("/:id", requirePermission("techs:edit"), async (c) => {
     const id = c.req.param("id");
-    const b = await c.req.json();
+    const b = await parseBody(c, TeamPatch);
     const me = c.get("user") as SessionUser;
     const [target] = await db
       .select()
@@ -168,12 +234,18 @@ export const teamRoutes = new Hono()
       return c.json({ message: "Only a superadmin can modify admin-level accounts" }, 403);
 
     const updates: Record<string, any> = {};
-    for (const k of ["name", "email", "phone"]) {
+    for (const k of ["name", "email", "phone"] as const) {
       if (b[k] !== undefined) updates[k] = b[k];
     }
+    // A duplicate email hit the unique index and surfaced as a bare 500.
+    if (updates.email && updates.email !== target.email) {
+      const [clash] = await db
+        .select()
+        .from(schema.user)
+        .where(eq(schema.user.email, updates.email as string));
+      if (clash && clash.id !== id) return c.json({ message: "Email already in use" }, 409);
+    }
     if (b.role !== undefined) {
-      if (!INTERNAL.includes(b.role))
-        return c.json({ message: "Invalid role" }, 400);
       // Promoting/demoting INTO an admin tier requires superadmin.
       if (isAdminRole(b.role) && !isSuperadmin(me.role))
         return c.json({ message: "Only a superadmin can assign admin-level roles" }, 403);
@@ -187,9 +259,16 @@ export const teamRoutes = new Hono()
         );
       updates.role = b.role;
     }
-    if (b.staffType !== undefined)
-      updates.staffType = b.staffType === "driver" ? "driver" : "technician";
-    if (b.managerId !== undefined) updates.managerId = b.managerId || null;
+    if (b.staffType !== undefined) updates.staffType = b.staffType;
+    if (b.managerId !== undefined) {
+      if (b.managerId) {
+        if (b.managerId === id) return c.json({ message: "Someone can't be their own manager" }, 400);
+        const [mgr] = await db.select().from(schema.user).where(eq(schema.user.id, b.managerId));
+        if (!mgr || mgr.companyId !== tenantId(c))
+          return c.json({ message: "Manager not found" }, 400);
+      }
+      updates.managerId = b.managerId || null;
+    }
     if (Object.keys(updates).length)
       await db.update(schema.user).set(updates).where(eq(schema.user.id, id));
     return c.json({ ok: true });
@@ -228,7 +307,7 @@ export const teamRoutes = new Hono()
   // ---- per-person permission override -----------------------------------
   .put("/:id/permissions", requirePermission("permissions:manage"), async (c) => {
     const id = c.req.param("id");
-    const b = await c.req.json();
+    const b = await parseBody(c, PermissionsBody);
     const [target] = await db
       .select()
       .from(schema.user)
@@ -256,7 +335,7 @@ export const teamRoutes = new Hono()
     const role = c.req.param("role");
     if (!INTERNAL_ROLES.includes(role as any) || isAdminRole(role))
       return c.json({ message: "Cannot edit this role" }, 400);
-    const b = await c.req.json();
+    const b = await parseBody(c, PermissionsBody);
     const perms = sanitizePerms(b.permissions);
     const now = new Date();
     const [existing] = await db

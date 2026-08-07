@@ -4,6 +4,27 @@ import { eq } from "drizzle-orm";
 import { requireAdmin, tx } from "../middleware/auth";
 import { generateApiKey, generatePublicKey } from "../middleware/auth";
 import { audit } from "../lib/audit";
+import { z } from "zod";
+import { parseBody, shortText } from "../lib/validate";
+
+/**
+ * The label went in as any string of any length and expiresInDays was coerced
+ * with Number(), so `expiresInDays: "soon"` produced NaN and silently minted a
+ * key that never expires. Scopes were already filtered against the catalog.
+ */
+const KeyCreate = z.object({
+  label: shortText("Label", 120),
+  keyType: z.enum(["secret", "public"]).optional(),
+  scopes: z.array(z.string().max(120)).max(100).optional(),
+  allowedOrigins: z.union([z.array(z.string().max(300)).max(50), z.string().max(2_000)]).optional(),
+  expiresInDays: z
+    .number({ error: "Expiry must be a number of days" })
+    .int("Expiry must be a whole number of days")
+    .min(1, "Expiry must be at least 1 day")
+    .max(3_650, "Expiry can't be more than 3650 days")
+    .optional(),
+});
+
 
 type SessionUser = { id: string; name?: string };
 
@@ -76,9 +97,8 @@ export const apiKeysRoutes = new Hono()
   //  - SECRET keys: SUPERADMIN ONLY (full REST/MCP access across the platform).
   .post("/", requireAdmin, async (c) => {
     const me = c.get("user") as SessionUser & { role?: string };
-    const b = await c.req.json().catch(() => ({}));
-    const label: string = (b.label || "").trim();
-    if (!label) return c.json({ message: "label required" }, 400);
+    const b = await parseBody(c, KeyCreate);
+    const label = b.label;
 
     const keyType: "secret" | "public" = b.keyType === "public" ? "public" : "secret";
 
@@ -108,8 +128,8 @@ export const apiKeysRoutes = new Hono()
     }
 
     let expiresAt: number | null = null;
-    if (b.expiresInDays && Number(b.expiresInDays) > 0) {
-      expiresAt = Date.now() + Number(b.expiresInDays) * 86400_000;
+    if (b.expiresInDays) {
+      expiresAt = Date.now() + b.expiresInDays * 86400_000;
     }
 
     const gen = keyType === "public" ? await generatePublicKey() : await generateApiKey();

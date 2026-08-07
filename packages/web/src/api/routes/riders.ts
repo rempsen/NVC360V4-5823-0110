@@ -6,6 +6,80 @@ import { requireAuth, requireAdmin, tx, tenantId } from "../middleware/auth";
 import { auth } from "../auth";
 import { reconcileRiderStatus } from "../../services/presence";
 import { putObject, deleteObject } from "../lib/storage";
+import { z } from "zod";
+import {
+  parseBody,
+  shortText,
+  optText,
+  longText,
+  money,
+  email as emailField,
+  phone as phoneField,
+  latitude,
+  longitude,
+  id as idField,
+} from "../lib/validate";
+
+/* -------------------------------------------------------------------------- */
+/*  Request schemas                                                            */
+/*                                                                             */
+/*  Probed live on :4200 before this pass; every one of these returned 200/201  */
+/*  and was written to the database:                                           */
+/*    - PATCH /riders/:id { payRatePerHour: "lots" } -> the STRING "lots" in a  */
+/*      real() column, so payout gross pay becomes NaN for that technician      */
+/*    - PATCH /riders/:id { payRatePerHour: -500 } -> negative hourly pay       */
+/*    - PATCH /riders/:id { status: "on vacation" } -> a state the presence      */
+/*      machine and the scheduler's availability filters don't know about       */
+/*    - PATCH /riders/:id { notes: 60_000 chars }                               */
+/*    - PATCH /riders/me { lat: 9999, lng: -9999 } -> the technician is plotted  */
+/*      off the edge of the world on the fleet map and live tracking            */
+/*  and { email: "nope nope nope" } / { rating: 999 } leaked bare 500s.         */
+/* -------------------------------------------------------------------------- */
+/** The presence states services/presence.ts actually understands. */
+const RIDER_STATUSES = ["offline", "available", "enroute", "onsite", "break", "busy"] as const;
+const riderStatus = z.enum(RIDER_STATUSES, {
+  message: `Status must be one of: ${RIDER_STATUSES.join(", ")}`,
+});
+
+/** Self-service heartbeat / status toggle from the mobile app. */
+const RiderSelfPatch = z.object({
+  vehicle: optText(120),
+  lat: latitude.optional(),
+  lng: longitude.optional(),
+  status: riderStatus.optional(),
+  heartbeat: z.boolean().optional(),
+});
+
+const RiderProfileFields = {
+  phone: phoneField.optional(),
+  skillClass: optText(60),
+  vehicle: optText(120),
+  color: optText(32),
+  licensePlate: optText(32),
+  licenseNumber: optText(60),
+  address: optText(300),
+  notes: longText(2_000).optional(),
+  skills: z.union([z.array(shortText("Skill", 60)).max(50, "Too many skills"), z.string().max(500)]).optional(),
+  payRatePerHour: money("Pay rate").optional(),
+};
+
+const RiderCreate = z.object({
+  name: shortText("Name", 120),
+  email: emailField(),
+  password: z.string({ message: "Password is required" }).min(8, "Password must be at least 8 characters").max(200, "Password is too long"),
+  ...RiderProfileFields,
+  tags: z.array(z.union([idField("Tag"), z.object({ id: idField("Tag") }).passthrough()])).max(50).optional(),
+});
+
+const RiderPatch = z
+  .object({
+    ...RiderProfileFields,
+    name: shortText("Name", 120).optional(),
+    email: emailField().optional(),
+    photoUrl: optText(2_000),
+    status: riderStatus.optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, { message: "Nothing to update" });
 
 type SessionUser = { id: string; role?: string };
 
@@ -31,7 +105,7 @@ export const ridersRoutes = new Hono()
   // update rider status / location
   .patch("/me", requireAuth, async (c) => {
     const u = c.get("user") as SessionUser;
-    const body = await c.req.json();
+    const body = await parseBody(c, RiderSelfPatch);
     const t = tx(c);
     let r = await t.selectOne(schema.riders, eq(schema.riders.userId, u.id));
     if (!r) return c.json({ message: "Not found" }, 404);
@@ -120,10 +194,8 @@ export const ridersRoutes = new Hono()
   })
   // create a technician (admin): user(role=rider) + rider profile
   .post("/", requireAdmin, async (c) => {
-    const body = await c.req.json();
+    const body = await parseBody(c, RiderCreate);
     const { name, email, password, phone, skillClass, vehicle, color, licensePlate, licenseNumber, address, notes, skills, payRatePerHour, tags } = body;
-    if (!name || !email || !password)
-      return c.json({ message: "Name, email and password are required" }, 400);
 
     const [exists] = await db
       .select()
@@ -162,7 +234,7 @@ export const ridersRoutes = new Hono()
       address: address ?? "",
       notes: notes ?? "",
       skills: Array.isArray(skills) ? skills.join(",") : (skills ?? ""),
-      payRatePerHour: typeof payRatePerHour === "number" ? payRatePerHour : Number(payRatePerHour) || 0,
+      payRatePerHour: payRatePerHour ?? 0,
       status: "available",
     });
     // assign tags (entityType "tech")
@@ -178,17 +250,35 @@ export const ridersRoutes = new Hono()
   // update a technician's profile (admin)
   .patch("/:id", requireAdmin, async (c) => {
     const id = c.req.param("id");
-    const b = await c.req.json();
+    const b = await parseBody(c, RiderPatch);
     const patch: Record<string, unknown> = {};
-    for (const k of ["vehicle", "skillClass", "color", "photoUrl", "phone", "licensePlate", "licenseNumber", "address", "notes", "status", "skills", "payRatePerHour"]) {
-      if (k in b) patch[k] = b[k];
+    for (const k of ["vehicle", "skillClass", "color", "photoUrl", "phone", "licensePlate", "licenseNumber", "address", "notes", "status", "skills", "payRatePerHour"] as const) {
+      if (k in b) patch[k] = (b as Record<string, unknown>)[k];
     }
     if (Array.isArray(patch.skills)) patch.skills = (patch.skills as string[]).join(",");
-    const [r] = await tx(c).update(
-      schema.riders,
-      patch as Partial<typeof schema.riders.$inferInsert>,
-      eq(schema.riders.id, id),
-    );
+
+    const existing = await tx(c).selectOne(schema.riders, eq(schema.riders.id, id));
+    if (!existing) return c.json({ message: "Not found" }, 404);
+
+    // Reject a duplicate email BEFORE writing anything, or the unique index on
+    // user.email throws and the client gets a bare 500.
+    if (b.email) {
+      const [clash] = await db.select().from(schema.user).where(eq(schema.user.email, b.email));
+      if (clash && clash.id !== existing.userId)
+        return c.json({ message: "Email already in use" }, 409);
+    }
+
+    // Editing ONLY user-table fields (just the name, or just the email) left
+    // `patch` empty, and drizzle throws "No values to set" -> raw 500. Skip the
+    // rider-table write when there is nothing on it to change.
+    let r = existing;
+    if (Object.keys(patch).length) {
+      [r] = await tx(c).update(
+        schema.riders,
+        patch as Partial<typeof schema.riders.$inferInsert>,
+        eq(schema.riders.id, id),
+      );
+    }
     // Keep the linked user record in sync. The GET endpoint reads name/email/phone
     // from the user table, so these MUST be written there too or edits appear to revert.
     if (r && (b.name || b.email || "phone" in b)) {
