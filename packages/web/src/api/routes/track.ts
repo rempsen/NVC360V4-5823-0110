@@ -2,12 +2,12 @@ import { Hono } from "hono";
 import { db } from "../database";
 import { tdb } from "../database/tenant";
 import * as schema from "../database/schema";
-import { eq } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { sendSms, trackingUrl } from "../../services/sms";
 import { computeRoute } from "./geo";
 import { trackLimiter } from "../lib/rate-limit";
 import { streamSSE } from "hono/streaming";
-import { subscribeTrack } from "../../services/realtime";
+import { subscribeTrack, publishMsg } from "../../services/realtime";
 import { jobTimeline } from "../../services/job-events";
 import { reviewRouting, alertLowRating } from "../../services/reviews";
 import { propertyUrl } from "../../services/properties";
@@ -371,5 +371,36 @@ export const trackRoutes = new Hono()
         }
       }
     }
+
+    // The office has to see homeowner replies too. Previously this only ever
+    // reached the assigned tech, so a message sent from the public tracking
+    // page never surfaced anywhere in admin — it just sat in the thread.
+    // Scoped to THIS booking's tenant only; never notify across tenants.
+    try {
+      const admins = await db
+        .select()
+        .from(schema.user)
+        .where(
+          and(
+            inArray(schema.user.role, ["admin", "superadmin"]),
+            eq(schema.user.companyId, b.companyId),
+          ),
+        );
+      for (const admin of admins) {
+        await t.insert(schema.notifications, {
+          userId: admin.id,
+          bookingId: b.id,
+          type: "reminder",
+          title: `Customer message on ${b.title || "job"}`,
+          body,
+        });
+      }
+    } catch (e) {
+      // never fail the customer's message because notifying the office failed
+      console.error("[track] office notify failed", e);
+    }
+
+    publishMsg("job", b.id).catch(() => {});
+    publishMsg("inbox", b.companyId).catch(() => {});
     return c.json({ message: m }, 201);
   });

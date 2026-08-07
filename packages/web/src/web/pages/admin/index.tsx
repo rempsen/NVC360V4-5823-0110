@@ -14,6 +14,7 @@ const TechsPage = lazy(() => import("./riders"));
 const ClientsPage = lazy(() => import("./users"));
 const AutomationPage = lazy(() => import("./automation"));
 const MaintenancePage = lazy(() => import("./maintenance"));
+const InboxPage = lazy(() => import("./inbox"));
 const IntegrationsPage = lazy(() => import("./integrations"));
 const ReportsPage = lazy(() => import("./reports"));
 const SettingsPage = lazy(() => import("./settings"));
@@ -79,6 +80,7 @@ export default function AdminApp() {
           <Route path="/admin/clients" component={ClientsPage} />
           <Route path="/admin/automation" component={AutomationPage} />
           <Route path="/admin/maintenance" component={MaintenancePage} />
+          <Route path="/admin/inbox" component={InboxPage} />
           <Route path="/admin/integrations" component={IntegrationsPage} />
           <Route path="/admin/api-access" component={ApiAccessPage} />
           <Route path="/admin/intake-forms" component={IntakeFormsPage} />

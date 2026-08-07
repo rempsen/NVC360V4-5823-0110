@@ -13,6 +13,7 @@ import {
   CalendarClock,
   CalendarSync,
   ClipboardList,
+  Inbox,
   LayoutTemplate,
   Package,
   Layers,
@@ -58,6 +59,7 @@ const NAV_GROUPS: NavGroup[] = [
       { to: "/admin/fleet", label: "Map", icon: MapIcon },
       { to: "/admin/scheduler", label: "Scheduler", icon: CalendarClock },
       { to: "/admin/work-orders", label: "__JOB_PLURAL__", icon: ClipboardList },
+      { to: "/admin/inbox", label: "Inbox", icon: Inbox },
     ],
   },
   {

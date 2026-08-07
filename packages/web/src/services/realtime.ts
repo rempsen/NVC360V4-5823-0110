@@ -188,13 +188,21 @@ export function subscribeTrack(token: string, fn: Subscriber) {
  * carry the full message payload through the bus — far less risk of
  * duplicating serialization/notification logic in two places.
  */
-const msgChan = (kind: "direct" | "job", key: string) => `msg:${kind}:${key}`;
+/**
+ * "inbox" is company-keyed rather than thread-keyed: the unified admin inbox
+ * needs to light up for ANY new message in the tenant, whichever thread it
+ * landed in. Senders publish to both their own thread channel and the tenant
+ * inbox channel so an open thread and the inbox list both refresh.
+ */
+type MsgKind = "direct" | "job" | "inbox";
 
-export function publishMsg(kind: "direct" | "job", key: string) {
+const msgChan = (kind: MsgKind, key: string) => `msg:${kind}:${key}`;
+
+export function publishMsg(kind: MsgKind, key: string) {
   return bus.publish(msgChan(kind, key), { type: "message", token: key, data: null, at: Date.now() });
 }
 
-export function subscribeMsg(kind: "direct" | "job", key: string, fn: Subscriber) {
+export function subscribeMsg(kind: MsgKind, key: string, fn: Subscriber) {
   return bus.subscribe(msgChan(kind, key), fn);
 }
 

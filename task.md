@@ -36,7 +36,19 @@ Plan: /home/user/plan.md (approved)
 - [x] migration 0006_salty_terror.sql applied
 - [x] verified live: 35/35 checks against the running server (signature persist/validate/SVG render, phase tagging + fallback, internal-photo filtering on /t/, voice note storage + transcript + isolation, admin events auth)
 
-## Phase 4 — Unified inbox
+## Phase 4 — Unified inbox ✅ DONE
+- [x] `realtime.ts`: MsgKind extended with `"inbox"` (company-keyed `msg:inbox:<companyId>`)
+- [x] `GET /api/messages/inbox` — client + tech + broadcast threads, counts, unread-first sort. Read state untouched (poll-safe).
+- [x] `GET /api/messages/inbox/stream` — signal-only SSE, 1s tick / 20s ping
+- [x] `POST /api/messages/:bookingId/mark-read` — explicit ack, separate from GET
+- [x] all three declared ABOVE `/:bookingId` (Hono matches in registration order)
+- [x] `publishMsg("inbox", …)` at all 4 send sites + both track.ts sites
+- [x] `track.ts` POST /:token/messages now also notifies THIS tenant's admins — homeowner replies from the public page previously surfaced nowhere in admin
+- [x] `admin/inbox.tsx` + lazy route + nav item under Operations
+- [x] UI bugs found in browser check and fixed: "Invalid Date" in thread pane (raw rows return ISO strings, `Number()` gave NaN — added tolerant `msgTime()`); "Unread" chip counted messages while every other chip counted threads; open thread jumped down the list the instant it was marked read (now pinned while active)
+- [x] verified live: 36/36 checks (`packages/web/verify-phase4.ts`) + browser pass on /admin/inbox (filters, open, reply, unread clearing, Open job link)
+- NOTE: replying to a real client thread sends a REAL SMS to the customer. Use throwaway bookings with rider_id NULL when testing.
+
 ## Phase 5 — AI dispatch
 
 ## Notes / decisions

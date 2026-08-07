@@ -148,6 +148,7 @@ export const messagesRoutes = new Hono()
     }
 
     publishMsg("direct", rider.id).catch(() => {});
+    publishMsg("inbox", co).catch(() => {});
     return c.json({ message: m }, 201);
   })
 
@@ -331,6 +332,7 @@ export const messagesRoutes = new Hono()
     // Same channel key as the rider->dispatch direction (POST /direct) —
     // one thread, one channel, either direction wakes up a listening client.
     publishMsg("direct", techId).catch(() => {});
+    publishMsg("inbox", co).catch(() => {});
     return c.json({ message: m }, 201);
   })
 
@@ -412,6 +414,7 @@ export const messagesRoutes = new Hono()
       sent++;
     }
 
+    publishMsg("inbox", cId).catch(() => {});
     return c.json({ sent, broadcastId }, 201);
   })
 
@@ -461,6 +464,213 @@ export const messagesRoutes = new Hono()
   })
 
   // ── Job thread (booking-scoped) ──────────────────────────────────────────
+  // ── Unified inbox ─────────────────────────────────────────────────────────
+  // One list of every conversation in the tenant, whichever surface it came
+  // from: job threads (incl. messages the homeowner sent from the public
+  // /t/:token page), direct tech threads, and broadcasts.
+  //
+  // MUST stay declared above `/:bookingId` — Hono matches in registration
+  // order, so a later `/inbox` would be swallowed by the param route.
+  //
+  // Read state is NOT touched here. This endpoint is polled and streamed;
+  // marking read is always an explicit action (POST .../mark-read).
+  .get("/inbox", requireAdmin, async (c) => {
+    const t = tx(c);
+    const cId = tenantId(c);
+
+    const all = await t.select(schema.messages);
+    all.sort((a, b) => Number(a.createdAt) - Number(b.createdAt));
+
+    const riders = await t.select(schema.riders);
+    const ridersById = new Map(riders.map((r) => [r.id, r]));
+    const users = await db.select().from(schema.user).where(eq(schema.user.companyId, cId));
+    const userById = new Map(users.map((u) => [u.id, u]));
+
+    const bookingIds = [...new Set(all.map((m) => m.bookingId).filter(Boolean) as string[])];
+    const bookings = bookingIds.length
+      ? await t.select(schema.bookings, inArray(schema.bookings.id, bookingIds))
+      : [];
+    const bookingById = new Map(bookings.map((b) => [b.id, b]));
+
+    type Thread = {
+      key: string;
+      kind: "client" | "tech" | "broadcast";
+      title: string;
+      subtitle: string;
+      bookingId: string | null;
+      techId: string | null;
+      jobTitle: string | null;
+      jobStatus: string | null;
+      photoUrl: string | null;
+      color: string;
+      lastMessage: string | null;
+      lastSenderRole: string | null;
+      lastAt: number | null;
+      unread: number;
+      messageCount: number;
+    };
+    const threads: Thread[] = [];
+
+    // 1. Client threads — one per booking that has any message on it.
+    for (const bId of bookingIds) {
+      const msgs = all.filter((m) => m.bookingId === bId);
+      if (!msgs.length) continue;
+      const b = bookingById.get(bId);
+      // a booking from another tenant can't appear: tx() already scopes it,
+      // but if the join misses we skip rather than leak an untitled row
+      if (!b) continue;
+      const last = msgs[msgs.length - 1]!;
+      const cust = userById.get(b.customerId);
+      const rider = b.riderId ? ridersById.get(b.riderId) : null;
+      threads.push({
+        key: `client:${bId}`,
+        kind: "client",
+        title: cust?.name || b.customerPhone || "Customer",
+        subtitle: b.address || "",
+        bookingId: bId,
+        techId: rider?.id ?? null,
+        jobTitle: b.title || "",
+        jobStatus: b.status,
+        photoUrl: null,
+        color: "#0ea5e9",
+        lastMessage: last.body,
+        lastSenderRole: last.senderRole,
+        lastAt: Number(last.createdAt),
+        // anything the customer said that nobody has acked yet
+        unread: msgs.filter((m) => !m.read && m.senderRole === "client").length,
+        messageCount: msgs.length,
+      });
+    }
+
+    // 2. Tech threads — direct dispatcher<->tech, excluding broadcasts.
+    for (const r of riders) {
+      const msgs = all.filter(
+        (m) => m.riderId === r.id && !m.bookingId && m.channel !== "broadcast",
+      );
+      if (!msgs.length) continue;
+      const last = msgs[msgs.length - 1]!;
+      const u = userById.get(r.userId);
+      threads.push({
+        key: `tech:${r.id}`,
+        kind: "tech",
+        title: u?.name || "Technician",
+        subtitle: r.skillClass || "",
+        bookingId: null,
+        techId: r.id,
+        jobTitle: null,
+        jobStatus: null,
+        photoUrl: r.photoUrl ?? null,
+        color: r.color ?? "#0ea5e9",
+        lastMessage: last.body,
+        lastSenderRole: last.senderRole,
+        lastAt: Number(last.createdAt),
+        unread: msgs.filter((m) => !m.read && m.senderRole === "tech").length,
+        messageCount: msgs.length,
+      });
+    }
+
+    // 3. Broadcasts — one synthetic thread per send, grouped by body+minute
+    // (there's no broadcastId column; a send fans out one row per rider).
+    const bcast = all.filter((m) => m.channel === "broadcast");
+    const groups = new Map<string, typeof bcast>();
+    for (const m of bcast) {
+      const minute = Math.floor(Number(m.createdAt) / 60_000);
+      const k = `${minute}:${m.body}`;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k)!.push(m);
+    }
+    for (const [k, msgs] of groups) {
+      const first = msgs[0]!;
+      threads.push({
+        key: `broadcast:${k}`,
+        kind: "broadcast",
+        title: `Broadcast to ${msgs.length} ${msgs.length === 1 ? "tech" : "techs"}`,
+        subtitle: first.senderName || "Dispatch",
+        bookingId: null,
+        techId: null,
+        jobTitle: null,
+        jobStatus: null,
+        photoUrl: null,
+        color: "#f59e0b",
+        lastMessage: first.body,
+        lastSenderRole: "dispatch",
+        lastAt: Number(first.createdAt),
+        unread: 0, // outbound — nothing for the office to read
+        messageCount: msgs.length,
+      });
+    }
+
+    // unread first, then most recent
+    threads.sort((a, b) => {
+      if ((b.unread > 0 ? 1 : 0) !== (a.unread > 0 ? 1 : 0)) return (b.unread > 0 ? 1 : 0) - (a.unread > 0 ? 1 : 0);
+      return (b.lastAt ?? 0) - (a.lastAt ?? 0);
+    });
+
+    return c.json(
+      {
+        threads,
+        counts: {
+          all: threads.length,
+          client: threads.filter((t2) => t2.kind === "client").length,
+          tech: threads.filter((t2) => t2.kind === "tech").length,
+          broadcast: threads.filter((t2) => t2.kind === "broadcast").length,
+          unread: threads.reduce((s, t2) => s + t2.unread, 0),
+        },
+      },
+      200,
+    );
+  })
+
+  // GET /api/messages/inbox/stream — one signal for the whole tenant inbox,
+  // so the list refreshes no matter which thread a message landed in.
+  .get("/inbox/stream", requireAdmin, async (c) => {
+    const cId = tenantId(c);
+    return streamSSE(c, async (stream) => {
+      let closed = false;
+      let dirty = false;
+      const unsub = subscribeMsg("inbox", cId, () => {
+        dirty = true;
+      });
+      stream.onAbort(() => {
+        closed = true;
+        unsub();
+      });
+
+      const TICK_MS = 1_000;
+      const PING_EVERY = 20;
+      let sinceData = 0;
+      while (!closed) {
+        await stream.sleep(TICK_MS);
+        if (closed) break;
+        if (dirty) {
+          dirty = false;
+          await stream.writeSSE({ event: "new-message", data: "1" });
+          sinceData = 0;
+          continue;
+        }
+        if (++sinceData >= PING_EVERY) {
+          sinceData = 0;
+          await stream.writeSSE({ event: "ping", data: "1" });
+        }
+      }
+    });
+  })
+
+  // POST /api/messages/:bookingId/mark-read — office explicitly acks a client
+  // thread. Deliberately separate from GET, same rule as the tech threads.
+  .post("/:bookingId/mark-read", requireAuth, async (c) => {
+    const bookingId = c.req.param("bookingId");
+    await tx(c).update(
+      schema.messages,
+      { read: true },
+      and(
+        eq(schema.messages.bookingId, bookingId),
+        eq(schema.messages.senderRole, "client"),
+      ),
+    );
+    return c.json({ ok: true }, 200);
+  })
+
   .get("/:bookingId", requireAuth, async (c) => {
     const rows = await tx(c).select(
       schema.messages,
@@ -544,6 +754,7 @@ export const messagesRoutes = new Hono()
     }
 
     publishMsg("job", bookingId).catch(() => {});
+    publishMsg("inbox", tenantId(c)).catch(() => {});
     return c.json({ message: m }, 201);
   })
 
