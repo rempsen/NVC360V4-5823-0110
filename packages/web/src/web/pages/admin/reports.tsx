@@ -378,15 +378,17 @@ function RawExports() {
       <p className="mb-4 text-xs text-slate-500">Full unaggregated tables for accounting, payroll or BI tools.</p>
       <div className="grid gap-3 sm:grid-cols-2">
         {RAW_DATASETS.map((d) => (
-          <div key={d.id} className="flex items-center gap-3 rounded-xl border border-white/10 bg-ink-3/40 p-3">
-            <d.icon className="h-5 w-5 text-slate-400" />
-            <span className="flex-1 text-sm font-semibold text-slate-200">{d.id === "technicians" ? nounPlural : d.id === "clients" ? customerNounPlural : d.id === "work-orders" ? jobNounPlural : d.label}</span>
-            {["csv", "xlsx", "pdf"].map((fmt) => (
-              <button key={fmt} onClick={() => dl(d.id, fmt)} disabled={busy === `${d.id}-${fmt}`}
-                className="rounded-lg bg-white/5 px-2.5 py-1.5 text-[11px] font-bold uppercase text-slate-300 hover:bg-brand hover:text-white disabled:opacity-50">
-                {busy === `${d.id}-${fmt}` ? "…" : fmt}
-              </button>
-            ))}
+          <div key={d.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-white/10 bg-ink-3/40 p-3">
+            <d.icon className="h-5 w-5 shrink-0 text-slate-400" />
+            <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-200">{d.id === "technicians" ? nounPlural : d.id === "clients" ? customerNounPlural : d.id === "work-orders" ? jobNounPlural : d.label}</span>
+            <div className="flex shrink-0 items-center gap-2">
+              {["csv", "xlsx", "pdf"].map((fmt) => (
+                <button key={fmt} onClick={() => dl(d.id, fmt)} disabled={busy === `${d.id}-${fmt}`}
+                  className="min-w-11 justify-center rounded-lg bg-white/5 px-2.5 py-1.5 text-[11px] font-bold uppercase text-slate-300 hover:bg-brand hover:text-white disabled:opacity-50">
+                  {busy === `${d.id}-${fmt}` ? "…" : fmt}
+                </button>
+              ))}
+            </div>
           </div>
         ))}
       </div>

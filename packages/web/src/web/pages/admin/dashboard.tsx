@@ -100,6 +100,19 @@ const STATUS_ORDER: Record<string, number> = {
   offline: 5,
 };
 
+/**
+ * KPI-tile currency. money() renders full cents ($15048.16), which at 390px
+ * overflowed the two-up KPI grid and got clipped by the card's overflow-hidden.
+ * Cents are noise in a headline metric, and past $100k we compact further.
+ */
+function kpiMoney(n: number) {
+  if (!Number.isFinite(n)) return "$0";
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+  if (abs >= 100_000) return `$${Math.round(n / 1_000)}k`;
+  return `$${Math.round(n).toLocaleString("en-US")}`;
+}
+
 export default function AdminDashboard() {
   const { nounPlural: workerPlural } = useWorkerNoun();
   const { nounPlural: customerPlural } = useCustomerNoun();
@@ -201,7 +214,7 @@ export default function AdminDashboard() {
     },
     {
       label: "Revenue",
-      value: money(s.revenue),
+      value: kpiMoney(s.revenue),
       icon: DollarSign,
       iconTint: "bg-emerald-500/10 text-emerald-400",
       topBorder: "border-t-emerald-500/40",
@@ -319,10 +332,13 @@ export default function AdminDashboard() {
             to={c.to}
             className={`nvc-card group relative overflow-hidden border-t-2 p-5 transition-all duration-200 hover:bg-white/[0.025] hover:shadow-lg hover:shadow-black/20 hover:-translate-y-px ${c.topBorder}`}
           >
-            <div className="flex items-start justify-between">
-              <div>
+            <div className="flex items-start justify-between gap-2">
+              {/* min-w-0 + a smaller type ramp below sm: at 390px the two-up
+                  grid leaves ~140px per card, and a real revenue figure like
+                  $15048.16 was being clipped by the card's overflow-hidden. */}
+              <div className="min-w-0">
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{c.label}</p>
-                <div className="mt-2 font-display text-[28px] font-black leading-none text-white tracking-tight">
+                <div className="mt-2 font-display text-[22px] font-black leading-none tracking-tight text-white tabular-nums sm:text-[28px]">
                   {c.value}
                 </div>
                 {"hint" in c && c.hint && (
@@ -342,12 +358,15 @@ export default function AdminDashboard() {
 
       <div className="mt-6 grid gap-5 lg:grid-cols-3">
         {/* recent work orders */}
-        <div className="nvc-card lg:col-span-2">
-          <div className="flex items-center justify-between border-b border-white/5 px-5 py-4">
-            <h2 className="font-bold text-white">Recent work orders</h2>
+        {/* min-w-0: a grid item's automatic minimum size is its min-content
+            width, so this card grew past the 390px viewport and nvc-card's
+            overflow-hidden clipped "View all" and the price column away. */}
+        <div className="nvc-card min-w-0 lg:col-span-2">
+          <div className="flex items-center justify-between gap-3 border-b border-white/5 px-5 py-4">
+            <h2 className="truncate font-bold text-white">Recent work orders</h2>
             <Link
               to="/admin/work-orders"
-              className="flex items-center gap-1 text-sm font-semibold text-cyan-glow"
+              className="-my-3 flex shrink-0 items-center gap-1 py-3 text-sm font-semibold text-cyan-glow lg:my-0 lg:py-0"
             >
               View all <ArrowRight className="h-3.5 w-3.5" />
             </Link>
@@ -363,7 +382,7 @@ export default function AdminDashboard() {
                 <Link
                   key={b.id}
                   to="/admin/work-orders"
-                  className="group flex items-center gap-4 px-5 py-3.5 transition-colors hover:bg-white/[0.02]"
+                  className="group flex items-center gap-3 px-4 py-3.5 transition-colors hover:bg-white/[0.02] sm:gap-4 sm:px-5"
                 >
                   {/* avatar */}
                   <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-slate-800 text-[11px] font-bold text-slate-300 ring-1 ring-white/5">
@@ -387,9 +406,9 @@ export default function AdminDashboard() {
                       <span>{fmtDate(b.scheduledAt)}</span>
                     </p>
                   </div>
-                  <div className="text-right shrink-0">
-                    <div className="text-sm font-bold text-white">{money(b.price)}</div>
-                    <p className="mt-0.5 text-[11px] text-slate-500 max-w-[100px] truncate">
+                  <div className="max-w-[40%] shrink-0 text-right">
+                    <div className="truncate text-sm font-bold text-white tabular-nums">{money(b.price)}</div>
+                    <p className="mt-0.5 truncate text-[11px] text-slate-500">
                       {b.title || b.service?.name || "—"}
                     </p>
                   </div>
@@ -400,7 +419,7 @@ export default function AdminDashboard() {
         </div>
 
         {/* fleet status */}
-        <div className="nvc-card">
+        <div className="nvc-card min-w-0">
           <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4">
             <div>
               <h2 className="text-sm font-bold text-white">Fleet status</h2>

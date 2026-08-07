@@ -800,7 +800,7 @@ export default function SchedulerPage() {
                             setAssignFor((v) => (v === b.id ? null : b.id));
                             setAiFor(null);
                           }}
-                          className="flex items-center gap-1 text-xs font-semibold text-slate-300 hover:text-white"
+                          className="-mx-1 flex min-h-11 items-center gap-1 px-1 text-xs font-semibold text-slate-300 hover:text-white lg:mx-0 lg:min-h-0 lg:px-0"
                         >
                           <UserPlus className="h-3 w-3" /> Assign
                         </button>
@@ -811,7 +811,7 @@ export default function SchedulerPage() {
                             setAssignFor(null);
                             suggest.mutate(b.id);
                           }}
-                          className="flex items-center gap-1 text-xs font-semibold text-cyan-glow hover:text-brand"
+                          className="-mx-1 flex min-h-11 items-center gap-1 px-1 text-xs font-semibold text-cyan-glow hover:text-brand lg:mx-0 lg:min-h-0 lg:px-0"
                         >
                           <Sparkles className="h-3 w-3" /> AI suggest
                         </button>
@@ -820,7 +820,7 @@ export default function SchedulerPage() {
                             e.stopPropagation();
                             openJob(b);
                           }}
-                          className="flex items-center gap-1 text-xs font-semibold text-slate-400 hover:text-white"
+                          className="-mx-1 flex min-h-11 items-center gap-1 px-1 text-xs font-semibold text-slate-400 hover:text-white lg:mx-0 lg:min-h-0 lg:px-0"
                         >
                           <Pencil className="h-3 w-3" /> Edit
                         </button>
@@ -830,7 +830,7 @@ export default function SchedulerPage() {
                             removeJob(b);
                           }}
                           aria-label="Delete work order"
-                          className="ml-auto flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-rose-400"
+                          className="-mr-1 ml-auto flex min-h-11 items-center gap-1 px-1 text-xs font-semibold text-slate-500 hover:text-rose-400 lg:mr-0 lg:min-h-0 lg:px-0"
                         >
                           <Trash2 className="h-3 w-3" /> Delete
                         </button>

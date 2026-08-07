@@ -224,7 +224,7 @@ export default function InboxPage() {
   ] as const;
 
   return (
-    <div className="flex h-[calc(100vh-8rem)] flex-col">
+    <div className="mx-auto flex h-[calc(100vh-8rem)] max-w-6xl flex-col px-4 pt-6 md:px-8">
       <div className="mb-4">
         <h1 className="flex items-center gap-2 text-2xl font-bold text-white">
           <InboxIcon className="h-6 w-6 text-brand" />

@@ -200,3 +200,63 @@
 /* draggable scheduler */
 .dragging { opacity: 0.5; }
 .drop-active { outline: 2px dashed #0ea5e9; outline-offset: -4px; background: rgba(14,165,233,0.06); }
+
+/* ---------------------------------------------------------------------------
+   Touch targets (mobile + tablet only, i.e. below Tailwind's lg breakpoint).
+   The console is finger-driven at these widths, but many controls were sized
+   for a mouse: status/segment pills rendered 20-28px tall, icon buttons 36px,
+   and the sidebar nav rows 36px. Apple's HIG and WCAG 2.5.5 both want 44px.
+   These rules only raise the minimum box size; desktop layout is untouched.
+   Verified with audit-responsive.py at 390px and 768px.
+--------------------------------------------------------------------------- */
+@media (max-width: 1023.98px) {
+  button.rounded-full,
+  a.rounded-full,
+  button.rounded-md,
+  a.rounded-md,
+  button.rounded-lg,
+  a.rounded-lg,
+  button.rounded-xl,
+  a.rounded-xl {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  /* min-height needs a block-ish, centering box to look right on the controls
+     that were plain inline-block text buttons. */
+  button.rounded-full:not(.grid),
+  a.rounded-full:not(.grid),
+  button.rounded-md:not(.grid),
+  a.rounded-md:not(.grid),
+  button.rounded-lg:not(.grid),
+  a.rounded-lg:not(.grid),
+  button.rounded-xl:not(.grid),
+  a.rounded-xl:not(.grid) {
+    display: inline-flex;
+    align-items: center;
+  }
+  button.w-full.rounded-lg:not(.grid),
+  a.w-full.rounded-lg:not(.grid),
+  button.w-full.rounded-xl:not(.grid),
+  a.w-full.rounded-xl:not(.grid),
+  button.flex-1:not(.grid),
+  a.flex-1:not(.grid) {
+    justify-content: center;
+  }
+  /* square icon buttons: keep them square while growing to 44 */
+  button.rounded-lg.grid,
+  button.rounded-full.grid,
+  button.rounded-md.grid,
+  a.rounded-lg.grid,
+  a.rounded-full.grid {
+    min-width: 44px;
+  }
+  /* Leaflet's own zoom controls ship at 30x30. Leaflet's stylesheet is imported
+     from the map components, so it lands in a later chunk than this file --
+     these selectors are deliberately specific enough to win. */
+  .leaflet-container .leaflet-control-zoom a.leaflet-control-zoom-in,
+  .leaflet-container .leaflet-control-zoom a.leaflet-control-zoom-out {
+    width: 44px;
+    height: 44px;
+    line-height: 44px;
+  }
+}

@@ -155,7 +155,7 @@ export default function AdminClients() {
               <th className="hidden px-4 py-3 font-semibold md:table-cell">Phone</th>
               <th className="px-4 py-3 font-semibold">Role</th>
               <th className="hidden px-4 py-3 text-right font-semibold sm:table-cell">Joined</th>
-              <th className="px-4 py-3 text-right font-semibold"><span className="sr-only">Actions</span></th>
+              <th className="relative px-4 py-3 text-right font-semibold"><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-white/5">

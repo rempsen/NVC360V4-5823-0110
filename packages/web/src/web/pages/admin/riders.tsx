@@ -44,7 +44,7 @@ export default function AdminTechs() {
             <button
               key={t.key}
               onClick={() => setTab(t.key)}
-              className={`flex items-center gap-2 whitespace-nowrap rounded-t-lg px-4 py-2.5 text-sm font-semibold transition ${
+              className={`flex items-center gap-2 whitespace-nowrap rounded-t-lg px-4 py-3 text-sm font-semibold transition ${
                 active
                   ? "border-b-2 border-brand text-white"
                   : "border-b-2 border-transparent text-slate-500 hover:text-slate-300"

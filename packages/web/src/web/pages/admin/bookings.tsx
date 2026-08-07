@@ -329,7 +329,7 @@ export default function AdminWorkOrders() {
                 <th className="hidden px-3 py-3 font-semibold md:table-cell lg:px-4">{noun}</th>
                 <th className="px-3 py-3 font-semibold lg:px-4">Status</th>
                 <th className="hidden px-3 py-3 text-right font-semibold sm:table-cell lg:px-4">Total</th>
-                <th className="px-3 py-3 lg:px-4"><span className="sr-only">Actions</span></th>
+                <th className="relative px-3 py-3 lg:px-4"><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">

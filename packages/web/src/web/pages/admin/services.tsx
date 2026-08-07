@@ -39,7 +39,7 @@ export default function AdminServices() {
   const list = services.data?.services ?? [];
 
   return (
-    <div className="space-y-5">
+    <div className="mx-auto max-w-6xl space-y-5 px-4 py-6 pb-24 md:px-8">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="font-display text-2xl font-extrabold text-white">Service Templates</h1>

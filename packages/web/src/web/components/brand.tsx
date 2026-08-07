@@ -14,7 +14,7 @@ export function Logo({
   showText?: boolean;
 }) {
   return (
-    <Link to={to} className={cn("inline-flex items-center gap-2.5", className)}>
+    <Link to={to} className={cn("inline-flex items-center gap-2.5 py-1 lg:py-0", className)}>
       <span className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-brand to-brand-deep shadow-lg shadow-brand/30">
         <img
           src="/nvc-logo-white.png"
