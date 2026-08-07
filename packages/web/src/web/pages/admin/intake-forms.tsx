@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { toast } from "../../components/toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiHeaders } from "../../lib/api";
 import { Modal, Field, inputCls, BtnPrimary, BtnGhost, ConfirmModal } from "../../components/modal";
@@ -317,7 +318,7 @@ function FormEditor({ form, newFormType, publicKeys, onKeysChanged, onClose, onS
       const res = await fetch("/api/forms/logo", { method: "POST", body: fd, credentials: "include", headers: apiHeaders() });
       const d = await res.json();
       if (res.ok && d.url) setLogoUrl(d.url);
-      else alert(d.message || "Upload failed");
+      else toast({ kind: "error", key: "logo-upload", message: d.message || "Logo upload failed" });
     } finally {
       setLogoUploading(false);
     }

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useConfirm } from "../../components/confirm-dialog";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
@@ -44,6 +45,7 @@ function sameDay(a: Date, b: Date) {
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export default function SchedulerPage() {
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const { noun, nounPlural } = useWorkerNoun();
   const [dragId, setDragId] = useState<string | null>(null);
@@ -119,14 +121,13 @@ export default function SchedulerPage() {
     },
   });
 
-  const removeJob = (b: any) => {
-    if (
-      confirm(
-        `Archive "${b.title || b.service?.name || "this work order"}"? It will be moved to the archive and can be restored later from Work Orders.`,
-      )
-    ) {
-      del.mutate(b.id);
-    }
+  const removeJob = async (b: any) => {
+    const ok = await confirm({
+      title: `Archive "${b.title || b.service?.name || "this work order"}"?`,
+      message: "It will be moved to the archive and can be restored later from Work Orders.",
+      confirmLabel: "Archive",
+    });
+    if (ok) del.mutate(b.id);
   };
 
   const reschedule = useMutation({

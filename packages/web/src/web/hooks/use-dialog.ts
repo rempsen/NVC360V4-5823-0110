@@ -41,10 +41,7 @@ export function useDialog({
   autoLabel?: boolean;
   lockScroll?: boolean;
 }) {
-  // Deliberately loose: callers attach this to whatever element wraps their
-  // panel (div, section, form), and the hook only ever reads DOM methods.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const panelRef = useRef<any>(null);
+  const panelRef = useRef<HTMLElement | null>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
   const titleId = useId();
 
@@ -114,7 +111,9 @@ export function useDialog({
   }, [open, lockScroll]);
 
   return {
-    panelRef,
+    // Cast: callers attach this to whatever element wraps their panel (div,
+    // section, form). The hook itself only ever calls generic HTMLElement APIs.
+    panelRef: panelRef as unknown as React.RefObject<HTMLDivElement>,
     titleId,
     dialogProps: {
       role: "dialog" as const,

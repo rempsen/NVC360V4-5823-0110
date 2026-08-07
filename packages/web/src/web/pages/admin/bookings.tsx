@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
+import { toast } from "../../components/toast";
+import { useConfirm } from "../../components/confirm-dialog";
 import { DialogPanel } from "../../components/dialog-panel";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -69,6 +71,7 @@ function buildQuery(f: typeof EMPTY, q: string, includeDeleted: boolean) {
 }
 
 export default function AdminWorkOrders() {
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const { noun } = useWorkerNoun();
   const { noun: customerNoun } = useCustomerNoun();
@@ -443,8 +446,14 @@ export default function AdminWorkOrders() {
                             </button>
                           ) : (
                             <button
-                              onClick={() => {
-                                if (confirm("Archive this work order?"))
+                              onClick={async () => {
+                                if (
+                                  await confirm({
+                                    title: "Archive this work order?",
+                                    message: "It moves to the archive and can be restored later.",
+                                    confirmLabel: "Archive",
+                                  })
+                                )
                                   del.mutate(b.id);
                               }}
                               title="Archive"
@@ -792,8 +801,8 @@ async function download(url: string) {
     a.click();
     a.remove();
     URL.revokeObjectURL(objUrl);
-  } catch  {
-    alert("Export failed. Please try again.");
+  } catch (err) {
+    toast({ kind: "error", key: "export-failed", message: "Export failed. Please try again.", detail: err instanceof Error ? err.message : undefined });
   }
 }
 

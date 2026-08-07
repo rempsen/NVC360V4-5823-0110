@@ -5,6 +5,7 @@
 // records now, not editable work orders; the one intentional escape hatch
 // is the admin/superadmin-only "Edit anyway" button for genuine corrections.
 import { useState } from "react";
+import { toast } from "../../components/toast";
 import { useParams, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -42,8 +43,9 @@ async function download(url: string) {
     a.click();
     a.remove();
     URL.revokeObjectURL(objUrl);
-  } catch {
-    alert("Export failed. Please try again.");
+  } catch (err) {
+    // Module-level helper, outside the React tree — use the toast bridge.
+    toast({ kind: "error", key: "export-failed", message: "Export failed. Please try again.", detail: err instanceof Error ? err.message : undefined });
   }
 }
 

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useConfirm } from "../../components/confirm-dialog";
 import { DialogPanel } from "../../components/dialog-panel";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
@@ -20,6 +21,7 @@ const EMPTY: Svc = { name: "", category: "Cleaning", description: "", image: "",
 const CATEGORIES = ["Cleaning", "Plumbing", "Electrical", "Appliance", "Beauty", "Handyman", "Gardening", "Pest Control"];
 
 export default function AdminServices() {
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const [editing, setEditing] = useState<Svc | null>(null);
 
@@ -77,7 +79,10 @@ export default function AdminServices() {
                   <Pencil className="h-3.5 w-3.5" /> Edit
                 </button>
                 <button
-                  onClick={() => confirm(`Delete "${s.name}"?`) && del.mutate(s.id)}
+                  onClick={async () => {
+                    if (await confirm({ title: `Delete "${s.name}"?`, message: "This service template will no longer be selectable on new work orders." }))
+                      del.mutate(s.id);
+                  }}
                   className="grid w-10 place-items-center rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20"
                 >
                   <Trash2 className="h-3.5 w-3.5" />

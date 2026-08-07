@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from "react";
+import { useConfirm } from "../../components/confirm-dialog";
 import { DialogPanel } from "../../components/dialog-panel";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, apiHeaders } from "../../lib/api";
@@ -60,6 +61,7 @@ const EMPTY: Partial<Row> = {
 };
 
 export default function AdminCatalog() {
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const [editing, setEditing] = useState<Partial<Row> | null>(null);
   const [kind, setKind] = useState<"all" | CatalogKind>("all");
@@ -203,7 +205,10 @@ export default function AdminCatalog() {
                     <Pencil className="h-3.5 w-3.5" /> Edit
                   </button>
                   <button
-                    onClick={() => confirm(`Archive "${r.name}"?`) && del.mutate(r.id)}
+                    onClick={async () => {
+                      if (await confirm({ title: `Archive "${r.name}"?`, message: "It stays on past work orders but can't be added to new ones.", confirmLabel: "Archive" }))
+                        del.mutate(r.id);
+                    }}
                     className="grid w-10 place-items-center rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20"
                   >
                     <Trash2 className="h-3.5 w-3.5" />

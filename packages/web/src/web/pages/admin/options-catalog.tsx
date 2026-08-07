@@ -5,6 +5,8 @@
 // same token already used for live tracking) so the customer can pick a
 // tier and e-sign. See routes/option-catalog.ts + routes/option-selections.ts.
 import { useState } from "react";
+import { ApiError } from "../../lib/api-error";
+import { useConfirm } from "../../components/confirm-dialog";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiHeaders } from "../../lib/api";
 import { FullLoader } from "../../components/loader";
@@ -55,7 +57,13 @@ async function jsend(url: string, method: string, body?: unknown) {
   });
   if (!res.ok) {
     const msg = await res.json().catch(() => ({}));
-    throw new Error((msg as { message?: string }).message || `${method} ${url} failed`);
+    // Throw the same ApiError the typed client throws, so the global mutation
+    // error handler can map the status to a proper message.
+    throw new ApiError({
+      status: res.status,
+      message: (msg as { message?: string }).message || `${method} ${url} failed`,
+      body: msg,
+    });
   }
   return res.json();
 }
@@ -63,6 +71,7 @@ async function jsend(url: string, method: string, body?: unknown) {
 const EMPTY_ITEM = { tierLabel: "", name: "", description: "", priceDelta: 0, unitCost: 0, isDefault: false };
 
 export default function AdminOptionsCatalog() {
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const [newCategoryName, setNewCategoryName] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -87,7 +96,7 @@ export default function AdminOptionsCatalog() {
       setNewCategoryName("");
       qc.invalidateQueries({ queryKey: ["option-categories"] });
     },
-    onError: (e: Error) => alert(e.message),
+    // No onError needed: the global MutationCache handler toasts every failure.
   });
 
   const deleteCategory = useMutation({
@@ -103,7 +112,6 @@ export default function AdminOptionsCatalog() {
       setItemDraft(EMPTY_ITEM);
       qc.invalidateQueries({ queryKey: ["option-categories"] });
     },
-    onError: (e: Error) => alert(e.message),
   });
 
   const deleteItem = useMutation({
@@ -227,9 +235,10 @@ export default function AdminOptionsCatalog() {
                 </div>
                 <button
                   type="button"
-                  onClick={(e) => {
+                  onClick={async (e) => {
                     e.stopPropagation();
-                    if (confirm(`Delete category "${cat.name}" and all its tiers?`)) deleteCategory.mutate(cat.id);
+                    if (await confirm({ title: `Delete category "${cat.name}"?`, message: "All of its tiers will be deleted too. This can't be undone." }))
+                      deleteCategory.mutate(cat.id);
                   }}
                   className="grid h-7 w-7 place-items-center rounded-md text-slate-500 hover:bg-white/10 hover:text-red-400"
                 >

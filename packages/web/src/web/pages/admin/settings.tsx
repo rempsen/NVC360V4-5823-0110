@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useConfirm } from "../../components/confirm-dialog";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { FullLoader } from "../../components/loader";
@@ -22,6 +23,7 @@ const TIMEZONES = [
 const CURRENCIES = ["CAD", "USD", "EUR", "GBP", "AUD"];
 
 function CalendarSync() {
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const [copied, setCopied] = useState<string | null>(null);
 
@@ -50,8 +52,13 @@ function CalendarSync() {
           <Calendar className="h-4 w-4 text-brand" /> Calendar Sync
         </h3>
         <button
-          onClick={() => {
-            if (confirm("Regenerate your calendar link? Existing subscriptions will stop updating until re-added.")) regen.mutate();
+          onClick={async () => {
+            const ok = await confirm({
+              title: "Regenerate your calendar link?",
+              message: "Existing subscriptions will stop updating until they're re-added.",
+              confirmLabel: "Regenerate",
+            });
+            if (ok) regen.mutate();
           }}
           disabled={regen.isPending}
           className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-2.5 py-1.5 text-xs font-medium text-white/70 transition hover:bg-white/5 disabled:opacity-50"

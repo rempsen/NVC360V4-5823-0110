@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "../lib/query-client";
 import { ToastProvider } from "./toast";
+import { ConfirmProvider } from "./confirm-dialog";
 import { useAuth } from "../hooks/use-auth";
 import { setSentryUser } from "../lib/sentry";
 
@@ -36,7 +37,7 @@ export function Provider({ children }: ProviderProps) {
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
         <SentryIdentity />
-        {children}
+        <ConfirmProvider>{children}</ConfirmProvider>
       </ToastProvider>
     </QueryClientProvider>
   );
