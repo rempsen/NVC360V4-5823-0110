@@ -6,7 +6,7 @@ import { PageWrap } from "../../components/brand";
 import { PageHead } from "./shell";
 import { Field, inputCls, BtnPrimary, ConfirmModal } from "../../components/modal";
 import { AddressAutocomplete } from "../../components/address-autocomplete";
-import { Save, Building2, Check, Calendar, Copy, RefreshCw, ExternalLink, MapPin, Sparkles, Plug, KeyRound, ScrollText, Lock, Eye, EyeOff, Tag, Plus, Trash2, Pencil, X } from "lucide-react";
+import { Save, Building2, Check, Calendar, Copy, RefreshCw, ExternalLink, MapPin, Sparkles, Plug, KeyRound, ScrollText, Lock, Eye, EyeOff, Tag, Plus, Trash2, Pencil, X, Star } from "lucide-react";
 import { useWorkerNoun } from "../../lib/use-brand";
 import { cn } from "../../lib/utils";
 import AutomationPage from "./automation";
@@ -209,6 +209,54 @@ function CompanySettingsTab() {
                 className={inputCls}
                 value={form.geofenceRadiusM ?? 20}
                 onChange={(e) => set("geofenceRadiusM", Math.max(5, parseInt(e.target.value) || 20))}
+              />
+            </Field>
+          </div>
+
+          {/* Review requests + reputation routing */}
+          <div className="nvc-card space-y-4 p-5">
+            <h3 className="flex items-center gap-2 font-bold text-white">
+              <Star className="h-4 w-4 text-brand" /> Review requests
+            </h3>
+            <p className="text-xs text-white/50">
+              After a job completes we text the customer their job record and ask
+              for a rating. 4-5 star ratings are offered your public review link;
+              3 stars or below never are — they raise a private alert so you can
+              fix it first.
+            </p>
+            <label className="flex items-center justify-between gap-3">
+              <span className="text-sm text-white/80">Ask for a review after every job</span>
+              <button
+                type="button"
+                aria-label="Toggle review requests"
+                onClick={() => set("reviewRequestEnabled", !(form.reviewRequestEnabled ?? true))}
+                className={`relative h-6 w-11 shrink-0 rounded-full transition ${
+                  (form.reviewRequestEnabled ?? true) ? "bg-emerald-live" : "bg-white/10"
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${
+                    (form.reviewRequestEnabled ?? true) ? "left-[22px]" : "left-0.5"
+                  }`}
+                />
+              </button>
+            </label>
+            <Field label="Send how long after completion?" hint="Minutes. Default 120 (2 hours)">
+              <input aria-label="Review request delay minutes"
+                type="number"
+                min={0}
+                step={15}
+                className={inputCls}
+                value={form.reviewRequestDelayMins ?? 120}
+                onChange={(e) => set("reviewRequestDelayMins", Math.max(0, parseInt(e.target.value) || 0))}
+              />
+            </Field>
+            <Field label="Public review link" hint="Your Google review URL — shown only to 4-5 star reviewers">
+              <input aria-label="Google review URL"
+                className={inputCls}
+                placeholder="https://g.page/r/…/review"
+                value={form.googleReviewUrl ?? ""}
+                onChange={(e) => set("googleReviewUrl", e.target.value)}
               />
             </Field>
           </div>

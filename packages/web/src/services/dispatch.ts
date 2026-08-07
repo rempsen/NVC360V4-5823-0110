@@ -18,6 +18,8 @@ import { sendPush } from "./push";
 import { applyNotificationOverrides } from "./notification-presets";
 import { logJobEvent, type JobEventKind } from "./job-events";
 import { propertyUrl } from "./properties";
+import { runAutomations, EVENT_TO_TRIGGER } from "./automation";
+import { scheduleReviewRequest } from "./reviews";
 
 export type NvcEvent =
   | "created"
@@ -363,6 +365,34 @@ export async function fireEvent(event: NvcEvent, bookingId: string) {
         event === "declined" && b.declineReason ? b.declineReason : "",
       meta: { status: b.status, service: vars.service },
     });
+
+    // Automation rules + the post-completion review ask. Both are strictly
+    // best-effort side effects: a failure here must never stop the real
+    // notifications below from going out.
+    try {
+      const trigger = EVENT_TO_TRIGGER[event];
+      if (trigger) {
+        await runAutomations(trigger, {
+          companyId,
+          bookingId: b.id,
+          vars: {
+            ...(vars as unknown as Record<string, string | number | null>),
+            customerName: cust?.name ?? "",
+            customerPhone: b.customerPhone || cust?.phone || "",
+            token: b.publicToken,
+          },
+          facts: {
+            priority: b.priority,
+            service: vars.service,
+            status: b.status,
+            region: b.region,
+          },
+        });
+      }
+      if (event === "completed") await scheduleReviewRequest(b.id);
+    } catch (e) {
+      console.error("[dispatch] automation/review hook failed", e);
+    }
 
     const rules = await db
       .select()

@@ -4,6 +4,12 @@ import { rowsNeedingPoll, triggerVerify } from "./services/email-domains";
 import { seedRolePermissions } from "./api/routes/team";
 import { startRetentionSweeps } from "./services/retention";
 import { startScheduler } from "./services/scheduler";
+// Importing these registers their scheduler task handlers (review_request,
+// maintenance_reminder) at boot. Without the import the queue would claim the
+// tasks and find no handler.
+import "./services/reviews";
+import "./services/maintenance";
+import { sweepTimeTriggers } from "./services/automation";
 import { log, captureException } from "./api/lib/logger";
 import { initRealtimeBus } from "./services/realtime";
 import { initRateLimitStore } from "./api/lib/rate-limit";
@@ -69,6 +75,15 @@ setInterval(() => {
 // nudges, time-based automation. Ticks every 60s; claims are race-safe so a
 // rolling deploy running two instances can't double-fire a task.
 startScheduler();
+
+// Time-based automation triggers (tech_idle, sla_risk). Nothing fires these —
+// they are conditions of time passing — so we sweep once a minute. Cheap: the
+// sweep exits immediately when no tenant has an enabled time-based rule.
+setInterval(() => {
+  sweepTimeTriggers().catch((e) =>
+    console.error("automation time sweep failed", e),
+  );
+}, 60 * 1000);
 
 // Auto-poll pending/verifying email sending domains and flip to verified.
 async function pollEmailDomains() {

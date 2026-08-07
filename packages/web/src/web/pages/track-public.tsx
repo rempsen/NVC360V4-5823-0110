@@ -347,6 +347,9 @@ export default function TrackPublic() {
   const [reviewHover, setReviewHover] = useState(0);
   const [reviewComment, setReviewComment] = useState("");
   const [reviewSubmitted, setReviewSubmitted] = useState(false);
+  // Set only for 4-5 star ratings when the tenant configured a public review
+  // link. Lower ratings are never routed anywhere public.
+  const [publicReviewUrl, setPublicReviewUrl] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<string | null>(null);
 
   const track = useQuery({
@@ -419,7 +422,10 @@ export default function TrackPublic() {
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
-    onSuccess: () => setReviewSubmitted(true),
+    onSuccess: (res: any) => {
+      setReviewSubmitted(true);
+      setPublicReviewUrl(res?.publicReviewUrl ?? null);
+    },
   });
 
   const msgs = (messages.data as any)?.messages ?? [];
@@ -601,7 +607,21 @@ export default function TrackPublic() {
                       <div className="flex flex-col items-center gap-2 py-3 text-center">
                         <CheckCircle2 className="h-8 w-8 text-emerald-live" />
                         <p className="font-bold text-white">Thanks for your feedback!</p>
-                        <p className="text-sm text-slate-400">Your review helps us improve.</p>
+                        <p className="text-sm text-slate-400">
+                          {publicReviewUrl
+                            ? "Glad we hit the mark. Would you share that publicly?"
+                            : "Your review helps us improve."}
+                        </p>
+                        {publicReviewUrl && (
+                          <a
+                            href={publicReviewUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-brand py-2.5 text-sm font-semibold text-white hover:bg-brand-deep"
+                          >
+                            <Star className="h-4 w-4" /> Leave a Google review
+                          </a>
+                        )}
                       </div>
                     ) : (
                       <>

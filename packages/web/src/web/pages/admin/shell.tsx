@@ -11,6 +11,7 @@ import {
   LayoutDashboard,
   Map as MapIcon,
   CalendarClock,
+  CalendarSync,
   ClipboardList,
   LayoutTemplate,
   Package,
@@ -78,6 +79,7 @@ const NAV_GROUPS: NavGroup[] = [
       // show customers.
       { to: "/admin/clients", label: "People", icon: Users },
       { to: "/admin/reviews", label: "Reviews", icon: Star },
+      { to: "/admin/maintenance", label: "Maintenance Plans", icon: CalendarSync },
     ],
   },
   {

@@ -584,6 +584,15 @@ export const companySettings = sqliteTable("company_settings", {
   services: text("services").notNull().default(""), // JSON string: string[]
   socials: text("socials").notNull().default(""), // JSON string: {facebook,instagram,...}
   geofenceRadiusM: integer("geofence_radius_m").notNull().default(150), // auto-arrive radius from job address (meters)
+  // ── Review requests ────────────────────────────────────────────────────
+  // A completed job schedules ONE review-request SMS this many minutes later
+  // (services/reviews.ts). 0 or disabled = never ask.
+  reviewRequestEnabled: integer("review_request_enabled", { mode: "boolean" }).notNull().default(true),
+  reviewRequestDelayMins: integer("review_request_delay_mins").notNull().default(120),
+  // Where 4-5 star reviewers get sent to leave a public review. Ratings of 3
+  // or below are deliberately NOT routed here — they go to the office as
+  // private feedback so the company can fix it before it becomes public.
+  googleReviewUrl: text("google_review_url").notNull().default(""),
   website: text("website").notNull().default(""),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }),
   createdAt: now(),
@@ -1144,6 +1153,43 @@ export const scheduledTasks = sqliteTable(
     // the hot query: claim due pending work
     dueIdx: index("schedtask_due_idx").on(t.status, t.runAt),
     bookingIdx: index("schedtask_booking_idx").on(t.bookingId),
+  }),
+);
+
+/**
+ * Recurring service agreements — the thing that turns a one-off job into
+ * repeat revenue.
+ *
+ * A plan says "this property needs this service every N days". The scheduler
+ * queues a `maintenance_reminder` task ahead of each due date; when it fires we
+ * notify the customer (and the office), then roll nextDueAt forward by
+ * intervalDays and queue the next one. Cancelling the plan cancels its pending
+ * task, so a deactivated plan goes quiet immediately.
+ */
+export const maintenancePlans = sqliteTable(
+  "maintenance_plans",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    companyId: text("company_id").notNull().default("default"),
+    name: text("name").notNull().default(""), // "Bi-annual furnace tune-up"
+    customerId: text("customer_id").references(() => user.id),
+    propertyId: text("property_id").references(() => properties.id, { onDelete: "cascade" }),
+    serviceId: text("service_id").references(() => services.id),
+    address: text("address").notNull().default(""), // denormalised for reminder copy
+    intervalDays: integer("interval_days").notNull().default(180),
+    // how far ahead of nextDueAt the reminder goes out
+    remindDaysBefore: integer("remind_days_before").notNull().default(7),
+    nextDueAt: integer("next_due_at", { mode: "timestamp_ms" }),
+    lastServiceAt: integer("last_service_at", { mode: "timestamp_ms" }),
+    notes: text("notes").notNull().default(""),
+    active: integer("active", { mode: "boolean" }).notNull().default(true),
+    remindersSent: integer("reminders_sent").notNull().default(0),
+    createdAt: now(),
+  },
+  (t) => ({
+    companyIdx: index("mplan_company_idx").on(t.companyId),
+    dueIdx: index("mplan_due_idx").on(t.active, t.nextDueAt),
+    propIdx: index("mplan_prop_idx").on(t.propertyId),
   }),
 );
 

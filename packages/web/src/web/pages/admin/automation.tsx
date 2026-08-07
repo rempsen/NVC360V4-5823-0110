@@ -14,32 +14,49 @@ import {
   X,
 } from "lucide-react";
 
+// These keys MUST match services/automation.ts — the engine matches on the
+// stored string, so a label-only mismatch means a rule that silently never runs.
 const TRIGGERS = [
-  "work_order_created",
-  "status_changed",
-  "technician_enroute",
-  "job_completed",
-  "sla_breach",
-];
+  { key: "wo_created", label: "Work order created" },
+  { key: "tech_enroute", label: "Technician en route" },
+  { key: "wo_completed", label: "Work order completed" },
+  { key: "tech_idle", label: "Technician idle (time-based)" },
+  { key: "sla_risk", label: "SLA at risk (time-based)" },
+] as const;
+
 const ACTIONS = [
-  "auto_assign_nearest",
-  "send_sms",
-  "send_email",
-  "notify_dispatcher",
-  "create_invoice",
-];
+  { key: "notify_dispatch", label: "Notify dispatch" },
+  { key: "send_sms", label: "Send SMS" },
+  { key: "escalate", label: "Escalate to office" },
+  { key: "auto_assign", label: "Suggest auto-assign" },
+  { key: "reroute", label: "Suggest reroute" },
+] as const;
+
+const TRIGGER_LABEL: Record<string, string> = Object.fromEntries(
+  TRIGGERS.map((t) => [t.key, t.label]),
+);
+const ACTION_LABEL: Record<string, string> = Object.fromEntries(
+  ACTIONS.map((a) => [a.key, a.label]),
+);
 
 const labelize = (s: string) =>
+  TRIGGER_LABEL[s] ??
+  ACTION_LABEL[s] ??
   s.replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
+
+const PRIORITIES = ["", "low", "normal", "high", "urgent"];
 
 export default function AutomationPage() {
   const qc = useQueryClient();
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({
     name: "",
-    trigger: TRIGGERS[0],
-    action: ACTIONS[0],
+    trigger: TRIGGERS[0].key as string,
+    action: ACTIONS[0].key as string,
     description: "",
+    priority: "",
+    minMinutes: "",
+    message: "",
   });
 
   const rules = useQuery({
@@ -47,13 +64,44 @@ export default function AutomationPage() {
     queryFn: async () => (await api.automation.$get()).json(),
   });
 
+  const isTimeTrigger =
+    form.trigger === "tech_idle" || form.trigger === "sla_risk";
+
   const create = useMutation({
     mutationFn: async () =>
-      (await api.automation.$post({ json: { ...form, enabled: true } })).json(),
+      (
+        await api.automation.$post({
+          json: {
+            name: form.name,
+            description: form.description,
+            trigger: form.trigger,
+            action: form.action,
+            enabled: true,
+            conditions: {
+              ...(form.priority ? { priority: form.priority } : {}),
+              ...(isTimeTrigger && form.minMinutes
+                ? { minMinutes: Number(form.minMinutes) }
+                : {}),
+            },
+            actionConfig: {
+              title: form.name,
+              message: form.message || form.description,
+            },
+          },
+        })
+      ).json(),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["automation"] });
       setShowNew(false);
-      setForm({ name: "", trigger: TRIGGERS[0], action: ACTIONS[0], description: "" });
+      setForm({
+        name: "",
+        trigger: TRIGGERS[0].key,
+        action: ACTIONS[0].key,
+        description: "",
+        priority: "",
+        minMinutes: "",
+        message: "",
+      });
     },
   });
 
@@ -200,8 +248,8 @@ export default function AutomationPage() {
                   className="w-full rounded-lg border border-white/10 bg-ink-3/60 px-3 py-2 text-sm text-white focus:border-brand focus:outline-none"
                 >
                   {TRIGGERS.map((t) => (
-                    <option key={t} value={t}>
-                      {labelize(t)}
+                    <option key={t.key} value={t.key}>
+                      {t.label}
                     </option>
                   ))}
                 </select>
@@ -214,11 +262,61 @@ export default function AutomationPage() {
                   className="w-full rounded-lg border border-white/10 bg-ink-3/60 px-3 py-2 text-sm text-white focus:border-brand focus:outline-none"
                 >
                   {ACTIONS.map((a) => (
-                    <option key={a} value={a}>
-                      {labelize(a)}
+                    <option key={a.key} value={a.key}>
+                      {a.label}
                     </option>
                   ))}
                 </select>
+              </div>
+
+              {/* Optional filter — blank means "every job of this trigger" */}
+              <div>
+                <span className="mb-1 block text-xs text-slate-500">
+                  Only when priority is
+                </span>
+                <select
+                  aria-label="Priority filter"
+                  value={form.priority}
+                  onChange={(e) => setForm({ ...form, priority: e.target.value })}
+                  className="w-full rounded-lg border border-white/10 bg-ink-3/60 px-3 py-2 text-sm text-white focus:border-brand focus:outline-none"
+                >
+                  {PRIORITIES.map((p) => (
+                    <option key={p} value={p}>
+                      {p === "" ? "Any priority" : labelize(p)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {isTimeTrigger && (
+                <div>
+                  <span className="mb-1 block text-xs text-slate-500">
+                    After how many minutes?
+                  </span>
+                  <input
+                    aria-label="Minutes threshold"
+                    type="number"
+                    min={5}
+                    value={form.minMinutes}
+                    onChange={(e) => setForm({ ...form, minMinutes: e.target.value })}
+                    placeholder={form.trigger === "tech_idle" ? "30" : "60"}
+                    className="w-full rounded-lg border border-white/10 bg-ink-3/60 px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:border-brand focus:outline-none"
+                  />
+                </div>
+              )}
+
+              <div>
+                <span className="mb-1 block text-xs text-slate-500">
+                  Message {form.action === "send_sms" ? "(sent to the customer)" : "(shown to dispatch)"}
+                </span>
+                <textarea
+                  aria-label="Message"
+                  rows={2}
+                  value={form.message}
+                  onChange={(e) => setForm({ ...form, message: e.target.value })}
+                  placeholder="Use {{customerName}}, {{techName}}, {{address}}, {{shortId}}, {{trackUrl}}"
+                  className="w-full resize-none rounded-lg border border-white/10 bg-ink-3/60 px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:border-brand focus:outline-none"
+                />
               </div>
               <button
                 disabled={!form.name || create.isPending}

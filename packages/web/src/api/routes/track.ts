@@ -9,6 +9,7 @@ import { trackLimiter } from "../lib/rate-limit";
 import { streamSSE } from "hono/streaming";
 import { subscribeTrack } from "../../services/realtime";
 import { jobTimeline } from "../../services/job-events";
+import { reviewRouting, alertLowRating } from "../../services/reviews";
 import { propertyUrl } from "../../services/properties";
 
 // Resolve a booking by its public token, enforcing expiry. Returns null when
@@ -24,7 +25,7 @@ async function resolveByToken(token: string) {
   // technician's real-time location); once the job is done there's no live
   // location to protect.
   if (b.status === "completed") return b;
-  if (b.tokenExpiresAt && b.tokenExpiresAt < Date.now()) return null;
+  if (b.tokenExpiresAt && Number(b.tokenExpiresAt) < Date.now()) return null;
   return b;
 }
 
@@ -288,7 +289,7 @@ export const trackRoutes = new Hono()
     if (existing) return c.json({ review: existing }, 200);
     const [rev] = await t.insert(schema.reviews, {
       bookingId: b.id,
-      customerId: b.customerId || null,
+      customerId: b.customerId || undefined,
       riderId: b.riderId || null,
       rating: r,
       comment: comment?.trim() ?? "",
@@ -299,7 +300,28 @@ export const trackRoutes = new Hono()
       const avg = all.reduce((s, x) => s + (x.rating || 0), 0) / all.length;
       await t.update(schema.riders, { rating: Math.round(avg * 10) / 10 }, eq(schema.riders.id, b.riderId));
     }
-    return c.json({ review: rev }, 201);
+    // Reputation routing: 4-5 stars get offered the tenant's public review
+    // link; 3 or below never do — they raise a private alert to the office so
+    // it can be fixed before it becomes a public complaint. Either way the
+    // rating itself is stored and visible in admin.
+    let publicUrl: string | null = null;
+    try {
+      const routing = await reviewRouting(b.companyId, r);
+      publicUrl = routing.publicUrl;
+      if (routing.escalate) {
+        await alertLowRating({
+          companyId: b.companyId,
+          bookingId: b.id,
+          rating: r,
+          comment: comment?.trim() ?? "",
+          jobTitle: b.title || "Job",
+        });
+      }
+    } catch (e) {
+      console.error("[track] review routing failed", e);
+    }
+
+    return c.json({ review: rev, publicReviewUrl: publicUrl }, 201);
   })
   // client posts a message from the public tracking page
   .post("/:token/messages", trackLimiter, async (c) => {

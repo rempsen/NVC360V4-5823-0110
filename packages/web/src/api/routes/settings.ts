@@ -51,6 +51,8 @@ export const settingsRoutes = new Hono()
       "name", "legalName", "email", "phone", "address", "lat", "lng",
       "timezone", "currency", "taxRate", "taxLabel", "logo", "brandColor", "website",
       "defaultRegion", "autoTaxByRegion", "geofenceRadiusM",
+      // review requests + reputation routing
+      "reviewRequestEnabled", "reviewRequestDelayMins", "googleReviewUrl",
     ];
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     for (const k of allowed) if (k in body) patch[k] = body[k];

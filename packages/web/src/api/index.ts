@@ -18,6 +18,7 @@ import { notificationsRoutes } from "./routes/notifications";
 import { adminRoutes } from "./routes/admin";
 import { trackRoutes } from "./routes/track";
 import { propertyPublicRoutes } from "./routes/property-public";
+import { maintenanceRoutes } from "./routes/maintenance";
 import { optionCatalogRoutes } from "./routes/option-catalog";
 import { optionSelectionsRoutes } from "./routes/option-selections";
 import { messagesRoutes } from "./routes/messages";
@@ -268,6 +269,7 @@ const app = new Hono<{ Variables: Variables }>()
   .route("/ai", aiRoutes)
   .route("/templates", templatesRoutes)
   .route("/automation", automationRoutes)
+  .route("/maintenance", maintenanceRoutes)
   .route("/integrations", integrationsRoutes)
   .route("/export", exportRoutes)
   .route("/settings", settingsRoutes)
