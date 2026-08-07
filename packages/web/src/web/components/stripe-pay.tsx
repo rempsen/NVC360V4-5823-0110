@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { DialogPanel } from "./dialog-panel";
 import { loadStripe, type Stripe } from "@stripe/stripe-js";
 import {
   Elements,
@@ -88,7 +89,7 @@ export function StripePayModal({
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
       {...dismiss(onClose)}
     >
-      <div className="w-full max-w-md rounded-2xl bg-ink-2 p-6 shadow-2xl">
+      <DialogPanel onClose={onClose} label="Pay invoice securely" className="w-full max-w-md rounded-2xl bg-ink-2 p-6 shadow-2xl">
         <div className="flex items-start justify-between">
           <div>
             <h3 className="text-lg font-extrabold text-white">Pay securely</h3>
@@ -139,7 +140,7 @@ export function StripePayModal({
         <p className="mt-4 flex items-center justify-center gap-1.5 text-[11px] text-slate-600">
           <ShieldCheck className="h-3.5 w-3.5" /> Payments secured by Stripe
         </p>
-      </div>
+      </DialogPanel>
     </div>
   );
 }

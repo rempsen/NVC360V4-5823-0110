@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { DialogPanel } from "../../components/dialog-panel";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, apiHeaders } from "../../lib/api";
@@ -443,7 +444,7 @@ function TechDrawer({ riderId, onClose }: { riderId: string | null; onClose: () 
   return (
     <div className="fixed inset-0 z-[1000] flex justify-end">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" {...dismiss(onClose)} />
-      <div className="relative h-full w-full max-w-xl overflow-y-auto border-l border-white/10 bg-ink shadow-2xl">
+      <DialogPanel onClose={onClose} label="Technician details" className="relative h-full w-full max-w-xl overflow-y-auto border-l border-white/10 bg-ink shadow-2xl">
         {!rider ? (
           <div className="grid h-full place-items-center text-slate-500">Loading…</div>
         ) : (
@@ -582,7 +583,7 @@ function TechDrawer({ riderId, onClose }: { riderId: string | null; onClose: () 
             </div>
           </>
         )}
-      </div>
+      </DialogPanel>
 
       <WorkOrderModal
         open={editJob !== null}

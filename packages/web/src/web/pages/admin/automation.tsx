@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { DialogPanel } from "../../components/dialog-panel";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { FullLoader } from "../../components/loader";
@@ -221,7 +222,7 @@ export default function AutomationPage() {
       {/* new rule modal */}
       {showNew && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-ink-2 p-5 shadow-2xl">
+          <DialogPanel onClose={() => setShowNew(false)} label="New automation rule" className="w-full max-w-md rounded-2xl border border-white/10 bg-ink-2 p-5 shadow-2xl">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="font-display text-lg font-bold text-white">
                 New automation rule
@@ -326,7 +327,7 @@ export default function AutomationPage() {
                 {create.isPending ? "Creating…" : "Create rule"}
               </button>
             </div>
-          </div>
+          </DialogPanel>
         </div>
       )}
     </PageWrap>

@@ -1,60 +1,52 @@
-# Web platform fixes 1–3 (from web-platform-review.md, 6.4/10)
+# NVC360 web/admin platform fixes (from the 6.4/10 expert review)
 
-## Fix 1 — silent mutation failures (3.0 → target 8+)
-- [x] `src/web/lib/api-error.ts` — `ApiError` class + `errorMessage()` + `messageFromBody()`
-- [x] `src/web/lib/api.ts` — `apiFetch` throws on non-2xx, wired into `hc({ fetch })`
-- [x] `src/web/components/toast.tsx` — toast system, errors sticky, de-dupe by key, `aria-live`
-- [x] `src/web/lib/query-client.ts` — ONE shared client + `MutationCache.onError` (wires all 131
-      unhandled mutations at once) + `QueryCache.onError` (only when no data) + 401 → sign-in
-- [x] `src/web/components/provider.tsx` — uses shared client + ToastProvider
-- [x] `src/web/main.tsx` — removed the duplicate nested QueryClient
-- [x] verify: `bun verify-fix1.ts` → ALL PASS 19/19 (non-2xx rejects with ApiError+status, 2xx
-      unchanged, all errorMessage mappings, envelope parsing). Browser E2E: patched fetch → 400 on
-      `/api/catalog` PATCH (a route NOT touched by fix 3) → sticky toast "Base price can't be
-      negative", aria-live=polite, modal stayed open. Screenshot `/tmp/toast-error.png` reviewed.
+## Fix 1 — silent mutation failures  ✅ DONE, committed `e06c5cd`
+`bun verify-fix1.ts` → 19/19 PASS. Throwing `apiFetch` + `ApiError` + toast system +
+single shared QueryClient with a global `MutationCache.onError`.
 
-### Key safety check done
-All graceful-degradation call sites (`fleet.tsx:71` empty fallback, `integrations.tsx:47`
-"coming soon", `intake-forms.tsx:319`, `integrations.tsx:207`) use **raw fetch**, NOT the typed
-client — unaffected by the throwing wrapper. `notifications.tsx:831` reads `.ok` off the JSON
-*body* on a 200, not the HTTP status — also unaffected.
-Mutations set `retry: 0` — retrying a write could double-send an SMS / double-fire dispatch.
+## Fix 2 — N+1 + pagination on GET /api/bookings  ✅ DONE, committed `e542c72`
+`bun verify-fix2.ts` → 15/15 PASS. 4 queries total regardless of row count.
+37→547ms, 87→550ms, 162→555ms (1.02x growth for 4.4x data; old model projected ~9.5s).
+Pagination opt-in via `?page`/`?pageSize`; unpaginated capped at MAX_LIST=2000 + `truncated`.
 
-## Fix 2 — GET /api/bookings N+1 + no pagination (4.0)
-- [x] batch `enrich()` with `inArray` (services, riders, users, customers) — `enrichMany()`,
-      4 queries total regardless of row count, per-batch try/catch fallback
-- [x] add pagination to `GET /` — deliberately OPT-IN via `?page`/`?pageSize`; 10 consumers
-      (admin dashboard, scheduler, rider earnings, mobile) aggregate over the whole set, so
-      defaulting to page 1 would silently corrupt revenue/count totals. Unpaginated reads
-      hard-capped at `MAX_LIST = 2000` with a `truncated` flag.
-- [x] keep response shape backward-compatible — `{ bookings: [...] }` preserved,
-      `total`/`page`/`pageSize`/`pages`/`truncated` added additively
-- [x] verify: `bun verify-fix2.ts` → ALL PASS 15/15. Flat scaling measured: 37 rows 547 ms /
-      87 KB, 87 rows 550 ms / 176 KB, 162 rows 555 ms / 308 KB — 1.02x time for 4.4x data.
-      Old per-row model projected ~9.5 s for 162 rows; actual 0.56 s. (~270 ms of that is fixed
-      session/auth overhead: `/api/health` 66 ms, single-query `/api/services` 270 ms.)
-      Fixtures cleaned up, count back to baseline 12.
-- Pattern copied: `src/api/routes/job-search.ts` `enrichRows()`
+## Fix 3 — zod validation on write endpoints  ✅ DONE, committed `8b39e94`
+`bun verify-fix3.ts` → 35/35 PASS. Original probe (empty name, -99999 price, -5 mins,
+50k description) now 400 with a field map (was 201). `PUT /api/zones/<unknown>` now 404 (was 500).
 
-## Fix 3 — validation (3.5)
-- [x] shared helper `src/api/lib/validate.ts` — `ValidationError`, `parseBody()`, `validate()`,
-      primitives `money()`, `durationMins`, `shortText()`, `longText()`, `percent()`.
-      Unknown keys are **stripped, not rejected** (existing clients send extra keys) — which also
-      closes the mass-assignment surface. 400s reuse the existing envelope
-      `{ error: { code, message }, fields, message }` (bare `message` kept for older clients).
-- [x] zod on `services.ts` POST/PATCH + explicit allow-listed PATCH writes + DELETE 404s
-- [x] `zones.ts` unchecked destructure → PUT/DELETE unknown id now 404 (was 500 / silent success)
-- [x] verify: `bun verify-fix3.ts` → ALL PASS 35/35. The original review probe
-      (`name:""`, `basePrice:-99999`, `durationMins:-5`, 50k-char description) now returns
-      **400 with a field map** — it was 201 Created. All money/duration edge cases rejected
-      (negative, NaN, Infinity, string, absurd, zero/fractional duration, whitespace name).
-      Valid input still 201 with exact values; price 0 allowed; injected `id`/`companyId`/`rating`
-      ignored; malformed JSON → 400 not 500. Fixtures cleaned up.
-- [ ] remaining ~91 raw `c.req.json()` call sites across the other 42 route files (not done)
+---
 
-## Repo gotchas
-- `tsc --noEmit` unreliable here (project refs + pre-existing Hono overload false positives)
-- server serves `packages/web/dist` → must `bunx vite build` for frontend changes
-- NEVER `db:push` (Turso batch bug)
-- `fireEvent()` on a seeded booking sends a REAL SMS — use throwaway bookings, `rider_id NULL`
-- web: tmux `web` on :4200
+## Fix 4 — crash reporting + error boundaries  ✅ IMPLEMENTED
+- `src/web/lib/sentry.ts` — env-gated on `VITE_SENTRY_DSN`, disabled in dev, no PII,
+  no Session Replay, `beforeSend` drops expected <500 ApiErrors.
+- `src/web/lib/global-errors.ts` — `unhandledrejection` + `window.error` net,
+  stale-chunk-after-deploy detection, de-duped toast.
+- `src/web/components/error-boundary.tsx` — `RootErrorBoundary` (full screen) +
+  `RouteErrorBoundary` (per role area; auto-resets on navigation, keeps shell alive).
+- `provider.tsx` attaches user id + role to reports.
+- query-client reports 5xx/unexpected only.
+- VERIFIED: with no DSN, Sentry is fully tree-shaken (0 bytes in dist). With a DSN in
+  the root `.env`, the DSN + SDK land in the bundle. **DSN is build-time, not runtime.**
+
+## Fix 6 — modal accessibility  ✅ IMPLEMENTED
+- `src/web/hooks/use-dialog.ts` — role/aria-modal/labelling, focus in + restore,
+  Tab trap, topmost-only Escape, scroll lock. onClose held in a ref so an inline
+  arrow at the call site can't re-run the effect and steal focus mid-typing.
+- `components/modal.tsx` rebuilt on the hook; backdrop is a div, not a button.
+- `components/dialog-panel.tsx` — `<DialogPanel>` drop-in for the 12 hand-rolled
+  overlays: services, catalog, stripe-pay, bookings (assign), rider/active (decline),
+  automation, maintenance, email-editor (x2), users drawer, riders drawer,
+  notifications (drawer + edit-message).
+
+## Fix 5 — replace 12 native confirm()/alert()  ⬜ IN PROGRESS
+job-report.tsx:46 · scheduler.tsx:124 · options-catalog.tsx:90,106,232 ·
+settings.tsx:54 · services.tsx:79 · bookings.tsx:446,795 · catalog.tsx:205 ·
+intake-forms.tsx:320
+
+## Fix 8 — extend validate.ts to remaining raw c.req.json() sites  ⬜ TODO
+~91 across 42 route files. Priority by count: notif-config(12), bookings(11),
+team/option-catalog/messages/catalog/admin(4 each), tags/superadmin/riders/
+public-forms/integrations/custom-fields(3 each).
+
+## Mobile / responsive viewport pass  ⬜ TODO
+Excluded from the original score rather than guessed at. Needs a real 390px and
+768px pass over the admin console.

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
+import { DialogPanel } from "../../components/dialog-panel";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, apiHeaders } from "../../lib/api";
@@ -1015,7 +1016,7 @@ function AssignModal({ booking, onClose, onDone }: any) {
       className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4 backdrop-blur-sm"
       {...dismiss(onClose)}
     >
-      <div className="w-full max-w-md rounded-2xl border border-white/10 bg-ink-2 shadow-2xl">
+      <DialogPanel onClose={onClose} label={`Assign ${noun.toLowerCase()}`} className="w-full max-w-md rounded-2xl border border-white/10 bg-ink-2 shadow-2xl">
         <div className="flex items-center justify-between border-b border-white/5 px-5 py-4">
           <div>
             <h3 className="font-bold text-white">Assign {noun.toLowerCase()}</h3>
@@ -1106,7 +1107,7 @@ function AssignModal({ booking, onClose, onDone }: any) {
             ))
           )}
         </div>
-      </div>
+      </DialogPanel>
     </div>
   );
 }

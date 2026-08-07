@@ -1,4 +1,5 @@
 import { useParams, Link, useLocation } from "wouter";
+import { DialogPanel } from "../../components/dialog-panel";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../lib/api";
@@ -229,7 +230,7 @@ export default function RiderActive() {
     {/* Decline confirmation modal — replaces window.prompt for mobile compat */}
     {declineOpen && (
       <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 sm:items-center">
-        <div className="w-full max-w-sm rounded-t-3xl bg-ink-2 p-6 shadow-2xl sm:rounded-2xl">
+        <DialogPanel onClose={() => setDeclineOpen(false)} label="Decline this job" className="w-full max-w-sm rounded-t-3xl bg-ink-2 p-6 shadow-2xl sm:rounded-2xl">
           <div className="mb-4 flex items-center gap-3">
             <div className="grid h-10 w-10 place-items-center rounded-xl bg-red-500/10 text-red-400">
               <AlertTriangle className="h-5 w-5" />
@@ -262,7 +263,7 @@ export default function RiderActive() {
               {decline.isPending ? <Loader className="h-4 w-4 border-white/30 border-t-white" /> : "Confirm decline"}
             </button>
           </div>
-        </div>
+        </DialogPanel>
       </div>
     )}
     </>

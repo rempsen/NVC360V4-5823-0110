@@ -1,6 +1,16 @@
 import { QueryClient, MutationCache, QueryCache } from "@tanstack/react-query";
 import { ApiError, errorMessage } from "./api-error";
 import { toast } from "../components/toast";
+import { reportError } from "./sentry";
+
+/**
+ * Only server faults and unexpected exceptions go to Sentry. A 400/401/404 is
+ * the API working correctly and is already shown to the user as a toast.
+ */
+function reportIfOurFault(error: unknown, context: Record<string, unknown>) {
+  if (error instanceof ApiError && error.status < 500) return;
+  reportError(error, context);
+}
 
 /**
  * The app's ONE QueryClient.
@@ -64,7 +74,7 @@ export const queryClient = new QueryClient({
       // key de-dupes a burst of identical failures into one toast.
       toast({ kind: "error", message: msg, detail, key: `mut:${msg}` });
 
-      console.error("[mutation] failed", error);
+      reportIfOurFault(error, { kind: "mutation" });
     },
   }),
 
@@ -82,7 +92,7 @@ export const queryClient = new QueryClient({
         message: `Couldn't load data — ${errorMessage(error)}`,
         key: `qry:${String(query.queryHash)}`,
       });
-      console.error("[query] failed", query.queryHash, error);
+      reportIfOurFault(error, { kind: "query", queryHash: String(query.queryHash) });
     },
   }),
 });

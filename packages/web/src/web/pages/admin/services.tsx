@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { DialogPanel } from "../../components/dialog-panel";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { FullLoader } from "../../components/loader";
@@ -127,7 +128,7 @@ function ServiceModal({ svc, onClose, onDone }: { svc: Svc; onClose: () => void;
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4 backdrop-blur-sm" {...dismiss(onClose)}>
-      <div className="w-full max-w-lg rounded-2xl bg-ink-2 shadow-2xl">
+      <DialogPanel onClose={onClose} label={isEdit ? "Edit service" : "New service template"} className="w-full max-w-lg rounded-2xl bg-ink-2 shadow-2xl">
         <div className="flex items-center justify-between border-b border-white/5 px-5 py-4">
           <h3 className="font-bold text-white">{isEdit ? "Edit service" : "New template"}</h3>
           <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-lg text-slate-500 hover:bg-white/5">
@@ -170,7 +171,7 @@ function ServiceModal({ svc, onClose, onDone }: { svc: Svc; onClose: () => void;
             {save.isPending ? "Saving…" : "Save"}
           </button>
         </div>
-      </div>
+      </DialogPanel>
     </div>
   );
 }

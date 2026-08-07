@@ -1,7 +1,20 @@
-import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
+import { useDialog } from "../hooks/use-dialog";
 
+/**
+ * The app's modal.
+ *
+ * Accessibility (added in the platform review pass — the dialog previously had
+ * none of it) lives in `hooks/use-dialog.ts` so the dozen hand-rolled overlays
+ * elsewhere in the app can get identical behaviour: role/aria-modal/labelling,
+ * focus into the dialog on open and back to the opener on close, a Tab trap,
+ * topmost-only Escape, and a scroll lock.
+ *
+ * The backdrop is a plain div, not a <button>. A full-screen button is
+ * announced as a control and lands in the tab order ahead of the real ones;
+ * Escape and the header X are the accessible ways to dismiss.
+ */
 export function Modal({
   open,
   onClose,
@@ -19,16 +32,7 @@ export function Modal({
   footer?: React.ReactNode;
   size?: "sm" | "md" | "lg";
 }) {
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
-    };
-  }, [open, onClose]);
+  const { panelRef, dialogProps, titleId } = useDialog({ open, onClose });
 
   if (!open) return null;
   const maxW =
@@ -41,27 +45,32 @@ export function Modal({
     // invisibly behind it. Still below the nested modal-over-modal pattern
     // used elsewhere (z-[9999], e.g. a confirm dialog on top of a modal).
     <div className="fixed inset-0 z-[1050] flex items-end justify-center sm:items-center">
-      <button
-        type="button"
-        aria-label="Close dialog"
+      <div
+        aria-hidden="true"
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
         onClick={onClose}
       />
       <div
-        className={`relative z-10 flex max-h-[92vh] w-full ${maxW} flex-col overflow-hidden rounded-t-2xl border border-white/10 bg-ink-2 shadow-2xl sm:rounded-2xl`}
+        ref={panelRef}
+        {...dialogProps}
+        className={`relative z-10 flex max-h-[92vh] w-full ${maxW} flex-col overflow-hidden rounded-t-2xl border border-white/10 bg-ink-2 shadow-2xl outline-none sm:rounded-2xl`}
       >
         <div className="flex items-start justify-between gap-4 border-b border-white/5 px-5 py-4">
           <div className="min-w-0">
-            <h2 className="font-display text-lg font-bold text-white">{title}</h2>
+            <h2 id={titleId} className="font-display text-lg font-bold text-white">
+              {title}
+            </h2>
             {subtitle && (
               <p className="mt-0.5 text-sm text-slate-400">{subtitle}</p>
             )}
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-500 hover:bg-white/5 hover:text-white"
+            aria-label="Close dialog"
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-500 hover:bg-white/5 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
           >
-            <X className="h-4 w-4" />
+            <X className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
         <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { DialogPanel } from "../../components/dialog-panel";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
@@ -425,7 +426,7 @@ function ClientDrawer({ user, onClose }: { user: any; onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-[1000] flex justify-end">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" {...dismiss(onClose)} />
-      <div className="relative h-full w-full max-w-xl overflow-y-auto border-l border-white/10 bg-ink shadow-2xl">
+      <DialogPanel onClose={onClose} label={`Client details: ${user.name ?? ""}`} className="relative h-full w-full max-w-xl overflow-y-auto border-l border-white/10 bg-ink shadow-2xl">
         <div className="sticky top-0 z-10 flex items-center gap-3 border-b border-white/10 bg-ink/95 px-5 py-4 backdrop-blur">
           <span className="grid h-11 w-11 place-items-center rounded-full bg-brand/15 text-base font-extrabold text-cyan-glow">
             {user.name?.[0]?.toUpperCase() ?? "U"}
@@ -674,7 +675,7 @@ function ClientDrawer({ user, onClose }: { user: any; onClose: () => void }) {
 
           {tab === "files" && <AttachmentManager entityType="client" entityId={user.id} />}
         </div>
-      </div>
+      </DialogPanel>
 
       <WorkOrderModal
         open={viewJob !== null}
