@@ -138,12 +138,16 @@ async function buildSnapshot(b: typeof schema.bookings.$inferSelect) {
     eq(schema.jobPhotos.bookingId, b.id),
   );
   photoRows.sort((a, z) => Number(a.createdAt) - Number(z.createdAt));
-  const photos = photoRows.map((p) => ({
-    id: p.id,
-    url: p.url,
-    caption: p.caption,
-    at: p.createdAt,
-  }));
+  // Office-only shots (customerVisible = false) never reach this page.
+  const photos = photoRows
+    .filter((p) => p.customerVisible !== false)
+    .map((p) => ({
+      id: p.id,
+      url: p.url,
+      caption: p.caption,
+      phase: p.phase || "during",
+      at: p.createdAt,
+    }));
 
   // Materials/services used — WHAT was done, deliberately WITHOUT pricing.
   // Invoicing is out of scope; this is a record of work, not a bill.
@@ -182,6 +186,10 @@ async function buildSnapshot(b: typeof schema.bookings.$inferSelect) {
     timeline,
     photos,
     materials,
+    // customer's own sign-off, shown back to them on the permanent record
+    signature: b.signedAt
+      ? { url: b.signatureUrl, name: b.signatureName, at: b.signedAt }
+      : null,
     propertyLink,
     scheduledAt: b.scheduledAt,
     startedAt: b.startedAt,

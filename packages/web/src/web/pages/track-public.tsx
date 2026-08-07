@@ -25,6 +25,7 @@ import {
   CalendarCheck,
   UserCheck,
   Camera,
+  PenLine,
   Package,
   History,
   X,
@@ -131,6 +132,47 @@ function PhotoGallery({
   onPhoto: (url: string) => void;
 }) {
   if (!photos?.length) return null;
+
+  // Before/after is the whole point of job documentation — group it so the
+  // customer can see the difference at a glance instead of a flat pile.
+  const before = photos.filter((p: any) => p.phase === "before");
+  const after = photos.filter((p: any) => p.phase === "after");
+  const during = photos.filter((p: any) => p.phase !== "before" && p.phase !== "after");
+  const grouped = before.length > 0 || after.length > 0;
+
+  const Grid = ({ items }: { items: any[] }) => (
+    <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+      {items.map((p: any) => (
+        <button
+          key={p.id}
+          onClick={() => onPhoto(p.url)}
+          className="group relative overflow-hidden rounded-lg border border-white/10 transition hover:border-cyan-glow/50"
+        >
+          <img
+            src={p.url}
+            alt={p.caption || "Job photo"}
+            className="aspect-square w-full object-cover transition group-hover:scale-105"
+          />
+          {p.caption && (
+            <span className="absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/80 to-transparent px-1.5 pb-1 pt-4 text-left text-[10px] text-white/90">
+              {p.caption}
+            </span>
+          )}
+        </button>
+      ))}
+    </div>
+  );
+
+  const Section = ({ label, items }: { label: string; items: any[] }) =>
+    items.length ? (
+      <div>
+        <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+          {label} <span className="text-slate-600">({items.length})</span>
+        </p>
+        <Grid items={items} />
+      </div>
+    ) : null;
+
   return (
     <div className="nvc-card p-4">
       <div className="mb-3 flex items-center gap-2">
@@ -138,21 +180,35 @@ function PhotoGallery({
         <p className="font-bold text-white">Photos</p>
         <span className="text-xs text-slate-500">({photos.length})</span>
       </div>
-      <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-        {photos.map((p: any) => (
-          <button
-            key={p.id}
-            onClick={() => onPhoto(p.url)}
-            className="group relative overflow-hidden rounded-lg border border-white/10 transition hover:border-cyan-glow/50"
-          >
-            <img
-              src={p.url}
-              alt={p.caption || "Job photo"}
-              className="aspect-square w-full object-cover transition group-hover:scale-105"
-            />
-          </button>
-        ))}
+      {grouped ? (
+        <div className="space-y-4">
+          <Section label="Before" items={before} />
+          <Section label="During" items={during} />
+          <Section label="After" items={after} />
+        </div>
+      ) : (
+        <Grid items={photos} />
+      )}
+    </div>
+  );
+}
+
+// ─── Sign-off ─────────────────────────────────────────────────────────────────
+function SignOff({ signature }: { signature: any }) {
+  if (!signature?.url) return null;
+  return (
+    <div className="nvc-card p-4">
+      <div className="mb-3 flex items-center gap-2">
+        <PenLine className="h-4 w-4 text-cyan-glow" />
+        <p className="font-bold text-white">Sign-off</p>
       </div>
+      <div className="rounded-lg bg-white p-3">
+        <img src={signature.url} alt="Signature" className="mx-auto h-20 object-contain" />
+      </div>
+      <p className="mt-2 text-xs text-slate-500">
+        Signed by <span className="font-semibold text-slate-300">{signature.name}</span>
+        {signature.at ? ` · ${new Date(Number(signature.at)).toLocaleString()}` : ""}
+      </p>
     </div>
   );
 }
@@ -803,6 +859,7 @@ export default function TrackPublic() {
             <JobTimeline events={timeline} onPhoto={setLightbox} />
             <PhotoGallery photos={photos} onPhoto={setLightbox} />
             <MaterialsUsed materials={materials} />
+            <SignOff signature={data.signature} />
 
             {/* ── Property hub ── */}
             {data.propertyLink && (

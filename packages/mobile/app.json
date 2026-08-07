@@ -38,6 +38,7 @@
         ],
         "NSLocationAlwaysAndWhenInUseUsageDescription": "NVC360 shares your live location with dispatch while you are on shift so customers can be given accurate ETAs.",
         "NSLocationWhenInUseUsageDescription": "NVC360 shares your live location during active jobs.",
+        "NSMicrophoneUsageDescription": "NVC360 records short voice notes so you can dictate job details to the office instead of typing on site.",
         "NSFaceIDUsageDescription": "NVC360 uses Face ID to quickly and securely unlock the app.",
         "ITSAppUsesNonExemptEncryption": false
       },
@@ -90,7 +91,8 @@
           "enablePushNotifications": true
         }
       ],
-      "@sentry/react-native"
+      "@sentry/react-native",
+      "expo-audio"
     ],
     "runtimeVersion": "1.0.1",
     "updates": {

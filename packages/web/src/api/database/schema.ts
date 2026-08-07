@@ -189,9 +189,17 @@ export const jobPhotos = sqliteTable("job_photos", {
   url: text("url").notNull(),
   caption: text("caption").notNull().default(""),
   source: text("source").notNull().default("companycam"), // companycam | upload
+  // Liability documentation: which stage of the job this shot documents.
+  // before | during | after | signature
+  phase: text("phase").notNull().default("during"),
+  // Whether the homeowner sees it on /t/:token and the permanent record.
+  // Defaults on — techs can mark a shot internal (e.g. a damaged part close-up
+  // the office wants but the customer shouldn't be alarmed by).
+  customerVisible: integer("customer_visible", { mode: "boolean" }).notNull().default(true),
   createdAt: now(),
 }, (t) => ({
   companyIdx: index("jobphoto_company_idx").on(t.companyId),
+  phaseIdx: index("jobphoto_phase_idx").on(t.bookingId, t.phase),
 }));
 
 /** A booking / appointment */
@@ -223,6 +231,10 @@ export const bookings = sqliteTable("bookings", {
   notes: text("notes").notNull().default(""),
   staffNotes: text("staff_notes").notNull().default(""), // internal notes to driver/technician only (not shown to customer)
   driverNotes: text("driver_notes").notNull().default(""), // field notes written by driver/tech on site (visible to office)
+  // --- sign-off (captured on site by the tech, on the customer's behalf) ---
+  signatureUrl: text("signature_url").notNull().default(""), // stored SVG/PNG of the drawn signature
+  signatureName: text("signature_name").notNull().default(""), // printed name of whoever signed
+  signedAt: integer("signed_at", { mode: "timestamp_ms" }),
   // JSON: filled template fields + checklist state
   fieldData: text("field_data").notNull().default("{}"),
   checklistState: text("checklist_state").notNull().default("[]"),

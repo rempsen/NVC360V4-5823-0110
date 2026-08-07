@@ -15,6 +15,8 @@ import {
   GripVertical,
   X,
   Camera,
+  FileText,
+  Mic,
   ImageIcon,
   Loader2,
   List,
@@ -1302,8 +1304,9 @@ export function WorkOrderModal({
 
       {/* ── Job Photos (only visible when editing an existing booking) ── */}
       {isEdit && editBooking?.id && (
-        <div className="mt-4">
+        <div className="mt-4 space-y-4">
           <JobPhotosPanel bookingId={editBooking.id} />
+          <FieldRecordPanel bookingId={editBooking.id} />
         </div>
       )}
 
@@ -1407,6 +1410,80 @@ function TimeMileagePanel({ booking }: { booking: any }) {
   );
 }
 
+// ─── Field Record Panel ──────────────────────────────────────────────────────
+// The office-side view of what was documented on site: the customer's
+// signature and any voice notes the tech dictated (with transcript + audio).
+// Voice notes are internal — they never appear on a customer-facing surface.
+
+function FieldRecordPanel({ bookingId }: { bookingId: string }) {
+  const q = useQuery({
+    queryKey: ["job-events", bookingId],
+    queryFn: async () => {
+      const res = await fetch(`/api/bookings/${bookingId}/events`, { headers: apiHeaders() });
+      if (!res.ok) return { events: [], signature: null };
+      return (await res.json()) as {
+        events: Array<{ id: string; kind: string; label: string; detail?: string; actorName?: string; createdAt?: any; meta?: any }>;
+        signature: { url: string; name: string; at: any } | null;
+      };
+    },
+    refetchInterval: 20000,
+  });
+
+  const sig = q.data?.signature ?? null;
+  const voice = (q.data?.events ?? []).filter((e) => e.kind === "voice_note");
+  if (!sig && voice.length === 0) return null;
+
+  return (
+    <div className="space-y-3">
+      {sig && (
+        <div>
+          <p className="mb-1.5 text-sm font-semibold text-white flex items-center gap-2">
+            <FileText className="h-4 w-4 text-brand" /> Customer sign-off
+          </p>
+          <div className="rounded-xl border border-white/10 bg-white p-3">
+            <img src={sig.url} alt="Customer signature" className="mx-auto h-20 object-contain" />
+          </div>
+          <p className="mt-1.5 text-xs text-slate-500">
+            {sig.name}
+            {sig.at ? ` · ${new Date(Number(sig.at)).toLocaleString()}` : ""}
+          </p>
+        </div>
+      )}
+
+      {voice.length > 0 && (
+        <div>
+          <p className="mb-1.5 text-sm font-semibold text-white flex items-center gap-2">
+            <Mic className="h-4 w-4 text-brand" /> Voice notes
+            <span className="ml-1 rounded-full bg-brand/20 px-2 py-0.5 text-[10px] font-bold text-brand">
+              {voice.length}
+            </span>
+            <span className="text-[10px] font-normal text-slate-500">internal only</span>
+          </p>
+          <div className="space-y-2">
+            {voice.map((e) => (
+              <div key={e.id} className="rounded-xl border border-white/10 bg-ink-3 p-2.5">
+                <div className="mb-1.5 flex items-center justify-between text-[11px] text-slate-500">
+                  <span>{e.actorName || "Technician"}</span>
+                  <span>{e.createdAt ? new Date(Number(e.createdAt)).toLocaleString() : ""}</span>
+                </div>
+                {e.meta?.url && (
+                  // eslint-disable-next-line jsx-a11y/media-has-caption
+                  <audio controls src={e.meta.url} className="w-full" />
+                )}
+                {e.detail ? (
+                  <p className="mt-2 whitespace-pre-wrap text-xs text-slate-300">{e.detail}</p>
+                ) : (
+                  <p className="mt-2 text-xs italic text-slate-600">No transcript — play the recording.</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Job Photos Panel ────────────────────────────────────────────────────────
 
 function JobPhotosPanel({ bookingId }: { bookingId: string }) {
@@ -1414,13 +1491,19 @@ function JobPhotosPanel({ bookingId }: { bookingId: string }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [lightbox, setLightbox] = useState<string | null>(null);
+  // Which stage the next upload documents. Before/after is what makes these
+  // photos usable as liability evidence.
+  const [phase, setPhase] = useState<"before" | "during" | "after">("before");
 
   const photos = useQuery({
     queryKey: ["job-photos", bookingId],
     queryFn: async () => {
       const res = await fetch(`/api/bookings/${bookingId}/photos`, { headers: apiHeaders() });
       const data = await res.json();
-      return (data.photos ?? []) as Array<{ id: string; url: string; caption?: string; createdAt?: string }>;
+      return (data.photos ?? []) as Array<{
+        id: string; url: string; caption?: string; createdAt?: string;
+        phase?: string; customerVisible?: boolean;
+      }>;
     },
     refetchInterval: 15000, // poll every 15s so new driver photos appear
   });
@@ -1431,6 +1514,7 @@ function JobPhotosPanel({ bookingId }: { bookingId: string }) {
       const fd = new FormData();
       fd.append("file", file);
       fd.append("caption", "");
+      fd.append("phase", phase);
       await fetch(`/api/bookings/${bookingId}/photos`, {
         method: "POST",
         headers: apiHeaders(),
@@ -1459,6 +1543,21 @@ function JobPhotosPanel({ bookingId }: { bookingId: string }) {
           </p>
           <p className="text-xs text-slate-500">Photos uploaded by the technician in the field</p>
         </div>
+        <div className="flex items-center gap-2">
+          <div className="flex overflow-hidden rounded-lg border border-white/10">
+            {(["before", "during", "after"] as const).map((ph) => (
+              <button
+                key={ph}
+                type="button"
+                onClick={() => setPhase(ph)}
+                className={`px-2 py-1.5 text-[11px] font-semibold capitalize transition ${
+                  phase === ph ? "bg-brand/20 text-brand" : "text-slate-400 hover:bg-white/5"
+                }`}
+              >
+                {ph}
+              </button>
+            ))}
+          </div>
         <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs font-semibold text-slate-300 hover:bg-white/10">
           {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
           {uploading ? "Uploading…" : "Add photo"}
@@ -1472,6 +1571,7 @@ function JobPhotosPanel({ bookingId }: { bookingId: string }) {
             disabled={uploading}
           />
         </label>
+        </div>
       </div>
 
       {list.length === 0 ? (
@@ -1480,26 +1580,46 @@ function JobPhotosPanel({ bookingId }: { bookingId: string }) {
           No photos yet — technician photos will appear here automatically.
         </div>
       ) : (
-        <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">
-          {list.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              onClick={() => setLightbox(p.url)}
-              className="group relative aspect-square overflow-hidden rounded-lg border border-white/10 bg-ink-3 hover:border-brand/40"
-            >
-              <img
-                src={p.url}
-                alt={p.caption || "Job photo"}
-                className="h-full w-full object-cover transition-transform group-hover:scale-105"
-              />
-              {p.caption && (
-                <div className="absolute bottom-0 left-0 right-0 bg-black/60 px-1 py-0.5 text-[9px] text-white truncate">
-                  {p.caption}
+        <div className="space-y-3">
+          {(["before", "during", "after"] as const).map((ph) => {
+            const group = list.filter((p) =>
+              ph === "during" ? !p.phase || p.phase === "during" : p.phase === ph,
+            );
+            if (!group.length) return null;
+            return (
+              <div key={ph}>
+                <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                  {ph} <span className="text-slate-600">({group.length})</span>
+                </p>
+                <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">
+                  {group.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => setLightbox(p.url)}
+                      className="group relative aspect-square overflow-hidden rounded-lg border border-white/10 bg-ink-3 hover:border-brand/40"
+                    >
+                      <img
+                        src={p.url}
+                        alt={p.caption || "Job photo"}
+                        className="h-full w-full object-cover transition-transform group-hover:scale-105"
+                      />
+                      {p.customerVisible === false && (
+                        <span className="absolute right-1 top-1 rounded bg-black/70 px-1 text-[8px] font-bold uppercase text-amber-warn">
+                          Internal
+                        </span>
+                      )}
+                      {p.caption && (
+                        <div className="absolute bottom-0 left-0 right-0 bg-black/60 px-1 py-0.5 text-[9px] text-white truncate">
+                          {p.caption}
+                        </div>
+                      )}
+                    </button>
+                  ))}
                 </div>
-              )}
-            </button>
-          ))}
+              </div>
+            );
+          })}
         </div>
       )}
 

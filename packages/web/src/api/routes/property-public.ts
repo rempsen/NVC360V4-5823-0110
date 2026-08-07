@@ -109,12 +109,15 @@ export const propertyPublicRoutes = new Hono()
           techName,
           onSiteMinutes: b.onSiteMinutes,
           materials,
-          photos: photoRows.map((p) => ({
-            id: p.id,
-            url: p.url,
-            caption: p.caption,
-            at: p.createdAt,
-          })),
+          photos: photoRows
+            .filter((p) => p.customerVisible !== false)
+            .map((p) => ({
+              id: p.id,
+              url: p.url,
+              caption: p.caption,
+              phase: p.phase || "during",
+              at: p.createdAt,
+            })),
           // deep link back to the permanent record for that individual job
           recordUrl: trackingUrl(b.publicToken),
         };

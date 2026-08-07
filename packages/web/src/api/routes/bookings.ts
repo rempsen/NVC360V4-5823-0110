@@ -16,9 +16,41 @@ import { incr } from "../lib/metrics";
 import { publishTrack } from "../../services/realtime";
 import { isInAnyZone } from "../../shared/zone-utils";
 import { linkBookingToProperty } from "../../services/properties";
-import { logJobEvent } from "../../services/job-events";
+import { logJobEvent, jobTimeline } from "../../services/job-events";
 
 type SessionUser = { id: string; role?: string; email: string; name: string };
+
+/**
+ * Best-effort speech-to-text for tech voice notes. Uses the AI gateway's
+ * OpenAI-compatible transcription endpoint when configured. Returns "" on any
+ * failure — the audio itself is always kept, the transcript is a convenience.
+ */
+async function transcribeAudio(
+  bytes: Buffer,
+  filename: string,
+  mime?: string,
+): Promise<string> {
+  const base = process.env.AI_GATEWAY_BASE_URL;
+  const key = process.env.AI_GATEWAY_API_KEY;
+  if (!base || !key) return "";
+  try {
+    const fd = new FormData();
+    fd.append("file", new Blob([new Uint8Array(bytes)], { type: mime || "audio/m4a" }), filename);
+    fd.append("model", process.env.AI_TRANSCRIBE_MODEL || "openai/whisper-1");
+    const res = await fetch(`${base.replace(/\/$/, "")}/audio/transcriptions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}` },
+      body: fd,
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!res.ok) return "";
+    const json = (await res.json()) as { text?: string };
+    return String(json?.text || "").trim();
+  } catch (e) {
+    console.error("[voice-note] transcription failed", e);
+    return "";
+  }
+}
 
 /**
  * Convert a Form Builder template's `fields` (text/number/checkbox/select/
@@ -519,6 +551,11 @@ export const bookingsRoutes = new Hono()
     const form = await c.req.formData();
     const file = form.get("file");
     const caption = String(form.get("caption") || "");
+    // before | during | after — what stage of the job this shot documents.
+    const rawPhase = String(form.get("phase") || "during").toLowerCase();
+    const phase = ["before", "during", "after"].includes(rawPhase) ? rawPhase : "during";
+    // techs can mark a shot office-only (default: the homeowner sees it)
+    const customerVisible = String(form.get("customerVisible") ?? "true") !== "false";
     if (!(file instanceof File)) return c.json({ message: "No file" }, 400);
     if (file.size > 15 * 1024 * 1024) return c.json({ message: "Image too large (max 15MB)" }, 400);
     const ALLOWED = ["image/jpeg", "image/png", "image/webp"];
@@ -536,6 +573,8 @@ export const bookingsRoutes = new Hono()
       url: stored.url,
       caption,
       source: "upload",
+      phase,
+      customerVisible,
     });
     // Timeline entry so the photo shows up in the customer's job history and
     // permanent record, not just the admin gallery.
@@ -546,8 +585,12 @@ export const bookingsRoutes = new Hono()
       kind: "photo_added",
       actorRole: "tech",
       actorName: me?.name || "",
-      label: caption ? `Photo added — ${caption}` : "Photo added",
-      meta: { photoId: p.id, url: stored.url, caption },
+      label: caption
+        ? `${phase === "before" ? "Before" : phase === "after" ? "After" : "Job"} photo — ${caption}`
+        : `${phase === "before" ? "Before" : phase === "after" ? "After" : "Job"} photo added`,
+      meta: { photoId: p.id, url: stored.url, caption, phase },
+      // an office-only photo must not surface a timeline entry to the customer
+      customerVisible: customerVisible ? undefined : false,
     });
 
     // Notify dispatch in real-time so the office sees the new photo immediately
@@ -559,6 +602,146 @@ export const bookingsRoutes = new Hono()
       });
     }
     return c.json({ photo: p }, 201);
+  })
+  // ── Full internal timeline for the office (includes hidden events) ───────
+  // GET /api/bookings/:id/events
+  .get("/:id/events", requireAuth, async (c) => {
+    const id = c.req.param("id");
+    const b = await tx(c).selectOne(schema.bookings, eq(schema.bookings.id, id));
+    if (!b) return c.json({ message: "Not found" }, 404);
+    const events = await jobTimeline(id, { onlyCustomerVisible: false });
+    return c.json(
+      {
+        events,
+        signature: b.signedAt
+          ? { url: b.signatureUrl, name: b.signatureName, at: b.signedAt }
+          : null,
+      },
+      200,
+    );
+  })
+  // ── Customer sign-off (tech captures on site) ────────────────────────────
+  // POST /api/bookings/:id/signature
+  //   { strokes: [[[x,y],...], ...], width, height, name }  ← drawn on device
+  // Strokes are rendered to an SVG server-side and stored like any other job
+  // asset. Drawing is sent as points rather than a rasterised image so the
+  // mobile app needs no native canvas/webview dependency (ships over-the-air).
+  .post("/:id/signature", requireAuth, async (c) => {
+    const id = c.req.param("id");
+    const t = tx(c);
+    const b = await t.selectOne(schema.bookings, eq(schema.bookings.id, id));
+    if (!b) return c.json({ message: "Not found" }, 404);
+
+    const body = (await c.req.json()) as {
+      strokes?: number[][][];
+      width?: number;
+      height?: number;
+      name?: string;
+    };
+    const strokes = Array.isArray(body.strokes) ? body.strokes : [];
+    const name = String(body.name || "").trim();
+    if (!strokes.length) return c.json({ message: "Signature is empty" }, 400);
+    if (!name) return c.json({ message: "Printed name is required" }, 400);
+    // guard against a runaway payload
+    const points = strokes.reduce((n, s) => n + (Array.isArray(s) ? s.length : 0), 0);
+    if (points > 20000) return c.json({ message: "Signature too large" }, 400);
+
+    const w = Math.max(1, Math.round(Number(body.width) || 600));
+    const h = Math.max(1, Math.round(Number(body.height) || 200));
+    const paths = strokes
+      .filter((s) => Array.isArray(s) && s.length > 0)
+      .map((s) => {
+        const d = s
+          .map((pt, i) => {
+            const x = Math.round((Number(pt?.[0]) || 0) * 100) / 100;
+            const y = Math.round((Number(pt?.[1]) || 0) * 100) / 100;
+            return `${i === 0 ? "M" : "L"}${x} ${y}`;
+          })
+          .join(" ");
+        return `<path d="${d}" fill="none" stroke="#0f172a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`;
+      })
+      .join("");
+    const svg =
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">` +
+      `<rect width="100%" height="100%" fill="#ffffff"/>${paths}</svg>`;
+
+    const stored = await putObject(
+      `signatures/${id}/${crypto.randomUUID()}.svg`,
+      Buffer.from(svg, "utf8"),
+      "image/svg+xml",
+    );
+    const signedAt = new Date();
+    await t.update(
+      schema.bookings,
+      { signatureUrl: stored.url, signatureName: name, signedAt },
+      eq(schema.bookings.id, id),
+    );
+
+    const me = c.get("user") as SessionUser;
+    await logJobEvent({
+      companyId: b.companyId,
+      bookingId: id,
+      kind: "signature_captured",
+      actorRole: "tech",
+      actorName: me?.name || "",
+      label: `Signed off by ${name}`,
+      meta: { url: stored.url, name },
+    });
+    if (b.publicToken) {
+      void publishTrack({
+        type: "status",
+        token: b.publicToken,
+        data: { event: "signature_captured", bookingId: id },
+      });
+    }
+    return c.json({ signatureUrl: stored.url, signatureName: name, signedAt }, 201);
+  })
+  // ── Voice note (tech dictates, office reads) ─────────────────────────────
+  // POST /api/bookings/:id/voice-note   multipart: file, optional transcript
+  // Office-only: stored as an internal job event and appended to driverNotes.
+  // Never customer-visible.
+  .post("/:id/voice-note", requireAuth, async (c) => {
+    const id = c.req.param("id");
+    const t = tx(c);
+    const b = await t.selectOne(schema.bookings, eq(schema.bookings.id, id));
+    if (!b) return c.json({ message: "Not found" }, 404);
+
+    const form = await c.req.formData();
+    const file = form.get("file");
+    if (!(file instanceof File)) return c.json({ message: "No file" }, 400);
+    if (file.size > 25 * 1024 * 1024) return c.json({ message: "Recording too long (max 25MB)" }, 400);
+    const secs = Math.max(0, Math.round(Number(form.get("durationSecs")) || 0));
+    const bytes = Buffer.from(await file.arrayBuffer());
+    const ext = (file.name.split(".").pop() || "m4a").toLowerCase().slice(0, 8);
+    const stored = await putObject(
+      `voice-notes/${id}/${crypto.randomUUID()}.${ext}`,
+      bytes,
+      file.type || "audio/m4a",
+    );
+
+    // Client may transcribe on-device; otherwise try the gateway. Both are
+    // best-effort — a failed transcript must never lose the recording.
+    let transcript = String(form.get("transcript") || "").trim();
+    if (!transcript) transcript = await transcribeAudio(bytes, file.name || `note.${ext}`, file.type);
+
+    const me = c.get("user") as SessionUser;
+    const stamp = new Date().toLocaleString("en-CA", { dateStyle: "medium", timeStyle: "short" });
+    if (transcript) {
+      const line = `[Voice note — ${me?.name || "Tech"}, ${stamp}] ${transcript}`;
+      const next = b.driverNotes ? `${b.driverNotes}\n${line}` : line;
+      await t.update(schema.bookings, { driverNotes: next }, eq(schema.bookings.id, id));
+    }
+    await logJobEvent({
+      companyId: b.companyId,
+      bookingId: id,
+      kind: "voice_note",
+      actorRole: "tech",
+      actorName: me?.name || "",
+      label: transcript ? `Voice note: ${transcript.slice(0, 120)}` : "Voice note recorded",
+      detail: transcript,
+      meta: { url: stored.url, durationSecs: secs, transcribed: !!transcript },
+    });
+    return c.json({ url: stored.url, transcript, durationSecs: secs }, 201);
   })
   // ── Checklist toggle (tech) ──────────────────────────────────────────────
   // PATCH /api/bookings/:id/checklist { index: number, done: boolean }

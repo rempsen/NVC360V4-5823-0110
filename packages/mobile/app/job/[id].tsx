@@ -44,6 +44,9 @@ import {
   CheckCircle,
   PencilSimple,
   Buildings,
+  Signature,
+  Microphone,
+  Stop,
 } from "phosphor-react-native";
 import { api } from "../../lib/api";
 import { useCustomerNoun, useJobNoun } from "../../lib/use-brand";
@@ -51,6 +54,8 @@ import { useLiveMessageSignal } from "../../lib/live-messages";
 import { getToken } from "../../lib/auth";
 import { C, money, fmtDate, assetUrl } from "../../lib/theme";
 import { StatusBadge, Button, FullLoader } from "../../components/ui";
+import { SignaturePad } from "../../components/signature-pad";
+import { isVoiceNoteSupported, startVoiceNote, uploadVoiceNote, type Recording } from "../../lib/voice-note";
 
 const API = ((Constants.expoConfig?.extra?.apiUrl as string) ?? "").replace(/\/$/, "");
 
@@ -97,6 +102,13 @@ export default function JobDetail() {
   const [dispatchExpanded, setDispatchExpanded] = useState(false);
   const [customerExpanded, setCustomerExpanded] = useState(false);
   const [driverNoteExpanded, setDriverNoteExpanded] = useState(false);
+  // Job documentation: which stage the next photo documents, sign-off, voice
+  const [photoPhase, setPhotoPhase] = useState<"before" | "during" | "after">("before");
+  const [sigExpanded, setSigExpanded] = useState(false);
+  const [savingSig, setSavingSig] = useState(false);
+  const [recording, setRecording] = useState<Recording | null>(null);
+  const [voiceBusy, setVoiceBusy] = useState(false);
+  const voiceSupported = isVoiceNoteSupported();
 
   const job = useQuery({
     queryKey: ["job", id],
@@ -314,7 +326,7 @@ export default function JobDetail() {
     [job.data],
   );
 
-  async function capturePhoto() {
+  async function capturePhoto(phase: "before" | "during" | "after" = photoPhase) {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) {
       Alert.alert("Camera needed", "Allow camera to attach job photos.");
@@ -331,6 +343,9 @@ export default function JobDetail() {
         name: asset.fileName || "job.jpg",
         type: asset.mimeType || "image/jpeg",
       } as any);
+      // Tag the stage this shot documents — before/after is what makes the
+      // photo set usable as proof of condition later.
+      form.append("phase", phase);
       const res = await fetch(`${API}/api/bookings/${id}/photos`, {
         method: "POST",
         headers: { Authorization: `Bearer ${getToken()}` },
@@ -343,6 +358,71 @@ export default function JobDetail() {
     } finally {
       setUploading(false);
     }
+  }
+
+  // ── Customer sign-off ──────────────────────────────────────────────────────
+  // Strokes go to the API as points; the server renders and stores the SVG.
+  async function submitSignature(payload: {
+    strokes: number[][][];
+    width: number;
+    height: number;
+    name: string;
+  }) {
+    setSavingSig(true);
+    try {
+      const res = await fetch(`${API}/api/bookings/${id}/signature`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.message || "Save failed");
+      await qc.invalidateQueries({ queryKey: ["job", id] });
+      setSigExpanded(false);
+      Alert.alert("Signed", "Sign-off saved to the job record.");
+    } catch (e: any) {
+      Alert.alert("Couldn't save signature", e?.message || "Try again");
+    } finally {
+      setSavingSig(false);
+    }
+  }
+
+  // ── Voice note ─────────────────────────────────────────────────────────────
+  async function toggleVoiceNote() {
+    if (recording) {
+      setVoiceBusy(true);
+      try {
+        const out = await recording.stop();
+        setRecording(null);
+        if (!out) {
+          Alert.alert("Nothing recorded", "Try again.");
+          return;
+        }
+        const up = await uploadVoiceNote({
+          api: API,
+          token: getToken() || "",
+          bookingId: id!,
+          uri: out.uri,
+          durationSecs: out.durationSecs,
+        });
+        if (!up.ok) throw new Error(up.error);
+        await qc.invalidateQueries({ queryKey: ["job", id] });
+        Alert.alert(
+          "Voice note sent",
+          up.transcript ? `Transcribed: "${up.transcript.slice(0, 140)}"` : "Sent to the office.",
+        );
+      } catch (e: any) {
+        Alert.alert("Voice note failed", e?.message || "Try again");
+      } finally {
+        setVoiceBusy(false);
+      }
+      return;
+    }
+    const rec = await startVoiceNote();
+    if (!rec) {
+      Alert.alert("Mic unavailable", "Allow microphone access to record voice notes.");
+      return;
+    }
+    setRecording(rec);
   }
 
   if (job.isLoading) return <FullLoader />;
@@ -839,27 +919,130 @@ export default function JobDetail() {
             </View>
           )}
 
-          {/* Photos */}
+          {/* Photos — tagged before / during / after so the set stands up as
+              proof of condition if the customer disputes anything later. */}
           <View style={s.block}>
             <View style={s.photoHead}>
               <Text style={s.blockTitle}>Photos</Text>
-              <Pressable onPress={capturePhoto} style={s.photoBtn} disabled={uploading} accessibilityRole="button" accessibilityLabel="Take photo">
+              <Pressable onPress={() => capturePhoto()} style={s.photoBtn} disabled={uploading} accessibilityRole="button" accessibilityLabel={`Take ${photoPhase} photo`}>
                 {uploading ? <ActivityIndicator color={C.brand} size="small" /> : <Camera color={C.brand} size={18} weight="fill" />}
-                <Text style={s.photoBtnTxt}>{uploading ? "Uploading…" : "Add photo"}</Text>
+                <Text style={s.photoBtnTxt}>{uploading ? "Uploading…" : `Add ${photoPhase} photo`}</Text>
               </Pressable>
             </View>
+
+            <View style={s.phaseRow}>
+              {(["before", "during", "after"] as const).map((ph) => (
+                <Pressable
+                  key={ph}
+                  onPress={() => setPhotoPhase(ph)}
+                  style={[s.phaseChip, photoPhase === ph && s.phaseChipOn]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Tag next photo as ${ph}`}
+                  accessibilityState={{ selected: photoPhase === ph }}
+                >
+                  <Text style={[s.phaseTxt, photoPhase === ph && s.phaseTxtOn]}>
+                    {ph[0]!.toUpperCase() + ph.slice(1)}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+
             {(photos.data?.length ?? 0) > 0 ? (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 10 }}>
-                <View style={{ flexDirection: "row", gap: 10 }}>
-                  {photos.data!.map((p) => (
-                    <Image key={p.id} source={{ uri: assetUrl(p.url) }} style={s.thumb} />
-                  ))}
-                </View>
-              </ScrollView>
+              (["before", "during", "after"] as const).map((ph) => {
+                const group = (photos.data ?? []).filter((p: any) =>
+                  ph === "during" ? !p.phase || p.phase === "during" : p.phase === ph,
+                );
+                if (!group.length) return null;
+                return (
+                  <View key={ph} style={{ marginTop: 10 }}>
+                    <Text style={s.phaseLabel}>{ph.toUpperCase()} ({group.length})</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 6 }}>
+                      <View style={{ flexDirection: "row", gap: 10 }}>
+                        {group.map((p: any) => (
+                          <Image key={p.id} source={{ uri: assetUrl(p.url) }} style={s.thumb} />
+                        ))}
+                      </View>
+                    </ScrollView>
+                  </View>
+                );
+              })
             ) : (
               <Text style={s.emptyPhoto}>No photos yet. Capture before/after shots.</Text>
             )}
           </View>
+
+          {/* ─── Customer sign-off ──────────────────────────────────────── */}
+          <View style={s.block}>
+            <Pressable
+              style={s.collapsibleHeader}
+              onPress={() => setSigExpanded((v) => !v)}
+              accessibilityRole="button"
+              accessibilityLabel="Customer sign-off"
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Signature color={C.brand} size={16} weight="fill" />
+                <Text style={s.blockTitle}>Customer sign-off</Text>
+                {!!j.signedAt && (
+                  <View style={[s.unreadBadge, { backgroundColor: C.greenBg, borderColor: C.green }]}>
+                    <Text style={[s.unreadTxt, { color: C.green }]}>signed</Text>
+                  </View>
+                )}
+              </View>
+              {sigExpanded ? <CaretUp color={C.muted} size={14} /> : <CaretDown color={C.muted} size={14} />}
+            </Pressable>
+
+            {!!j.signedAt && (
+              <Text style={s.sigMeta}>
+                Signed by {j.signatureName || "customer"} · {fmtDate(j.signedAt)}
+              </Text>
+            )}
+
+            {sigExpanded && (
+              <View style={{ marginTop: 10 }}>
+                <SignaturePad
+                  submitting={savingSig}
+                  onSubmit={submitSignature}
+                  colors={{ bg: C.bg, card: C.bg3, text: C.text, muted: C.muted, brand: C.brand, line: C.border }}
+                />
+              </View>
+            )}
+          </View>
+
+          {/* ─── Voice note (office-only) ───────────────────────────────── */}
+          {voiceSupported && (
+            <View style={s.block}>
+              <View style={s.photoHead}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <Microphone color={recording ? C.red : C.brand} size={16} weight="fill" />
+                  <Text style={s.blockTitle}>Voice note</Text>
+                  <Text style={s.internalTag}>office only</Text>
+                </View>
+                <Pressable
+                  onPress={toggleVoiceNote}
+                  disabled={voiceBusy}
+                  style={s.photoBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel={recording ? "Stop recording and send voice note" : "Start recording a voice note"}
+                >
+                  {voiceBusy ? (
+                    <ActivityIndicator color={C.brand} size="small" />
+                  ) : recording ? (
+                    <Stop color={C.red} size={18} weight="fill" />
+                  ) : (
+                    <Microphone color={C.brand} size={18} weight="fill" />
+                  )}
+                  <Text style={[s.photoBtnTxt, recording && { color: C.red }]}>
+                    {voiceBusy ? "Sending…" : recording ? "Stop & send" : "Record"}
+                  </Text>
+                </Pressable>
+              </View>
+              <Text style={s.emptyPhoto}>
+                {recording
+                  ? "Recording… tap Stop & send when you're done."
+                  : "Dictate instead of typing — it's transcribed into your field notes."}
+              </Text>
+            </View>
+          )}
 
           {/* ─── Driver Field Notes → Office ─────────────────────────── */}
           <View style={[s.block, s.driverNoteBlock]}>
@@ -1260,6 +1443,14 @@ const s = StyleSheet.create({
   requiredPillTxt: { color: C.brand, fontSize: 10, fontWeight: "700", textTransform: "uppercase" },
   checkProgress: { color: C.muted, fontSize: 12, fontWeight: "700" },
   photoHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  phaseRow: { flexDirection: "row", gap: 8, marginTop: 10 },
+  phaseChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: C.border },
+  phaseChipOn: { backgroundColor: "rgba(14,165,233,0.16)", borderColor: C.brand },
+  phaseTxt: { color: C.muted, fontSize: 12, fontWeight: "700" },
+  phaseTxtOn: { color: C.brand },
+  phaseLabel: { color: C.muted, fontSize: 10, fontWeight: "800", letterSpacing: 0.8 },
+  sigMeta: { color: C.sub, fontSize: 12, marginTop: 6 },
+  internalTag: { color: C.muted, fontSize: 10, fontWeight: "700" },
   photoBtn: { flexDirection: "row", alignItems: "center", gap: 6 },
   photoBtnTxt: { color: C.brand, fontSize: 13, fontWeight: "700" },
   thumb: { width: 96, height: 96, borderRadius: 12, backgroundColor: C.bg3 },

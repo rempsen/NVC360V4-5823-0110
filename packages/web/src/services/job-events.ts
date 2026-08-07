@@ -29,6 +29,7 @@ export type JobEventKind =
   | "photo_added"
   | "signature_captured"
   | "note_added"
+  | "voice_note"
   | "checklist_completed"
   | "message"
   | "review_submitted";
@@ -53,6 +54,8 @@ const EVENT_POLICY: Record<JobEventKind, { visible: boolean; label: string }> = 
   signature_captured: { visible: true, label: "Sign-off captured" },
   // field notes are written for the office, not the client
   note_added: { visible: false, label: "Note added" },
+  // voice notes are the tech dictating for the office — never customer-facing
+  voice_note: { visible: false, label: "Voice note recorded" },
   checklist_completed: { visible: true, label: "Checklist step completed" },
   message: { visible: false, label: "Message sent" },
   review_submitted: { visible: false, label: "Review submitted" },
