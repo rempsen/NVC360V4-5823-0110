@@ -42,10 +42,41 @@ job-report.tsx:46 · scheduler.tsx:124 · options-catalog.tsx:90,106,232 ·
 settings.tsx:54 · services.tsx:79 · bookings.tsx:446,795 · catalog.tsx:205 ·
 intake-forms.tsx:320
 
-## Fix 8 — extend validate.ts to remaining raw c.req.json() sites  ⬜ TODO
-~91 across 42 route files. Priority by count: notif-config(12), bookings(11),
-team/option-catalog/messages/catalog/admin(4 each), tags/superadmin/riders/
-public-forms/integrations/custom-fields(3 each).
+## Fix 8 — extend validate.ts to remaining raw c.req.json() sites  🟡 IN PROGRESS
+Done so far:
+- money/scheduling/public routes (commit 2759dcd, verify-fix8.ts 53/53)
+- identity routes: team, riders, invites, api-keys (commit f6ae037,
+  verify-fix9.ts 80/80)
+- notif-config (12 bodies) + email designer/channels/webhooks/domains
+  (verify-fix10.ts 106/106)
+New shared primitives in validate.ts: hhmm(), hexColor(), bool(),
+outboundUrl() — outboundUrl blocks non-http schemes (stored XSS) and
+loopback/link-local/RFC1918 hosts (SSRF via the webhook test-ping).
+Still raw: option-catalog(4), messages(4), admin(4), tags/superadmin/
+integrations/custom-fields(3 each), track/templates/shifts/notifications/
+maintenance/forms/fleet/automation(2 each), plus ~12 files with 1.
+
+### Gotcha learned here
+The Channels tab PATCHes the WHOLE settings row on save, so any min-length
+rule on a field that is legitimately blank in live data (smsFromNumber,
+smsSenderId, emailFromName) would 400 the entire Save button. Those are
+length-capped only. Always replay the real frontend payload, not just probes.
+
+## Frontend crash sweep  ✅ NEW (packages/web/crash-sweep.py)
+Found: the Channels tab of /admin/notifications was completely dead for every
+admin — useIndustryNotificationGuidance() was called AFTER the loading
+early-return, so React threw "Rendered more hooks than during the previous
+render" and the tab rendered the error boundary. tsc, the build and the API
+tests could not see it; only rendering the page could. Hook moved above the
+return. crash-sweep.py now walks 16 admin pages + every in-page tab in real
+Chrome and fails on any error boundary or uncaught page error: ALL CLEAN.
+
+## Known data issue (not code)
+The stored email header logo (notification_channels.emailLogoUrl ->
+/api/public/file/email-logos/...png) 404s — the object predates S3 and was
+lost with the ephemeral local disk. Dan needs to re-upload it in
+Notifications -> Channels, otherwise notification emails render a broken
+image.
 
 ## Mobile / responsive viewport pass  ✅ DONE (commit 8b840a5)
 Audited with `packages/web/audit-responsive.py` (Playwright, real 390px + 768px

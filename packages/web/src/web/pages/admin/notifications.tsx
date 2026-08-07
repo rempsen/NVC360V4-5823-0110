@@ -1016,6 +1016,12 @@ function Channels() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["notif-channels"] }); setSaved(true); setTimeout(() => setSaved(false), 1800); },
   });
 
+  // Every hook must run before the loading early-return below: this one used to
+  // sit further down, so the first (loading) render called fewer hooks than the
+  // loaded one and React threw "Rendered more hooks than during the previous
+  // render" — the whole Channels tab died into the error boundary.
+  const industryGuidance = useIndustryNotificationGuidance();
+
   if (cfg.isLoading) return <FullLoader label="Loading channel settings…" />;
   const data = (cfg.data as any)?.channels;
   const f = form ?? data;
@@ -1027,8 +1033,6 @@ function Channels() {
     { key: "smsEnabled", label: "SMS", icon: MessageSquare, desc: "Text messages via Twilio" },
     { key: "webhookEnabled", label: "Webhooks", icon: Globe, desc: "Outbound HTTP POSTs" },
   ];
-
-  const industryGuidance = useIndustryNotificationGuidance();
 
   return (
     <div className="space-y-5">

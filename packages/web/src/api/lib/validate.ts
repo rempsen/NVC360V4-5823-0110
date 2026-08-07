@@ -239,3 +239,52 @@ export const jsonObject = (maxChars = 200_000) =>
         return false; // circular / unserialisable
       }
     }, `Payload is too large (max ${maxChars} characters)`);
+
+/** A wall-clock time of day, as the quiet-hours UI writes it: "21:00". */
+export const hhmm = (label = "Time") =>
+  z
+    .string()
+    .trim()
+    .regex(/^([01]\d|2[0-3]):[0-5]\d$/, `${label} must be a 24-hour time like 21:00`);
+
+/** A #rrggbb / #rgb colour, as the brand colour pickers emit. */
+export const hexColor = (label = "Colour") =>
+  z
+    .string()
+    .trim()
+    .regex(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/, `${label} must be a hex colour like #06B6D4`);
+
+/**
+ * An outbound http(s) URL the SERVER will fetch — webhook endpoints, callbacks.
+ *
+ * Two separate problems here. `javascript:alert(1)` stored as a webhook URL is
+ * a stored-XSS payload the moment any UI renders it as a link. And a URL
+ * pointing at loopback / link-local / RFC1918 space turns our own webhook
+ * test-ping into an SSRF probe of the host network from inside the container.
+ * Both are rejected at the edge.
+ */
+const BLOCKED_HOST =
+  /^(localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|\[?::1\]?$|\[?f[cd])/i;
+export const outboundUrl = (label = "URL") =>
+  z
+    .string({ error: `${label} is required` })
+    .trim()
+    .min(1, `${label} is required`)
+    .max(2_000, `${label} must be 2000 characters or fewer`)
+    .superRefine((v, ctx) => {
+      let u: URL;
+      try {
+        u = new URL(v);
+      } catch {
+        ctx.addIssue({ code: "custom", message: `${label} must be a full URL starting with https://` });
+        return;
+      }
+      if (u.protocol !== "https:" && u.protocol !== "http:")
+        ctx.addIssue({ code: "custom", message: `${label} must use http:// or https://` });
+      if (BLOCKED_HOST.test(u.hostname) || !u.hostname.includes("."))
+        ctx.addIssue({ code: "custom", message: `${label} must point at a public host` });
+    });
+
+/** A real boolean — never the string "no", which is truthy in JS. */
+export const bool = (label: string) =>
+  z.boolean({ error: `${label} must be true or false` });

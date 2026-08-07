@@ -3,12 +3,148 @@ import * as schema from "../database/schema";
 import { eq } from "drizzle-orm";
 import { requireAdmin, tx, tenantId } from "../middleware/auth";
 import { fireEvent, seedNotificationRules, EVENT_META, defaultTemplateFor, interpolateSample, TEMPLATE_VARS, renderDesignPreview, sendDesignTest, type NvcEvent } from "../../services/dispatch";
-import { starterDesigns } from "../../services/email-render";
+import { starterDesigns, type EmailBlock } from "../../services/email-render";
 import { putObject } from "../lib/storage";
 import { resendAvailable, triggerVerify, removeDomain } from "../../services/email-domains";
+import { z } from "zod";
+import {
+  parseBody,
+  shortText,
+  longText,
+  optText,
+  email,
+  id,
+  jsonBlob,
+  hhmm,
+  bool,
+  hexColor,
+  outboundUrl,
+} from "../lib/validate";
 
 const EVENTS = Object.keys(EVENT_META) as NvcEvent[];
 const RECIPIENTS = ["client", "tech", "office"] as const;
+const CHANNELS = ["inApp", "email", "sms", "webhook"] as const;
+
+/* -------------------------------------------------------------------------- */
+/*  Request bodies                                                            */
+/*                                                                            */
+/*  Every body on this file was a raw c.req.json() copied field-by-field into  */
+/*  an update. Reproduced live before this pass:                              */
+/*                                                                            */
+/*   - PATCH /rules/:id { email: "yes" } -> 200, writing a string into a       */
+/*     boolean column; { enabled: {} } was accepted too. And a bogus rule id   */
+/*     returned 200 with an empty body instead of 404, so the UI showed a      */
+/*     successful toggle that had updated nothing.                             */
+/*   - PATCH /rules/:id { emailSubject: 50_000 chars } -> 200.                 */
+/*   - POST /rules/bulk { event: "made.up", value: "yes" } -> 200 ok:true, a   */
+/*     silent no-op against an event that doesn't exist.                       */
+/*   - POST /preview { template: {} } -> bare 500 (interpolate on a non-string)*/
+/*   - POST /email/test { to: "not an email" } -> 200 and a real Resend call   */
+/*     that bounced against the tenant's own verified sending domain.          */
+/*   - POST /email/templates with a 20,000-character name -> 201.              */
+/*   - PATCH /channels { emailFromAddress: "totally not an email" } -> 200.    */
+/*     That is the tenant's sending identity: every notification email from    */
+/*     that company then fails at the provider. quietStart: "99:99" and        */
+/*     emailEnabled: "no" were accepted the same way.                          */
+/*   - POST /webhooks with no url -> bare 500 (NOT NULL); with                 */
+/*     "javascript:alert(1)" -> 201 (stored XSS); with                         */
+/*     "http://localhost:4200/..." -> 201, and /webhooks/:id/test then fetched */
+/*     it, turning our own test-ping into an SSRF probe of the host network.   */
+/* -------------------------------------------------------------------------- */
+
+const RulePatch = z
+  .object({
+    inApp: bool("In-app"),
+    email: bool("Email"),
+    sms: bool("SMS"),
+    webhook: bool("Webhook"),
+    enabled: bool("Enabled"),
+    template: longText(10_000),
+    emailSubject: shortText("Subject", 200),
+    emailDesign: z.union([z.string().max(200_000), jsonBlob()]),
+  })
+  .partial()
+  .refine((b) => Object.keys(b).length > 0, { error: "Nothing to update" });
+
+const BulkBody = z.object({
+  event: z.enum(EVENTS as [NvcEvent, ...NvcEvent[]], { error: "Unknown event" }),
+  channel: z.enum(CHANNELS, { error: "Channel must be one of: inApp, email, sms, webhook" }),
+  value: z.boolean({ error: "Value must be true or false" }),
+});
+
+const PreviewBody = z.object({ template: longText(20_000).optional() });
+
+const RenderBody = z.object({
+  design: z.array(jsonBlob(50_000), { error: "Design must be a list of blocks" }).max(200).optional(),
+  footer: optText(2_000),
+});
+
+const TestEmailBody = z.object({
+  to: email("Recipient"),
+  subject: shortText("Subject", 200).optional(),
+  design: z.array(jsonBlob(50_000), { error: "Design must be a list of blocks" }).max(200).optional(),
+});
+
+const TemplateFields = {
+  name: shortText("Name", 120),
+  description: optText(500),
+  subject: shortText("Subject", 200).optional(),
+  design: z.union([z.string().max(200_000), jsonBlob()]).optional(),
+};
+const TemplateCreate = z.object(TemplateFields);
+const TemplatePatch = z
+  .object(TemplateFields)
+  .partial()
+  .refine((b) => Object.keys(b).length > 0, { error: "Nothing to update" });
+
+const ChannelsPatch = z
+  .object({
+    inAppEnabled: bool("In-app notifications"),
+    emailEnabled: bool("Email notifications"),
+    smsEnabled: bool("SMS notifications"),
+    webhookEnabled: bool("Webhooks"),
+    // These are all legitimately blank in live data (the sender name falls back
+    // to the company name, SMS sender id is Twilio-optional), and the Channels
+    // tab PATCHes the WHOLE row on save — so a min-length rule here would 400
+    // the entire Save button. Length-capped only.
+    emailFromName: longText(120),
+    // Allowed to be cleared (falls back to the platform default sender), but
+    // never allowed to be a non-address.
+    emailFromAddress: z.union([email("Sender address"), z.literal("")]),
+    emailReplyTo: z.union([email("Reply-to address"), z.literal("")]),
+    emailFooter: longText(2_000),
+    emailBodyTemplate: longText(20_000),
+    smsBodyTemplate: longText(2_000),
+    smsFromNumber: longText(32),
+    smsSenderId: longText(32),
+    quietHoursEnabled: bool("Quiet hours"),
+    quietStart: hhmm("Quiet hours start"),
+    quietEnd: hhmm("Quiet hours end"),
+    quietChannels: z.string().trim().max(120),
+    emailLogoUrl: z.string().trim().max(2_000),
+    emailBrandColor: z.union([hexColor("Brand colour"), z.literal("")]),
+    emailHeaderStyle: z.enum(["gradient", "solid", "plain", "logo"], {
+      error: "Header style must be gradient, solid, plain or logo",
+    }),
+    emailBgColor: z.union([hexColor("Background colour"), z.literal("")]),
+  })
+  .partial()
+  .refine((b) => Object.keys(b).length > 0, { error: "Nothing to update" });
+
+const WebhookFields = {
+  label: shortText("Label", 120).optional(),
+  url: outboundUrl("Webhook URL"),
+  secret: shortText("Secret", 200).optional(),
+  events: z.string().trim().max(2_000).optional(),
+  active: bool("Active").optional(),
+};
+const WebhookCreate = z.object(WebhookFields);
+const WebhookPatch = z
+  .object({ ...WebhookFields, url: outboundUrl("Webhook URL").optional() })
+  .partial()
+  .refine((b) => Object.keys(b).length > 0, { error: "Nothing to update" });
+
+const TestEventBody = z.object({ bookingId: id("Work order id").optional() });
 
 /**
  * Resolve (creating if needed) the single notification_channels row for the
@@ -50,19 +186,20 @@ export const notifConfigRoutes = new Hono()
   })
   // update one rule (toggle a channel etc.)
   .patch("/rules/:id", requireAdmin, async (c) => {
-    const id = c.req.param("id");
-    const body = await c.req.json();
-    const patch: Record<string, unknown> = { updatedAt: new Date() };
-    for (const k of ["inApp", "email", "sms", "webhook", "enabled", "template", "emailSubject", "emailDesign"]) {
-      if (k in body) patch[k] = body[k];
-    }
-    const [r] = await tx(c).update(schema.notificationRules, patch as any, eq(schema.notificationRules.id, id));
+    const ruleId = c.req.param("id");
+    const body = await parseBody(c, RulePatch);
+    const t = tx(c);
+    const existing = await t.selectOne(schema.notificationRules, eq(schema.notificationRules.id, ruleId));
+    if (!existing) return c.json({ message: "Notification rule not found" }, 404);
+    const patch: Record<string, unknown> = { ...body, updatedAt: new Date() };
+    if (body.emailDesign !== undefined)
+      patch.emailDesign = typeof body.emailDesign === "string" ? body.emailDesign : JSON.stringify(body.emailDesign);
+    const [r] = await t.update(schema.notificationRules, patch as any, eq(schema.notificationRules.id, ruleId));
     return c.json({ rule: r }, 200);
   })
   // bulk set a whole column for an event row (convenience)
   .post("/rules/bulk", requireAdmin, async (c) => {
-    const { event, channel, value } = await c.req.json();
-    if (!["inApp", "email", "sms", "webhook"].includes(channel)) return c.json({ message: "bad channel" }, 400);
+    const { event, channel, value } = await parseBody(c, BulkBody);
     await tx(c).update(
       schema.notificationRules,
       { [channel]: value, updatedAt: new Date() } as any,
@@ -94,25 +231,24 @@ export const notifConfigRoutes = new Hono()
 
   // ---- template preview (interpolate {{vars}} against sample data) ----
   .post("/preview", requireAdmin, async (c) => {
-    const { template } = await c.req.json();
+    const { template } = await parseBody(c, PreviewBody);
     const channels = await tx(c).selectOne(schema.notificationChannels);
     return c.json({ rendered: interpolateSample(template || "", channels?.emailFromName) }, 200);
   })
 
   // ---- render a full branded HTML email from a block design (live editor preview) ----
   .post("/email/render", requireAdmin, async (c) => {
-    const { design, footer } = await c.req.json().catch(() => ({}));
+    const { design, footer } = await parseBody(c, RenderBody);
     const origin = new URL(c.req.url).origin;
-    const html = await renderDesignPreview(tenantId(c), Array.isArray(design) ? design : [], { footer, origin });
+    const html = await renderDesignPreview(tenantId(c), Array.isArray(design) ? (design as EmailBlock[]) : [], { footer, origin });
     return c.json({ html }, 200);
   })
 
   // ---- send a test email rendered from a block design ----
   .post("/email/test", requireAdmin, async (c) => {
-    const { to, subject, design } = await c.req.json().catch(() => ({}));
-    if (!to) return c.json({ message: "recipient email required" }, 400);
+    const { to, subject, design } = await parseBody(c, TestEmailBody);
     const origin = new URL(c.req.url).origin;
-    const r = await sendDesignTest(tenantId(c), to, subject || "", Array.isArray(design) ? design : [], origin);
+    const r = await sendDesignTest(tenantId(c), to, subject || "", Array.isArray(design) ? (design as EmailBlock[]) : [], origin);
     return c.json(r, 200);
   })
 
@@ -134,7 +270,7 @@ export const notifConfigRoutes = new Hono()
     return c.json({ templates: rows }, 200);
   })
   .post("/email/templates", requireAdmin, async (c) => {
-    const b = await c.req.json();
+    const b = await parseBody(c, TemplateCreate);
     const [t] = await tx(c).insert(schema.emailTemplates, {
       name: b.name || "Untitled template",
       description: b.description || "",
@@ -145,13 +281,18 @@ export const notifConfigRoutes = new Hono()
     return c.json({ template: t }, 201);
   })
   .patch("/email/templates/:id", requireAdmin, async (c) => {
-    const id = c.req.param("id");
-    const b = await c.req.json();
+    const templateId = c.req.param("id");
+    const b = await parseBody(c, TemplatePatch);
+    const t = tx(c);
+    const existing = await t.selectOne(schema.emailTemplates, eq(schema.emailTemplates.id, templateId));
+    if (!existing) return c.json({ message: "Template not found" }, 404);
+    if (existing.isBuiltin) return c.json({ message: "Builtin templates can't be edited — duplicate it first" }, 400);
     const patch: Record<string, unknown> = { updatedAt: new Date() };
-    for (const k of ["name", "description", "subject"]) if (k in b) patch[k] = b[k];
-    if ("design" in b) patch.design = typeof b.design === "string" ? b.design : JSON.stringify(b.design);
-    const [t] = await tx(c).update(schema.emailTemplates, patch as any, eq(schema.emailTemplates.id, id));
-    return c.json({ template: t }, 200);
+    for (const k of ["name", "description", "subject"] as const) if (b[k] !== undefined) patch[k] = b[k];
+    if (b.design !== undefined)
+      patch.design = typeof b.design === "string" ? b.design : JSON.stringify(b.design);
+    const [row] = await t.update(schema.emailTemplates, patch as any, eq(schema.emailTemplates.id, templateId));
+    return c.json({ template: row }, 200);
   })
   .delete("/email/templates/:id", requireAdmin, async (c) => {
     const t = tx(c);
@@ -188,10 +329,8 @@ export const notifConfigRoutes = new Hono()
     return c.json({ channels: row }, 200);
   })
   .patch("/channels", requireAdmin, async (c) => {
-    const b = await c.req.json();
-    const fields = ["inAppEnabled", "emailEnabled", "smsEnabled", "webhookEnabled", "emailFromName", "emailFromAddress", "emailReplyTo", "emailFooter", "emailBodyTemplate", "smsBodyTemplate", "smsFromNumber", "smsSenderId", "quietHoursEnabled", "quietStart", "quietEnd", "quietChannels", "emailLogoUrl", "emailBrandColor", "emailHeaderStyle", "emailBgColor"];
-    const patch: Record<string, unknown> = { updatedAt: new Date() };
-    for (const k of fields) if (k in b) patch[k] = b[k];
+    const b = await parseBody(c, ChannelsPatch);
+    const patch: Record<string, unknown> = { ...b, updatedAt: new Date() };
     const existing = await getOrCreateChannels(c);
     const [row] = await tx(c).update(schema.notificationChannels, patch as any, eq(schema.notificationChannels.id, existing.id));
     return c.json({ channels: row }, 200);
@@ -204,7 +343,7 @@ export const notifConfigRoutes = new Hono()
     return c.json({ webhooks: rows }, 200);
   })
   .post("/webhooks", requireAdmin, async (c) => {
-    const b = await c.req.json();
+    const b = await parseBody(c, WebhookCreate);
     const [w] = await tx(c).insert(schema.webhookEndpoints, {
       label: b.label || "",
       url: b.url,
@@ -215,11 +354,12 @@ export const notifConfigRoutes = new Hono()
     return c.json({ webhook: w }, 201);
   })
   .patch("/webhooks/:id", requireAdmin, async (c) => {
-    const id = c.req.param("id");
-    const b = await c.req.json();
-    const patch: Record<string, unknown> = {};
-    for (const k of ["label", "url", "secret", "events", "active"]) if (k in b) patch[k] = b[k];
-    const [w] = await tx(c).update(schema.webhookEndpoints, patch as any, eq(schema.webhookEndpoints.id, id));
+    const hookId = c.req.param("id");
+    const b = await parseBody(c, WebhookPatch);
+    const t = tx(c);
+    const existing = await t.selectOne(schema.webhookEndpoints, eq(schema.webhookEndpoints.id, hookId));
+    if (!existing) return c.json({ message: "Webhook not found" }, 404);
+    const [w] = await t.update(schema.webhookEndpoints, b as any, eq(schema.webhookEndpoints.id, hookId));
     return c.json({ webhook: w }, 200);
   })
   .delete("/webhooks/:id", requireAdmin, async (c) => {
@@ -256,8 +396,9 @@ export const notifConfigRoutes = new Hono()
   // ---- fire a test event against a real booking ----
   .post("/test/:event", requireAdmin, async (c) => {
     const event = c.req.param("event") as NvcEvent;
-    const { bookingId } = await c.req.json().catch(() => ({}));
-    let bid = bookingId;
+    if (!EVENT_META[event]) return c.json({ message: "unknown event" }, 404);
+    const { bookingId } = await parseBody(c, TestEventBody);
+    let bid: string | undefined = bookingId;
     if (!bid) {
       const rows = await tx(c).select(schema.bookings);
       rows.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -282,8 +423,8 @@ export const notifConfigRoutes = new Hono()
 
   // Submit a new domain for approval (status starts "pending").
   .post("/email-domains", requireAdmin, async (c) => {
-    const body = await c.req.json().catch(() => ({}));
-    const raw = String(body.domain || "").trim().toLowerCase();
+    const body = await parseBody(c, z.object({ domain: shortText("Domain", 253) }));
+    const raw = body.domain.toLowerCase();
     // strip scheme / path / leading "www." and any from-address local part
     const domain = raw
       .replace(/^https?:\/\//, "")
