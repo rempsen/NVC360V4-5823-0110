@@ -103,9 +103,19 @@ function FieldInput({
   value: string;
   onChange: (v: string) => void;
 }) {
+  // Defence in depth. The API now rejects a non-array `options`, but a row
+  // written before that validation existed stored `"\"a,b,c\""`, and
+  // `JSON.parse(...).map(...)` on it threw "o.map is not a function" — which
+  // put this whole component (and the technician drawer that mounts it) behind
+  // the error boundary. A malformed definition must degrade to "no choices",
+  // never crash the screen.
   const opts: string[] = (() => {
     try {
-      return JSON.parse(def.options || "[]");
+      const parsed = JSON.parse(def.options || "[]");
+      if (Array.isArray(parsed)) return parsed.map((o) => String(o));
+      if (typeof parsed === "string" && parsed.trim())
+        return parsed.split(",").map((s) => s.trim()).filter(Boolean);
+      return [];
     } catch {
       return [];
     }

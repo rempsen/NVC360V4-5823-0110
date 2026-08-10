@@ -322,3 +322,30 @@ export const imageRef = (label = "Image") =>
       (v) => v === "" || v.startsWith("/") || /^https?:\/\//i.test(v),
       `${label} must be an https:// URL or an app path`,
     );
+
+/**
+ * A list of short option labels — dropdown choices, checkbox items.
+ *
+ * This exists because `options: "a,b,c"` (a string, not an array) used to be
+ * accepted and stored as JSON `"\"a,b,c\""`. The renderer does
+ * `JSON.parse(options).map(...)`, so that one row threw
+ * "o.map is not a function" and put the whole technician drawer behind the
+ * error boundary for every admin. The shape has to be enforced on the way in.
+ */
+export const stringList = (label: string, max = 100, itemMax = 200) =>
+  z
+    .array(
+      z
+        .string({ error: `Each ${label} entry must be text` })
+        .trim()
+        .min(1, `${label} entries can't be blank`)
+        .max(itemMax, `Each ${label} entry must be ${itemMax} characters or fewer`),
+      { error: `${label} must be a list` },
+    )
+    .max(max, `${label} can't have more than ${max} entries`);
+
+/** A list of record ids, bounded so a 5,000-id payload can't be replayed. */
+export const idList = (label: string, max = 200) =>
+  z
+    .array(id(`${label} id`), { error: `${label} must be a list of ids` })
+    .max(max, `${label} can't have more than ${max} entries`);
