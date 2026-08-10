@@ -47,15 +47,33 @@ import { calendarRoutes } from "./routes/calendar";
 import { reportsRoutes } from "./routes/reports";
 import { apiKeysRoutes } from "./routes/api-keys";
 import { mcpRoutes } from "./routes/mcp";
+import { meRoutes } from "./routes/me";
 import { teamRoutes } from "./routes/team";
 import { superadminRoutes } from "./routes/superadmin";
 import { formsRoutes } from "./routes/forms";
 import { publicFormsRoutes } from "./routes/public-forms";
 
 type Variables = {
-  user: { id: string; role?: string; email: string; name: string; companyId?: string } | null;
+  user: {
+    id: string;
+    role?: string;
+    email: string;
+    name: string;
+    companyId?: string;
+    permissions?: string | null;
+    staffType?: string | null;
+    managerId?: string | null;
+  } | null;
   session: unknown;
   companyId: string;
+  /** Every active company this person can act as (see middleware/auth.ts). */
+  memberships: {
+    companyId: string;
+    role: string;
+    permissions: string | null;
+    staffType: string | null;
+    managerId: string | null;
+  }[];
   apiKey?: { id: string; label: string; scopes: string[] };
   requestId: string;
   log: ReturnType<typeof requestLogger>;
@@ -299,6 +317,7 @@ const app = new Hono<{ Variables: Variables }>()
   .route("/api-keys", apiKeysRoutes)
   .route("/forms", formsRoutes)
   .route("/mcp", mcpRoutes)
+  .route("/me", meRoutes)
   .route("/team", teamRoutes)
   .route("/superadmin", superadminRoutes);
 

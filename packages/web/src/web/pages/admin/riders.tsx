@@ -222,6 +222,24 @@ function FieldStaffTab() {
                       {r.skillClass}
                     </span>
                   )}
+                  {/* Works for another company as well — their login and
+                      personal details are owned there, not here. */}
+                  {r.isShared && (
+                    <span
+                      title="Also works for another company. Their login and contact details are managed there."
+                      className="rounded-md bg-violet-400/10 px-2 py-0.5 text-xs font-medium text-violet-300"
+                    >
+                      Shared
+                    </span>
+                  )}
+                  {r.membershipStatus === "invited" && (
+                    <span
+                      title="Invite sent — they haven't accepted yet, so they can't see your jobs."
+                      className="rounded-md bg-amber-warn/10 px-2 py-0.5 text-xs font-medium text-amber-warn"
+                    >
+                      Invite pending
+                    </span>
+                  )}
                 </div>
                 <div className="mt-3 space-y-1 border-t border-white/5 pt-3 text-xs text-slate-400">
                   {r.email && (

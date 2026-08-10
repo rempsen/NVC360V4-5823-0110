@@ -25,6 +25,7 @@ const SelectionsPublic = lazyRoute(() => import("./pages/selections-public"));
 const PropertyPublic = lazyRoute(() => import("./pages/property-public"));
 const IntakeForm = lazyRoute(() => import("./pages/intake-form"));
 const JoinTech = lazyRoute(() => import("./pages/join-tech"));
+const JoinCompany = lazyRoute(() => import("./pages/join-company"));
 const CustomerApp = lazyRoute(() => import("./pages/customer"));
 const RiderApp = lazyRoute(() => import("./pages/rider"));
 const AdminApp = lazyRoute(() => import("./pages/admin"));
@@ -112,6 +113,8 @@ function App() {
           <Route path="/p/:token" component={PropertyPublic} />
           <Route path="/f/:companyId/:slug" component={IntakeForm} />
           <Route path="/join/:token" component={JoinTech} />
+          {/* Existing login being added to another company's roster. */}
+          <Route path="/join-company/:membershipId" component={JoinCompany} />
 
           <Route path="/app/*?">
             <ProtectedRoute roles={["customer"]}>

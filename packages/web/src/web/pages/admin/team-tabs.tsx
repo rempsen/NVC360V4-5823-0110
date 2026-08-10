@@ -221,9 +221,30 @@ export function InternalTeamTab() {
                   </div>
                   <div className="min-w-0 flex-1">
                     <h3 className="truncate font-bold text-white">{e.name}</h3>
-                    <span className={`inline-block rounded-full border px-2 py-0.5 text-[11px] font-semibold ${meta.tint}`}>
-                      {meta.label}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-1">
+                      <span className={`inline-block rounded-full border px-2 py-0.5 text-[11px] font-semibold ${meta.tint}`}>
+                        {meta.label}
+                      </span>
+                      {/* This person works for another company too. Their name,
+                          email and password are owned there — only their role
+                          here can be changed. */}
+                      {e.isShared && (
+                        <span
+                          title="Also works for another company. Their login and contact details are managed there."
+                          className="inline-block rounded-full border border-violet-400/30 bg-violet-400/10 px-2 py-0.5 text-[11px] font-semibold text-violet-300"
+                        >
+                          Shared
+                        </span>
+                      )}
+                      {e.membershipStatus === "invited" && (
+                        <span
+                          title="Invite sent — they haven't accepted yet, so they can't see your jobs."
+                          className="inline-block rounded-full border border-amber-warn/30 bg-amber-warn/10 px-2 py-0.5 text-[11px] font-semibold text-amber-warn"
+                        >
+                          Invite pending
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
                 <div className="mt-3 space-y-1 border-t border-white/5 pt-3 text-xs text-slate-400">

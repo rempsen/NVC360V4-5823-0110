@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { db } from "../database";
 import * as schema from "../database/schema";
 import { auth } from "../auth";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import {
   requirePermission,
   invalidateRoleCache,
@@ -10,6 +10,8 @@ import {
   tenantId,
   tx,
 } from "../middleware/auth";
+import { attachMembership, isMember, findUserByEmail, detachMembership } from "../lib/memberships";
+import { sendJoinCompanyInvite } from "../lib/join-invite";
 import { z } from "zod";
 import { parseBody, shortText, optText, email as emailField, phone as phoneField, money, id as idField, longText } from "../lib/validate";
 import {
@@ -122,26 +124,46 @@ export const teamRoutes = new Hono()
   // ---- list all internal employees --------------------------------------
   .get("/", requirePermission("techs:view"), async (c) => {
     const cid = tenantId(c);
-    const rows = (await db.select().from(schema.user)).filter((u) => u.companyId === cid);
-    const internal = rows.filter((u) => INTERNAL.includes(u.role ?? ""));
+    // The roster is defined by MEMBERSHIPS, not by user.companyId. A technician
+    // who works for two companies appears on both rosters, with whatever role
+    // they hold at each. Reading user.companyId here would only ever show them
+    // on their default company's list.
+    const members = await db
+      .select()
+      .from(schema.memberships)
+      .where(eq(schema.memberships.companyId, cid));
+    const byUserId = new Map(members.map((m) => [m.userId, m]));
+    const allUsers = await db.select().from(schema.user);
+    const rows = allUsers.filter((u) => byUserId.has(u.id));
+    const internal = rows.filter((u) =>
+      INTERNAL.includes(byUserId.get(u.id)?.role ?? u.role ?? ""),
+    );
     const riderRows = await tx(c).select(schema.riders);
     const riderByUser = new Map(riderRows.map((r) => [r.userId, r]));
     const roleDefaults = await loadRoleDefaults();
     return c.json({
       employees: internal.map((u) => {
         const rd = riderByUser.get(u.id);
+        const m = byUserId.get(u.id);
+        // Role/permissions come from the membership — this is what makes the
+        // same person a technician here and a manager somewhere else.
+        const role = m?.role ?? u.role ?? "";
+        const perms = m?.permissions ?? u.permissions;
         return {
           id: u.id,
           name: u.name,
           email: u.email,
           phone: u.phone ?? "",
-          role: u.role ?? "",
-          roleLabel: ROLE_LABELS[u.role ?? ""] ?? u.role,
-          staffType: u.staffType ?? (u.role === "rider" ? "technician" : null),
-          managerId: u.managerId ?? null,
-          hasOverride: !!u.permissions,
-          permissions: Array.from(resolvePerms(u, roleDefaults)),
+          role,
+          roleLabel: ROLE_LABELS[role] ?? role,
+          staffType: m?.staffType ?? u.staffType ?? (role === "rider" ? "technician" : null),
+          managerId: m?.managerId ?? null,
+          hasOverride: !!perms,
+          permissions: Array.from(resolvePerms({ role, permissions: perms }, roleDefaults)),
           riderId: rd?.id ?? null,
+          // Shown in the UI so an admin knows this person also works elsewhere.
+          membershipStatus: m?.status ?? "active",
+          isShared: u.companyId !== cid,
           createdAt: u.createdAt,
         };
       }),
@@ -166,21 +188,78 @@ export const teamRoutes = new Hono()
         403,
       );
 
-    const [exists] = await db
-      .select()
-      .from(schema.user)
-      .where(eq(schema.user.email, email));
-    if (exists) return c.json({ message: "Email already in use" }, 409);
+    const company = tenantId(c);
+    const existing = await findUserByEmail(email);
 
     // Validate the manager BEFORE minting the account. A manager from another
     // company would leak this employee into that company's org chart, and
     // checking after signUpEmail() left an orphaned login behind on rejection.
     if (managerId) {
       const [mgr] = await db.select().from(schema.user).where(eq(schema.user.id, managerId));
-      if (!mgr || mgr.companyId !== tenantId(c))
+      if (!mgr || !(await isMember(managerId, company)))
         return c.json({ message: "Manager not found" }, 400);
     }
 
+    // ---- Case 1: this person already has a login ---------------------------
+    // A contract technician who already works for another company. We do NOT
+    // create a second account and we do NOT set a password — that would hand
+    // this company control of the person's existing login. Instead they get an
+    // "invited" membership and must accept.
+    if (existing) {
+      if (await isMember(existing.id, company))
+        return c.json({ message: "That person is already on your team" }, 409);
+
+      const { membership } = await attachMembership({
+        userId: existing.id,
+        companyId: company,
+        role,
+        staffType: role === FIELD_STAFF_ROLE ? (staffType === "driver" ? "driver" : "technician") : null,
+        managerId: managerId ?? null,
+        status: "invited",
+        invitedBy: me.id,
+      });
+
+      // Field staff still need a rider profile at THIS company so they appear
+      // on this company's map and scheduler. It's separate per company.
+      if (role === FIELD_STAFF_ROLE) {
+        const [existingRider] = await db
+          .select()
+          .from(schema.riders)
+          .where(and(eq(schema.riders.userId, existing.id), eq(schema.riders.companyId, company)));
+        if (!existingRider) {
+          await tx(c).insert(schema.riders, {
+            userId: existing.id,
+            phone: phone ?? existing.phone ?? "",
+            vehicle: "Van",
+            skillClass: b.skillClass ?? "General",
+            skills: b.skills?.join(",") ?? "",
+            address: b.address ?? "",
+            notes: b.notes ?? "",
+            payRatePerHour: b.payRatePerHour ?? 0,
+          });
+        }
+      }
+
+      await sendJoinCompanyInvite({
+        email: existing.email,
+        name: existing.name,
+        companyId: company,
+        membershipId: membership!.id,
+      }).catch((e) => console.error("join-company invite failed", e));
+
+      return c.json(
+        {
+          user: { id: existing.id, name: existing.name, email, role },
+          existingAccount: true,
+          status: "invited",
+          message:
+            "That email already has an NVC360 login. We've invited them to join your company — they'll keep their existing password.",
+        },
+        201,
+      );
+    }
+
+    // ---- Case 2: brand new person ------------------------------------------
     try {
       await auth.api.signUpEmail({
         body: { name, email, password, role, phone: phone ?? "" } as any,
@@ -195,11 +274,22 @@ export const teamRoutes = new Hono()
     if (!u) return c.json({ message: "Failed to create user" }, 500);
 
     // stamp the new employee with the creating admin's company
-    const set: Record<string, any> = { role, phone: phone ?? "", companyId: tenantId(c) };
+    const set: Record<string, any> = { role, phone: phone ?? "", companyId: company };
     if (role === FIELD_STAFF_ROLE)
       set.staffType = staffType === "driver" ? "driver" : "technician";
     if (managerId) set.managerId = managerId;
     await db.update(schema.user).set(set).where(eq(schema.user.id, u.id));
+
+    // The membership is what actually grants them their role at this company.
+    await attachMembership({
+      userId: u.id,
+      companyId: company,
+      role,
+      staffType: role === FIELD_STAFF_ROLE ? (staffType === "driver" ? "driver" : "technician") : null,
+      managerId: managerId ?? null,
+      status: "active",
+      invitedBy: me.id,
+    });
 
     // field staff also get a rider profile (so they show on map/scheduler)
     if (role === FIELD_STAFF_ROLE) {
@@ -227,10 +317,19 @@ export const teamRoutes = new Hono()
       .from(schema.user)
       .where(eq(schema.user.id, id));
     if (!target) return c.json({ message: "Not found" }, 404);
-    if (target.companyId !== tenantId(c)) return c.json({ message: "Not found" }, 404);
+    const cid = tenantId(c);
+    const [membership] = await db
+      .select()
+      .from(schema.memberships)
+      .where(
+        and(eq(schema.memberships.userId, id), eq(schema.memberships.companyId, cid)),
+      );
+    if (!membership) return c.json({ message: "Not found" }, 404);
+    // Their role AT THIS COMPANY governs what this admin may change.
+    const targetRole = membership.role ?? target.role;
 
     // Touching an admin-tier account requires superadmin.
-    if (isAdminRole(target.role) && !isSuperadmin(me.role))
+    if (isAdminRole(targetRole) && !isSuperadmin(me.role))
       return c.json({ message: "Only a superadmin can modify admin-level accounts" }, 403);
 
     const updates: Record<string, any> = {};
@@ -264,13 +363,58 @@ export const teamRoutes = new Hono()
       if (b.managerId) {
         if (b.managerId === id) return c.json({ message: "Someone can't be their own manager" }, 400);
         const [mgr] = await db.select().from(schema.user).where(eq(schema.user.id, b.managerId));
-        if (!mgr || mgr.companyId !== tenantId(c))
+        if (!mgr || !(await isMember(b.managerId, cid)))
           return c.json({ message: "Manager not found" }, 400);
       }
       updates.managerId = b.managerId || null;
     }
-    if (Object.keys(updates).length)
-      await db.update(schema.user).set(updates).where(eq(schema.user.id, id));
+
+    // Split the update: role/staffType/manager are PER COMPANY and belong on
+    // the membership. Name/email/phone are the shared identity.
+    const membershipUpdates: Record<string, any> = {};
+    if (updates.role !== undefined) membershipUpdates.role = updates.role;
+    if (updates.staffType !== undefined) membershipUpdates.staffType = updates.staffType;
+    if (updates.managerId !== undefined) membershipUpdates.managerId = updates.managerId;
+    if (Object.keys(membershipUpdates).length) {
+      membershipUpdates.updatedAt = new Date();
+      await db
+        .update(schema.memberships)
+        .set(membershipUpdates)
+        .where(eq(schema.memberships.id, membership.id));
+    }
+
+    const identityUpdates: Record<string, any> = {};
+    for (const k of ["name", "email", "phone"] as const) {
+      if (updates[k] !== undefined) identityUpdates[k] = updates[k];
+    }
+    if (Object.keys(identityUpdates).length) {
+      // Name/email/phone are shared across every company this person works for.
+      // Letting a company they merely contract for rename them (or change the
+      // email they sign in with) would reach into another tenant's data, so a
+      // shared person's identity is only editable by their home company.
+      const others = await db
+        .select()
+        .from(schema.memberships)
+        .where(eq(schema.memberships.userId, id));
+      if (others.length > 1 && target.companyId !== cid) {
+        return c.json(
+          {
+            message:
+              "This person also works for another company, so their name and email can only be changed by their home company. You can still change their role here.",
+          },
+          403,
+        );
+      }
+      await db.update(schema.user).set(identityUpdates).where(eq(schema.user.id, id));
+    }
+
+    // Keep the legacy columns on the user row in step for their HOME company so
+    // anything still reading user.role directly stays correct.
+    if (target.companyId === cid && Object.keys(membershipUpdates).length) {
+      const legacy = { ...membershipUpdates };
+      delete legacy.updatedAt;
+      await db.update(schema.user).set(legacy).where(eq(schema.user.id, id));
+    }
     return c.json({ ok: true });
   })
 
@@ -285,23 +429,61 @@ export const teamRoutes = new Hono()
       .from(schema.user)
       .where(eq(schema.user.id, id));
     if (!target) return c.json({ message: "Not found" }, 404);
-    // tenant guard: can only manage users in your own company
-    if (target.companyId !== tenantId(c))
-      return c.json({ message: "Not found" }, 404);
-    // Deleting an admin-tier account requires superadmin.
-    if (isAdminRole(target.role) && !isSuperadmin(me.role))
-      return c.json({ message: "Only a superadmin can delete admin-level accounts" }, 403);
-    if (isAdminRole(target.role)) {
-      // don't allow deleting the last admin-tier user in this company
-      const admins = (await db.select().from(schema.user)).filter(
-        (u) => isAdminRole(u.role) && u.companyId === tenantId(c),
+    const cid = tenantId(c);
+    // tenant guard: can only manage people who are on YOUR roster
+    const [membership] = await db
+      .select()
+      .from(schema.memberships)
+      .where(
+        and(eq(schema.memberships.userId, id), eq(schema.memberships.companyId, cid)),
       );
+    if (!membership) return c.json({ message: "Not found" }, 404);
+
+    const targetRole = membership.role ?? target.role;
+    // Deleting an admin-tier account requires superadmin.
+    if (isAdminRole(targetRole) && !isSuperadmin(me.role))
+      return c.json({ message: "Only a superadmin can delete admin-level accounts" }, 403);
+    if (isAdminRole(targetRole)) {
+      // don't allow removing the last admin-tier member of this company
+      const admins = (
+        await db
+          .select()
+          .from(schema.memberships)
+          .where(eq(schema.memberships.companyId, cid))
+      ).filter((m) => isAdminRole(m.role) && m.status === "active");
       if (admins.length <= 1)
         return c.json({ message: "Cannot delete the last admin" }, 400);
     }
+
+    // How many companies does this person work for? This decides whether we're
+    // removing a relationship or deleting a human.
+    const all = await db
+      .select()
+      .from(schema.memberships)
+      .where(eq(schema.memberships.userId, id));
+
+    // Their rider profile is per-company, so it always goes.
     await tx(c).delete(schema.riders, eq(schema.riders.userId, id));
+
+    if (all.length > 1) {
+      // They also work for someone else. Deleting the user row here would
+      // destroy their login and wipe them from the OTHER company's roster —
+      // a catastrophic, silent cross-tenant side effect. Only sever the
+      // relationship with this company.
+      await detachMembership(id, cid);
+      return c.json({
+        ok: true,
+        removedFromCompany: true,
+        deletedAccount: false,
+        message:
+          "Removed from your company. Their NVC360 login stays active because they also work for another company.",
+      });
+    }
+
+    // This was their only company — safe to delete the account outright.
+    // The membership row cascades with the user.
     await db.delete(schema.user).where(eq(schema.user.id, id));
-    return c.json({ ok: true });
+    return c.json({ ok: true, removedFromCompany: true, deletedAccount: true });
   })
 
   // ---- per-person permission override -----------------------------------

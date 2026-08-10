@@ -5,6 +5,7 @@ import * as schema from "../database/schema";
 import { eq, and, gte, lte, like } from "drizzle-orm";
 import { resolveApiKey, scopeAllows, type ApiKeyContext } from "../middleware/auth";
 import { audit } from "../lib/audit";
+import { attachMembership } from "../lib/memberships";
 import { user as userTable } from "../database/auth-schema";
 
 /**
@@ -268,6 +269,9 @@ const TOOLS: ToolDef[] = [
         .insert(userTable)
         .values({ id: crypto.randomUUID(), companyId: t.companyId, name: String(a.name), email: String(a.email), phone: a.phone ?? null, address: a.address ?? null, role: "customer", emailVerified: false, createdAt: new Date(), updatedAt: new Date() } as any)
         .returning();
+      // Clients are scoped by membership now — without this row the client
+      // would not appear on this company's client list.
+      await attachMembership({ userId: client.id, companyId: t.companyId, role: "customer", status: "active" });
       await audit({ companyId: t.companyId, actorName: "API/MCP", action: "create", entityType: "client", entityId: client.id, summary: `Created client via MCP "${client.name}"` });
       return { client };
     },

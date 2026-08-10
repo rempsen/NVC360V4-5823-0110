@@ -14,6 +14,7 @@ import * as schema from "../database/schema";
 import { auth } from "../auth";
 import { requireSuperadmin, invalidateCompanyCache } from "../middleware/auth";
 import { audit } from "../lib/audit";
+import { attachMembership } from "../lib/memberships";
 import {
   issueDefaultTenantKey,
   ensureDefaultTenantKey,
@@ -339,6 +340,15 @@ async function ensureUser(opts: {
       .update(schema.user)
       .set({ role: opts.role, companyId: opts.companyId, name: opts.name })
       .where(eq(schema.user.id, existing.id));
+    // The membership is what actually grants the role at this tenant — an
+    // owner created without one would sign in with no access to their own
+    // company.
+    await attachMembership({
+      userId: existing.id,
+      companyId: opts.companyId,
+      role: opts.role,
+      status: "active",
+    });
     return { id: existing.id, reused: true };
   }
   await auth.api.signUpEmail({
@@ -358,6 +368,12 @@ async function ensureUser(opts: {
     .update(schema.user)
     .set({ role: opts.role, companyId: opts.companyId })
     .where(eq(schema.user.id, u.id));
+  await attachMembership({
+    userId: u.id,
+    companyId: opts.companyId,
+    role: opts.role,
+    status: "active",
+  });
   return { id: u.id, reused: false };
 }
 

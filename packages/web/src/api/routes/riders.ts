@@ -5,6 +5,8 @@ import { eq } from "drizzle-orm";
 import { requireAuth, requireAdmin, tx, tenantId } from "../middleware/auth";
 import { auth } from "../auth";
 import { reconcileRiderStatus } from "../../services/presence";
+import { attachMembership, isMember, findUserByEmail } from "../lib/memberships";
+import { sendJoinCompanyInvite } from "../lib/join-invite";
 import { putObject, deleteObject } from "../lib/storage";
 import { z } from "zod";
 import {
@@ -180,14 +182,30 @@ export const ridersRoutes = new Hono()
   // ── Admin / list routes ──────────────────────────────────────────────────
   // list all riders (admin assign UI)
   .get("/", requireAuth, async (c) => {
+    const cidList = tenantId(c);
     const rows = await tx(c).select(schema.riders);
+    // Memberships tell us which of these people also work elsewhere, and who
+    // still has a pending invite (they can't see this company's jobs yet).
+    const memberRows = await db
+      .select()
+      .from(schema.memberships)
+      .where(eq(schema.memberships.companyId, cidList));
+    const memberByUser = new Map(memberRows.map((m) => [m.userId, m]));
     const enriched = await Promise.all(
       rows.map(async (r) => {
         const [ru] = await db
           .select()
           .from(schema.user)
           .where(eq(schema.user.id, r.userId));
-        return { ...r, name: ru?.name, email: ru?.email, phone: ru?.phone };
+        const m = memberByUser.get(r.userId);
+        return {
+          ...r,
+          name: ru?.name,
+          email: ru?.email,
+          phone: ru?.phone,
+          membershipStatus: m?.status ?? "active",
+          isShared: !!ru && ru.companyId !== cidList,
+        };
       }),
     );
     return c.json({ riders: enriched }, 200);
@@ -197,11 +215,58 @@ export const ridersRoutes = new Hono()
     const body = await parseBody(c, RiderCreate);
     const { name, email, password, phone, skillClass, vehicle, color, licensePlate, licenseNumber, address, notes, skills, payRatePerHour, tags } = body;
 
-    const [exists] = await db
-      .select()
-      .from(schema.user)
-      .where(eq(schema.user.email, email));
-    if (exists) return c.json({ message: "Email already in use" }, 409);
+    const cid = tenantId(c);
+    const existing = await findUserByEmail(email);
+
+    // A technician who already has an NVC360 login (because they work for
+    // another company) is INVITED, never re-created — and this company never
+    // sets a password for them. See lib/memberships.ts for why.
+    if (existing) {
+      if (await isMember(existing.id, cid))
+        return c.json({ message: "That person is already on your team" }, 409);
+
+      const { membership } = await attachMembership({
+        userId: existing.id,
+        companyId: cid,
+        role: "rider",
+        staffType: "technician",
+        status: "invited",
+        invitedBy: (c.get("user") as { id: string } | null)?.id ?? null,
+      });
+      await sendJoinCompanyInvite({
+        email: existing.email,
+        name: existing.name,
+        companyId: cid,
+        membershipId: membership!.id,
+      }).catch((e) => console.error("join-company invite failed", e));
+
+      const t0 = tx(c);
+      const palette0 = ["#06b6d4", "#22c55e", "#f59e0b", "#a855f7", "#ef4444", "#3b82f6"];
+      const [r0] = await t0.insert(schema.riders, {
+        userId: existing.id,
+        phone: phone ?? existing.phone ?? "",
+        skillClass: skillClass || "General",
+        vehicle: vehicle || "Van",
+        color: color || palette0[Math.floor(Math.random() * palette0.length)],
+        licensePlate: licensePlate ?? "",
+        licenseNumber: licenseNumber ?? "",
+        address: address ?? "",
+        notes: notes ?? "",
+        skills: Array.isArray(skills) ? skills.join(",") : (skills ?? ""),
+        payRatePerHour: payRatePerHour ?? 0,
+        status: "available",
+      });
+      return c.json(
+        {
+          rider: r0,
+          existingAccount: true,
+          status: "invited",
+          message:
+            "That email already has an NVC360 login. We've invited them to join your company — they'll keep their existing password.",
+        },
+        201,
+      );
+    }
 
     try {
       await auth.api.signUpEmail({
@@ -218,8 +283,15 @@ export const ridersRoutes = new Hono()
     // ensure role/phone persisted
     await db
       .update(schema.user)
-      .set({ role: "rider", phone: phone ?? "" })
+      .set({ role: "rider", phone: phone ?? "", companyId: cid })
       .where(eq(schema.user.id, u.id));
+    await attachMembership({
+      userId: u.id,
+      companyId: cid,
+      role: "rider",
+      staffType: "technician",
+      status: "active",
+    });
 
     const t = tx(c);
     const palette = ["#06b6d4", "#22c55e", "#f59e0b", "#a855f7", "#ef4444", "#3b82f6"];

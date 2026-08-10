@@ -3,7 +3,7 @@ import { db } from "../database";
 import { tdb } from "../database/tenant";
 import * as schema from "../database/schema";
 import { eq, and, gte, lte } from "drizzle-orm";
-import { requireAuth } from "../middleware/auth";
+import { requireAuth, loadMemberships } from "../middleware/auth";
 import { isAdminRole } from "../lib/permissions";
 import { buildCalendar, type CalEvent } from "../../services/ics";
 
@@ -136,15 +136,30 @@ export const calendarRoutes = new Hono()
     const from = new Date(now - 60 * 86_400_000);
     const to = new Date(now + 180 * 86_400_000);
 
-    const companyId = (u as any).companyId || "default";
-    let rows = await bookingsForUser({ id: u.id, role: u.role, companyId });
-    rows = rows.filter((b) => {
-      const t = new Date(b.scheduledAt).getTime();
-      return t >= from.getTime() && t <= to.getTime();
-    });
+    // A person can work for several companies, and this feed is the single
+    // calendar they subscribe to — so it has to be the union of their jobs at
+    // every company, each read with the role they hold THERE. Reading only
+    // u.companyId hid every job from their non-home companies.
+    const memberships = await loadMemberships(u.id);
+    const scopes = memberships.length
+      ? memberships.map((m) => ({ companyId: m.companyId, role: m.role }))
+      : [{ companyId: (u as any).companyId || "default", role: u.role }];
+
+    const perCompany = await Promise.all(
+      scopes.map(async (s) => {
+        const rows = await bookingsForUser({ id: u.id, role: s.role, companyId: s.companyId });
+        return rows
+          .filter((b) => {
+            const t = new Date(b.scheduledAt).getTime();
+            return t >= from.getTime() && t <= to.getTime();
+          })
+          .map((b) => ({ booking: b, companyId: s.companyId }));
+      }),
+    );
+    const scoped = perCompany.flat();
 
     const base = baseUrl(c);
-    const events = await Promise.all(rows.map((b) => eventFor(b, base, companyId)));
+    const events = await Promise.all(scoped.map((x) => eventFor(x.booking, base, x.companyId)));
     const calName =
       isAdminRole(u.role)
         ? "NVC360 — Dispatch Schedule"

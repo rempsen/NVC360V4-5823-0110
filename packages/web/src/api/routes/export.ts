@@ -1,3 +1,4 @@
+import { usersForCompany } from "../lib/memberships";
 import { Hono } from "hono";
 import { db } from "../database";
 import * as schema from "../database/schema";
@@ -471,7 +472,7 @@ export async function loadDataset(dataset: string, t: TenantDb): Promise<Record<
     }));
   }
   if (dataset === "clients") {
-    const us = (await db.select().from(schema.user).where(eq(schema.user.role, "customer"))).filter((u) => u.companyId === cid);
+    const us = (await usersForCompany(cid)).filter((u) => u.role === "customer");
     return us.map((u) => ({ id: u.id, name: u.name, email: u.email, phone: u.phone, createdAt: u.createdAt }));
   }
   if (dataset === "invoices") {

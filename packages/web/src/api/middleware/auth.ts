@@ -2,7 +2,7 @@ import { createMiddleware } from "hono/factory";
 import { auth } from "../auth";
 import { db } from "../database";
 import * as schema from "../database/schema";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import {
   DEFAULT_ROLE_PERMS,
   resolvePerms,
@@ -79,27 +79,125 @@ export function invalidateCompanyCache() {
   _companyCache = null;
 }
 
+/**
+ * Every ACTIVE company this person belongs to, newest-role-first is irrelevant —
+ * ordered by company id so the picker is stable. One row per company they can
+ * act as. An `invited` membership they haven't accepted, or a `disabled` one,
+ * is deliberately excluded: it must not grant access.
+ */
+export async function loadMemberships(userId: string): Promise<
+  {
+    companyId: string;
+    role: string;
+    permissions: string | null;
+    staffType: string | null;
+    managerId: string | null;
+  }[]
+> {
+  try {
+    const rows = await db
+      .select()
+      .from(schema.memberships)
+      .where(
+        and(
+          eq(schema.memberships.userId, userId),
+          eq(schema.memberships.status, "active"),
+        ),
+      );
+    return rows
+      .map((r) => ({
+        companyId: r.companyId,
+        role: r.role,
+        permissions: r.permissions,
+        staffType: r.staffType,
+        managerId: r.managerId,
+      }))
+      .sort((a, b) => a.companyId.localeCompare(b.companyId));
+  } catch {
+    // Table may not exist yet (pre-migration boot). Fail soft to the legacy
+    // single-company path rather than locking everyone out.
+    return [];
+  }
+}
+
 export const authMiddleware = createMiddleware(async (c, next) => {
   const session = await auth.api.getSession({ headers: c.req.raw.headers });
   const u = session?.user ?? null;
-  c.set("user", u);
   c.set("session", session?.session ?? null);
-  // Multi-tenancy: resolve the acting company from the user record. Every
-  // tenant-scoped query reads this via tenantId(c). Defaults to "default".
-  const homeCompany =
-    (u as { companyId?: string } | null)?.companyId ?? "default";
-  // Cross-tenant: a superadmin may act on ANY existing tenant by sending
-  // X-Company-Id. The id MUST be in the companies allow-list (no arbitrary
-  // values) and only superadmins are allowed to leave their home company.
+
+  if (!u) {
+    c.set("user", null);
+    c.set("companyId", "default");
+    c.set("memberships", []);
+    return next();
+  }
+
+  // ---- Multi-company resolution -------------------------------------------
+  // A person can work for several companies (a contract technician on both
+  // Acme's and Bolt's roster). `user.companyId` is their DEFAULT company; the
+  // full set lives in `memberships`, one row per company with the role they
+  // hold THERE.
+  const userId = (u as { id: string }).id;
+  const homeCompany = (u as { companyId?: string }).companyId ?? "default";
+  const memberships = await loadMemberships(userId);
+  c.set("memberships", memberships);
+
+  // Which company is this request acting as? Priority:
+  //   1. X-Company-Id header (the company switcher, and superadmin cross-tenant)
+  //   2. the user's default company
+  //   3. their first membership (covers a user whose default was removed)
   const requested = (
     c.req.header("X-Company-Id") || c.req.header("x-company-id") || ""
   ).trim();
-  const role = (u as { role?: string } | null)?.role;
+  const baseRole = (u as { role?: string }).role;
+
   let companyId = homeCompany;
-  if (requested && isSuperadmin(role)) {
-    const allowed = await loadCompanyIds();
-    if (allowed.has(requested)) companyId = requested;
+  if (requested) {
+    // A superadmin may act on ANY existing tenant. Everyone else may only
+    // switch into a company they are ACTUALLY A MEMBER OF — this is the check
+    // that stops a technician at Acme from reading Bolt's jobs by editing a
+    // header. Unauthorised values are ignored, never honoured.
+    if (isSuperadmin(baseRole)) {
+      const allowed = await loadCompanyIds();
+      if (allowed.has(requested)) companyId = requested;
+    } else if (memberships.some((m) => m.companyId === requested)) {
+      companyId = requested;
+    }
   }
+
+  // If their default company isn't one they actually belong to (membership
+  // revoked, or a stale user.companyId), fall back to a real one rather than
+  // leaving them acting as a company they were removed from.
+  if (
+    memberships.length > 0 &&
+    !memberships.some((m) => m.companyId === companyId) &&
+    !isSuperadmin(baseRole)
+  ) {
+    companyId = memberships[0]!.companyId;
+  }
+
+  // ---- Per-company role overlay -------------------------------------------
+  // The single highest-leverage line in this change. Dozens of handlers read
+  // `user.role`, `user.permissions`, `user.staffType`. By overlaying the
+  // ACTING company's membership onto the session user here, every one of those
+  // checks becomes per-company for free — the same person can be a technician
+  // at one company and a manager at another, and each request sees the right
+  // one. Superadmin is a platform-level role and is never downgraded by a
+  // membership.
+  const active = memberships.find((m) => m.companyId === companyId);
+  if (active && !isSuperadmin(baseRole)) {
+    c.set("user", {
+      ...(u as Record<string, unknown>),
+      role: active.role,
+      permissions: active.permissions,
+      staffType: active.staffType,
+      managerId: active.managerId,
+      companyId,
+    } as unknown as typeof u);
+  } else {
+    c.set("user", u);
+  }
+
   c.set("companyId", companyId);
   return next();
 });

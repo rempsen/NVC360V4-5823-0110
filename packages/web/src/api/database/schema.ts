@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, index } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, index, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 import { user } from "./auth-schema";
 
@@ -1024,6 +1024,64 @@ export const companies = sqliteTable("companies", {
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }),
   createdAt: now(),
 });
+
+/**
+ * A person's membership OF a company. This is what makes one human able to work
+ * for several companies at once.
+ *
+ * The `user` table is the IDENTITY (name, email, password, phone) and stays
+ * globally unique by email — one human, one login, one password. Everything
+ * that is actually company-specific lives here instead, one row per company:
+ * their role, their permission overrides, whether they're a technician or a
+ * driver, and who they report to.
+ *
+ * So a technician working for both Acme HVAC and Bolt Plumbing is ONE user row
+ * and TWO membership rows. They sign in once and switch between companies.
+ * Acme can make them a manager without Bolt's org chart changing, and Bolt can
+ * remove them without touching their Acme access or their login.
+ *
+ * `authMiddleware` reads the membership for the acting company on every request
+ * and overlays its role/permissions onto the session user, which is what makes
+ * every existing `user.role` check become per-company automatically.
+ */
+export const memberships = sqliteTable(
+  "memberships",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    companyId: text("company_id").notNull(),
+    // Role AT THIS COMPANY. Same vocabulary as user.role
+    // (superadmin | admin | manager | rider | customer).
+    role: text("role").notNull().default("customer"),
+    // Per-person permission override at this company (JSON array). NULL = role defaults.
+    permissions: text("permissions"),
+    // For field staff (role=rider): 'technician' | 'driver'.
+    staffType: text("staff_type"),
+    // Who they report to at THIS company (user.id).
+    managerId: text("manager_id"),
+    // active  = can sign in and work for this company
+    // invited = added but hasn't accepted yet (no access until they do)
+    // disabled= access revoked, kept for history so their jobs still resolve
+    status: text("status").notNull().default("active"),
+    // Set when an admin adds someone who ALREADY has a login elsewhere. The
+    // second company never sets a password; the person accepts to join.
+    invitedBy: text("invited_by"),
+    acceptedAt: integer("accepted_at", { mode: "timestamp_ms" }),
+    createdAt: now(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    // One membership per person per company. This is the integrity rule that
+    // keeps "add this tech" idempotent instead of silently duplicating them.
+    uniqueIndex("memberships_user_company_uidx").on(table.userId, table.companyId),
+    index("memberships_company_idx").on(table.companyId),
+    index("memberships_user_idx").on(table.userId),
+  ],
+);
 
 /**
  * GLOBAL, superadmin-curated deep research per ICP (industry-presets.ts id).

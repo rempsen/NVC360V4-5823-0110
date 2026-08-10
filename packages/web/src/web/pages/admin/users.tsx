@@ -35,6 +35,31 @@ const ROLE_TINT: Record<string, string> = {
   customer: "bg-emerald-live/15 text-emerald-live",
 };
 
+/**
+ * The add form captures the client's business, not just a login: first/last
+ * name so we can address them properly, plus company name, address and website
+ * so a new client record is usable for quoting and invoicing without a second
+ * pass through the drawer. `accountType` is the buying pattern (a single job vs
+ * an ongoing account) — it is NOT the role; the role comes from the tab you
+ * opened the modal from.
+ */
+const EMPTY_ADD_FORM = {
+  firstName: "",
+  lastName: "",
+  email: "",
+  password: "",
+  phone: "",
+  role: "customer",
+  company: "",
+  address: "",
+  city: "",
+  region: "",
+  postalCode: "",
+  country: "",
+  website: "",
+  customerType: "one_time",
+};
+
 export default function AdminClients() {
   const qc = useQueryClient();
   const { noun, nounPlural } = useWorkerNoun();
@@ -48,13 +73,7 @@ export default function AdminClients() {
   const [delUser, setDelUser] = useState<any>(null);
   const [detail, setDetail] = useState<any>(null);
   const [err, setErr] = useState("");
-  const [form, setForm] = useState({
-    name: "",
-    email: "",
-    password: "",
-    phone: "",
-    role: "customer",
-  });
+  const [form, setForm] = useState({ ...EMPTY_ADD_FORM });
 
   const users = useQuery({
     queryKey: ["admin-users"],
@@ -71,7 +90,7 @@ export default function AdminClients() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin-users"] });
       setShowAdd(false);
-      setForm({ name: "", email: "", password: "", phone: "", role: "customer" });
+      setForm({ ...EMPTY_ADD_FORM });
       setErr("");
     },
     onError: (e: any) => setErr(e.message),
@@ -249,7 +268,13 @@ export default function AdminClients() {
           <>
             <BtnGhost onClick={() => setShowAdd(false)}>Cancel</BtnGhost>
             <BtnPrimary
-              disabled={!form.name || !form.email || !form.password || create.isPending}
+              disabled={
+                !form.firstName ||
+                !form.lastName ||
+                !form.email ||
+                !form.password ||
+                create.isPending
+              }
               onClick={() => create.mutate()}
             >
               <Plus className="h-4 w-4" />
@@ -262,10 +287,16 @@ export default function AdminClients() {
           {err && (
             <p className="rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-400">{err}</p>
           )}
-          <Field label="Full name">
-            <input aria-label="Jane Doe" className={inputCls} value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Jane Doe" />
-          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="First name">
+              <input aria-label="First name" className={inputCls} value={form.firstName}
+                onChange={(e) => setForm({ ...form, firstName: e.target.value })} placeholder="Jane" />
+            </Field>
+            <Field label="Last name">
+              <input aria-label="Last name" className={inputCls} value={form.lastName}
+                onChange={(e) => setForm({ ...form, lastName: e.target.value })} placeholder="Doe" />
+            </Field>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Email">
               <input aria-label="jane@email.com" className={inputCls} type="email" value={form.email}
@@ -281,14 +312,45 @@ export default function AdminClients() {
               <input aria-label="+1 416 555 9999" className={inputCls} value={form.phone}
                 onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="+1 416 555 9999" />
             </Field>
-            <Field label="Account type">
-              <select className={inputCls} value={form.role}
-                onChange={(e) => setForm({ ...form, role: e.target.value })}>
-                <option value="customer">{customerNoun}</option>
-                <option value="admin">Dispatcher</option>
-              </select>
-            </Field>
+            {form.role === "customer" ? (
+              <Field label="Account type">
+                <select aria-label="Account type" className={inputCls} value={form.customerType}
+                  onChange={(e) => setForm({ ...form, customerType: e.target.value })}>
+                  <option value="one_time">One-time client</option>
+                  <option value="repeat">Repeat customer</option>
+                </select>
+              </Field>
+            ) : (
+              <Field label="Role">
+                <input aria-label="Role" className={`${inputCls} opacity-60`} value="Dispatcher" readOnly />
+              </Field>
+            )}
           </div>
+
+          {form.role === "customer" && (
+            <div className="space-y-3 border-t border-white/10 pt-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Company</p>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Company name">
+                  <input aria-label="Company name" className={inputCls} value={form.company}
+                    onChange={(e) => setForm({ ...form, company: e.target.value })} placeholder="Acme Inc." />
+                </Field>
+                <Field label="Company website">
+                  <input aria-label="Company website" className={inputCls} value={form.website}
+                    onChange={(e) => setForm({ ...form, website: e.target.value })} placeholder="acme.com" />
+                </Field>
+              </div>
+              <Field label="Company address">
+                <AddressAutocomplete
+                  value={form.address}
+                  placeholder="123 Main St, Toronto, ON"
+                  onResolve={({ address }) =>
+                    setForm((f) => ({ ...f, ...applyAddressParts(f, address) }))
+                  }
+                />
+              </Field>
+            </div>
+          )}
         </div>
       </Modal>
 
@@ -369,10 +431,14 @@ function ClientDrawer({ user, onClose }: { user: any; onClose: () => void }) {
   };
   const [form, setForm] = useState<any>({
     name: "",
+    firstName: "",
+    lastName: "",
     email: "",
     phone: "",
     altPhone: "",
     company: "",
+    website: "",
+    customerType: "",
     address: "",
     city: "",
     region: "",
@@ -386,12 +452,19 @@ function ClientDrawer({ user, onClose }: { user: any; onClose: () => void }) {
 
   useEffect(() => {
     if (user) {
+      // Records created before the name split only have a single `name`; fall
+      // back to splitting it so the fields are never blank for old clients.
+      const [fallbackFirst, ...fallbackRest] = (user.name ?? "").trim().split(/\s+/);
       setForm({
         name: user.name ?? "",
+        firstName: user.firstName || fallbackFirst || "",
+        lastName: user.lastName || fallbackRest.join(" "),
         email: user.email ?? "",
         phone: user.phone ?? "",
         altPhone: user.altPhone ?? "",
         company: user.company ?? "",
+        website: user.website ?? "",
+        customerType: user.customerType || "one_time",
         address: user.address ?? "",
         city: user.city ?? "",
         region: user.region ?? "",
@@ -406,6 +479,10 @@ function ClientDrawer({ user, onClose }: { user: any; onClose: () => void }) {
   }, [
 	user?.id,
 	user?.company,
+	user?.website,
+	user?.customerType,
+	user?.firstName,
+	user?.lastName,
 	user?.notes,
 	user?.city,
 	user?.region,
@@ -490,15 +567,34 @@ function ClientDrawer({ user, onClose }: { user: any; onClose: () => void }) {
               <div className="space-y-3">
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Contact</p>
                 <div className="grid grid-cols-2 gap-3">
-                  <Field label="Full name">
-                    <input aria-label="Jane Doe" className={inputCls} value={form.name}
-                      onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Jane Doe" />
+                  <Field label="First name">
+                    <input aria-label="First name" className={inputCls} value={form.firstName}
+                      onChange={(e) => setForm({ ...form, firstName: e.target.value })} placeholder="Jane" />
                   </Field>
+                  <Field label="Last name">
+                    <input aria-label="Last name" className={inputCls} value={form.lastName}
+                      onChange={(e) => setForm({ ...form, lastName: e.target.value })} placeholder="Doe" />
+                  </Field>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
                   <Field label="Company">
                     <input aria-label="Acme Inc." className={inputCls} value={form.company}
                       onChange={(e) => setForm({ ...form, company: e.target.value })} placeholder="Acme Inc." />
                   </Field>
+                  <Field label="Company website">
+                    <input aria-label="Company website" className={inputCls} value={form.website}
+                      onChange={(e) => setForm({ ...form, website: e.target.value })} placeholder="acme.com" />
+                  </Field>
                 </div>
+                {isClient && (
+                  <Field label="Account type">
+                    <select aria-label="Account type" className={inputCls} value={form.customerType}
+                      onChange={(e) => setForm({ ...form, customerType: e.target.value })}>
+                      <option value="one_time">One-time client</option>
+                      <option value="repeat">Repeat customer</option>
+                    </select>
+                  </Field>
+                )}
                 <Field label="Email">
                   <input aria-label="jane@email.com" className={inputCls} type="email" value={form.email}
                     onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="jane@email.com" />

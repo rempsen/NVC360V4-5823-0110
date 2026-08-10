@@ -2,6 +2,7 @@ import { db } from "./database";
 import * as schema from "./database/schema";
 import { auth } from "./auth";
 import { eq } from "drizzle-orm";
+import { attachMembership } from "./lib/memberships";
 
 const U = "https://images.unsplash.com/";
 const img = (id: string) => `${U}${id}?auto=format&fit=crop&w=900&q=70`;
@@ -213,6 +214,14 @@ async function ensureUser(
   const [u] = await db.select().from(schema.user).where(eq(schema.user.email, email));
   if (u) {
     await db.update(schema.user).set({ role, phone }).where(eq(schema.user.id, u.id));
+    // Roles are resolved from memberships now, so a seeded user without one
+    // would sign in with no role at all.
+    await attachMembership({
+      userId: u.id,
+      companyId: u.companyId ?? "default",
+      role,
+      status: "active",
+    });
     return u.id;
   }
   return null;

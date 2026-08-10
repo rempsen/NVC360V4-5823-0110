@@ -8,6 +8,7 @@ import { putObject } from "../lib/storage";
 import { rateLimit, keyByIp } from "../lib/rate-limit";
 import { fireEvent } from "../../services/dispatch";
 import { isInAnyZone } from "../../shared/zone-utils";
+import { attachMembership, findCompanyUserByEmail } from "../lib/memberships";
 import { recomputeBooking } from "../../services/billing";
 import { reconcileRiderStatus } from "../../services/presence";
 import { capture } from "../lib/analytics";
@@ -496,12 +497,10 @@ export const publicFormsRoutes = new Hono()
     svcId = svc.id;
 
     // ---- find-or-create the customer user (tenant-scoped by email) ----
+    // Match on membership, not user.companyId: a customer this company shares
+    // with another company still belongs to THIS roster.
     let customer = email
-      ? (await db
-          .select()
-          .from(schema.user)
-          .where(and(eq(schema.user.email, email), eq(schema.user.companyId, companyId)))
-          .limit(1))[0]
+      ? ((await findCompanyUserByEmail(email, companyId)) ?? undefined)
       : undefined;
     if (!customer) {
       const uid = crypto.randomUUID();
@@ -536,6 +535,9 @@ export const publicFormsRoutes = new Hono()
             .returning();
         });
       customer = ins[0];
+      // Without a membership the new client would not show on this company's
+      // client list, which is membership-scoped now.
+      if (customer) await attachMembership({ userId: customer.id, companyId, role: "customer", status: "active" });
     }
 
     // ---- optional photo upload ----
@@ -684,7 +686,7 @@ async function submitWorkOrder(c: any, companyId: string, form: typeof schema.in
     if (!name) return c.json({ message: "Client name is required (or pick an existing client)" }, 400);
 
     let customer = email
-      ? (await db.select().from(schema.user).where(and(eq(schema.user.email, email), eq(schema.user.companyId, companyId))).limit(1))[0]
+      ? ((await findCompanyUserByEmail(email, companyId)) ?? undefined)
       : undefined;
     if (!customer) {
       const uid = crypto.randomUUID();
@@ -700,6 +702,9 @@ async function submitWorkOrder(c: any, companyId: string, form: typeof schema.in
         }).returning();
       });
       customer = ins[0];
+      // Without a membership the new client would not show on this company's
+      // client list, which is membership-scoped now.
+      if (customer) await attachMembership({ userId: customer.id, companyId, role: "customer", status: "active" });
     }
     customerId = customer.id;
   }

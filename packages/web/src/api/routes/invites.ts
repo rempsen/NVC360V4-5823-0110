@@ -2,7 +2,9 @@ import { Hono } from "hono";
 import { db } from "../database";
 import * as schema from "../database/schema";
 import { eq } from "drizzle-orm";
-import { requireAdmin, tx } from "../middleware/auth";
+import { requireAdmin, tx, tenantId } from "../middleware/auth";
+import { attachMembership, isMember } from "../lib/memberships";
+import { sendJoinCompanyInvite } from "../lib/join-invite";
 import { auth } from "../auth";
 import { sendEmail, loadEmailBrand, resolveLogo } from "../../services/email";
 import { sendSms } from "../../services/sms";
@@ -72,7 +74,38 @@ export const invitesRoutes = new Hono()
     const u = c.get("user") as SessionUser;
     const b = await parseBody(c, InviteCreate);
     const [exists] = await db.select().from(schema.user).where(eq(schema.user.email, b.email));
-    if (exists) return c.json({ message: "A user with that email already exists" }, 409);
+    if (exists) {
+      // They already have an NVC360 login — probably a contract technician who
+      // works for another company. Don't ask them to create a second account
+      // (and don't let this company set a password for them). Invite them to
+      // join with the login they already have.
+      const cid = tenantId(c);
+      if (await isMember(exists.id, cid))
+        return c.json({ message: "That person is already on your team" }, 409);
+      const { membership } = await attachMembership({
+        userId: exists.id,
+        companyId: cid,
+        role: "rider",
+        staffType: "technician",
+        status: "invited",
+        invitedBy: u.id,
+      });
+      await sendJoinCompanyInvite({
+        email: exists.email,
+        name: exists.name,
+        companyId: cid,
+        membershipId: membership!.id,
+      }).catch((e) => console.error("join-company invite failed", e));
+      return c.json(
+        {
+          existingAccount: true,
+          status: "invited",
+          message:
+            "That email already has an NVC360 login. We've invited them to join your company — they'll keep their existing password.",
+        },
+        201,
+      );
+    }
 
     const [inv] = await tx(c).insert(schema.techInvites, {
       email: b.email,
@@ -161,6 +194,14 @@ export const invitesRoutes = new Hono()
     if (!u) return c.json({ message: "Failed to create account" }, 500);
     // The new tech belongs to the inviting company — stamp tenant onto the user row.
     await db.update(schema.user).set({ role: "rider", phone: phone || inv.phone || "", companyId: inv.companyId }).where(eq(schema.user.id, u.id));
+    // The membership is what actually grants them their role at this company.
+    await attachMembership({
+      userId: u.id,
+      companyId: inv.companyId,
+      role: "rider",
+      staffType: "technician",
+      status: "active",
+    });
 
     const palette = ["#06b6d4", "#22c55e", "#f59e0b", "#a855f7", "#ef4444", "#3b82f6"];
     await db.insert(schema.riders).values({

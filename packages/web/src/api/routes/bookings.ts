@@ -6,6 +6,7 @@ import { eq, isNull, and, inArray, desc, sql, type SQL } from "drizzle-orm";
 import { requireAuth, tenantId, tx } from "../middleware/auth";
 import { isAdminRole } from "../lib/permissions";
 import { Err } from "../lib/errors";
+import { isMember } from "../lib/memberships";
 import { fireEvent } from "../../services/dispatch";
 import { recomputeBooking } from "../../services/billing";
 import { reconcileRiderStatus } from "../../services/presence";
@@ -647,7 +648,9 @@ export const bookingsRoutes = new Hono()
     }
     if (body.customerId !== undefined) {
       const [cu] = await db.select().from(schema.user).where(eq(schema.user.id, body.customerId));
-      if (!cu || cu.companyId !== co) return c.json({ message: "Client not found" }, 404);
+      // Membership, not user.companyId: a client shared with another company is
+      // still this company's client, and comparing home companies rejected them.
+      if (!cu || !(await isMember(cu.id, co))) return c.json({ message: "Client not found" }, 404);
     }
     if (body.riderId) {
       const rd = await t.selectOne(schema.riders, eq(schema.riders.id, body.riderId));

@@ -1,5 +1,5 @@
+import { usersForCompany } from "../lib/memberships";
 import { Hono } from "hono";
-import { db } from "../database";
 import * as schema from "../database/schema";
 import { requireAuth, tenantId } from "../middleware/auth";
 import { tdb, type TenantDb } from "../database/tenant";
@@ -66,7 +66,7 @@ function inPoly(lat: number, lng: number, poly: [number, number][]) {
 
 async function techNameMap(t: TenantDb) {
   const riders = await t.select(schema.riders);
-  const users = (await db.select().from(schema.user)).filter((u) => u.companyId === t.companyId);
+  const users = await usersForCompany(t.companyId);
   const uById = new Map(users.map((u) => [u.id, u]));
   const map = new Map<string, { name: string; riderId: string }>();
   for (const r of riders) {
@@ -392,7 +392,7 @@ export const reportsRoutes = new Hono()
       /* ========================== CLIENTS ========================== */
       case "clients": {
         const bs = (await loadBookings()).filter((b) => b.status !== "cancelled");
-        const users = (await db.select().from(schema.user)).filter((u) => u.companyId === t.companyId);
+        const users = await usersForCompany(t.companyId);
         const uById = new Map(users.map((u) => [u.id, u]));
         const agg = new Map<string, { name: string; email: string; jobs: number; revenue: number; first: number; last: number }>();
         for (const b of bs) {
@@ -446,7 +446,7 @@ export const reportsRoutes = new Hono()
       case "invoices-ar": {
         let inv = await t.select(schema.invoices);
         inv = inv.filter((i) => inRange(i.createdAt));
-        const users = (await db.select().from(schema.user)).filter((u) => u.companyId === t.companyId);
+        const users = await usersForCompany(t.companyId);
         const uById = new Map(users.map((u) => [u.id, u]));
         const now = Date.now();
         let paid = 0, unpaid = 0;

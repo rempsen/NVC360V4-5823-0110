@@ -1,3 +1,5 @@
+import { usersForCompany, attachMembership, isMember, findUserByEmail, detachMembership } from "../lib/memberships";
+import { sendJoinCompanyInvite } from "../lib/join-invite";
 import { Hono } from "hono";
 import { db } from "../database";
 import * as schema from "../database/schema";
@@ -52,12 +54,28 @@ const password = z
   .min(8, "Password must be at least 8 characters")
   .max(200, "Password is too long");
 
+/** 'one_time' = a single job, 'repeat' = an ongoing account. */
+const CustomerType = z.enum(["one_time", "repeat"], { error: "Unknown account type" });
+
 const UserCreate = z.object({
-  name: shortText("Name", 200),
+  // `name` is optional now: the add form collects first + last and the handler
+  // composes the display name from them. Older callers that still send a
+  // single `name` keep working.
+  name: shortText("Name", 200).optional(),
+  firstName: shortText("First name", 100).optional(),
+  lastName: shortText("Last name", 100).optional(),
   email: emailField(),
   password,
   phone: phoneField.optional(),
   role: z.enum(["customer", "admin", "superadmin"], { error: "Unknown role" }).optional(),
+  company: longText(200).optional(),
+  website: longText(500).optional(),
+  address: longText(500).optional(),
+  city: longText(120).optional(),
+  region: longText(120).optional(),
+  postalCode: longText(40).optional(),
+  country: longText(120).optional(),
+  customerType: CustomerType.optional(),
 });
 
 /** One CRM address / contact entry. Bounded so a row can't be inflated. */
@@ -86,6 +104,10 @@ const ContactEntry = z
 const UserPatch = z
   .object({
     name: shortText("Name", 200),
+    firstName: longText(100),
+    lastName: longText(100),
+    website: longText(500),
+    customerType: CustomerType,
     // A change here changes what the person types to sign in — it has to be a
     // real address, and it has to still be unique (checked in the handler).
     email: emailField(),
@@ -134,7 +156,7 @@ export const adminRoutes = new Hono()
     };
 
     const allBookings = await t.select(schema.bookings);
-    const users = (await db.select().from(schema.user)).filter((u) => u.companyId === cid);
+    const users = await usersForCompany(cid);
     const riders = await t.select(schema.riders);
 
     // Apply the range to bookings (on the chosen basis) and to revenue
@@ -193,17 +215,21 @@ export const adminRoutes = new Hono()
   })
   .get("/users", requireAdmin, async (c) => {
     const cid = tenantId(c);
-    const users = (await db.select().from(schema.user)).filter((u) => u.companyId === cid);
+    const users = await usersForCompany(cid);
     return c.json(
       {
         users: users.map((u) => ({
           id: u.id,
           name: u.name,
+          firstName: u.firstName ?? "",
+          lastName: u.lastName ?? "",
           email: u.email,
           role: u.role ?? "customer",
           phone: u.phone,
           altPhone: u.altPhone ?? "",
           company: u.company ?? "",
+          website: u.website ?? "",
+          customerType: u.customerType ?? "",
           address: u.address ?? "",
           city: u.city ?? "",
           region: u.region ?? "",
@@ -221,7 +247,13 @@ export const adminRoutes = new Hono()
   // create a user account (admin) — clients or dispatchers
   .post("/users", requireAdmin, async (c) => {
     const me = c.get("user") as SessionUser;
-    const { name, email, password: pw, phone, role } = await parseBody(c, UserCreate);
+    const body = await parseBody(c, UserCreate);
+    const { email, password: pw, phone, role } = body;
+    // Display name is composed from first + last when the caller sends the
+    // structured pair; a caller that still sends a single `name` wins.
+    const composed = [body.firstName, body.lastName].filter(Boolean).join(" ").trim();
+    const name = (body.name || composed).trim();
+    if (!name) return c.json({ message: "Name is required" }, 400);
     // Admin-tier accounts (admin/superadmin) may only be minted by a superadmin.
     if (isAdminRole(role) && !isSuperadmin(me.role))
       return c.json(
@@ -235,11 +267,46 @@ export const adminRoutes = new Hono()
         { message: `Superadmin is reserved for ${SUPERADMIN_DOMAINS.join(", ")} accounts` },
         403,
       );
-    const [exists] = await db
-      .select()
-      .from(schema.user)
-      .where(eq(schema.user.email, email));
-    if (exists) return c.json({ message: "Email already in use" }, 409);
+    const cid = tenantId(c);
+    const existing = await findUserByEmail(email);
+
+    // The same client can be served by more than one company (and the same
+    // person can be a client here and a technician elsewhere). Reuse their
+    // login instead of rejecting the email — but never set a password for an
+    // account that already exists.
+    if (existing) {
+      if (await isMember(existing.id, cid))
+        return c.json({ message: "That person is already in your account" }, 409);
+      const { membership } = await attachMembership({
+        userId: existing.id,
+        companyId: cid,
+        role: r,
+        status: "invited",
+        invitedBy: me.id,
+      });
+      await sendJoinCompanyInvite({
+        email: existing.email,
+        name: existing.name,
+        companyId: cid,
+        membershipId: membership!.id,
+      }).catch((e) => console.error("join-company invite failed", e));
+      return c.json(
+        {
+          user: {
+            id: existing.id,
+            name: existing.name,
+            email,
+            phone: existing.phone ?? "",
+            role: r,
+          },
+          existingAccount: true,
+          status: "invited",
+          message:
+            "That email already has an NVC360 login. We've invited them to join your company — they'll keep their existing password.",
+        },
+        201,
+      );
+    }
 
     try {
       await auth.api.signUpEmail({
@@ -255,8 +322,31 @@ export const adminRoutes = new Hono()
     if (!u) return c.json({ message: "Failed to create user" }, 500);
     await db
       .update(schema.user)
-      .set({ role: r, phone: phone ?? "", companyId: tenantId(c) })
+      .set({
+        role: r,
+        phone: phone ?? "",
+        companyId: cid,
+        name,
+        firstName: body.firstName ?? null,
+        lastName: body.lastName ?? null,
+        company: body.company ?? null,
+        website: body.website ?? null,
+        address: body.address ?? null,
+        city: body.city ?? null,
+        region: body.region ?? null,
+        postalCode: body.postalCode ?? null,
+        country: body.country ?? null,
+        // Only clients carry a buying pattern; a dispatcher never does.
+        customerType: r === "customer" ? body.customerType ?? "one_time" : null,
+      })
       .where(eq(schema.user.id, u.id));
+    await attachMembership({
+      userId: u.id,
+      companyId: cid,
+      role: r,
+      status: "active",
+      invitedBy: me.id,
+    });
     return c.json(
       { user: { id: u.id, name, email, phone: phone ?? "", role: r } },
       201,
@@ -268,7 +358,10 @@ export const adminRoutes = new Hono()
     const b = await parseBody(c, UserPatch);
     const me = c.get("user") as SessionUser;
     const [target] = await db.select().from(schema.user).where(eq(schema.user.id, id));
-    if (!target || target.companyId !== tenantId(c)) return c.json({ message: "Not found" }, 404);
+    // Membership, not user.companyId: a client shared with another company is
+    // still legitimately ours to edit.
+    if (!target || !(await isMember(id, tenantId(c))))
+      return c.json({ message: "Not found" }, 404);
     // Editing an admin-tier account requires superadmin.
     if (isAdminRole(target.role) && !isSuperadmin(me.role))
       return c.json({ message: "Only a superadmin can modify admin-level accounts" }, 403);
@@ -282,6 +375,14 @@ export const adminRoutes = new Hono()
 
     const { addresses, contacts, ...rest } = b;
     const updates: Record<string, any> = { ...rest };
+    // Keep the display name in sync when the structured name is edited, so the
+    // job cards / emails / exports that read `name` don't drift.
+    if ((b.firstName !== undefined || b.lastName !== undefined) && b.name === undefined) {
+      const first = b.firstName ?? target.firstName ?? "";
+      const last = b.lastName ?? target.lastName ?? "";
+      const composed = [first, last].filter(Boolean).join(" ").trim();
+      if (composed) updates.name = composed;
+    }
     // JSON array fields (multiple addresses / contacts)
     if (addresses !== undefined) updates.addresses = JSON.stringify(addresses);
     if (contacts !== undefined) updates.contacts = JSON.stringify(contacts);
@@ -306,7 +407,24 @@ export const adminRoutes = new Hono()
     const me = c.get("user") as SessionUser;
     const { password: newPw } = await parseBody(c, ResetPassword);
     const [target] = await db.select().from(schema.user).where(eq(schema.user.id, id));
-    if (!target || target.companyId !== tenantId(c)) return c.json({ message: "Not found" }, 404);
+    if (!target || !(await isMember(id, tenantId(c))))
+      return c.json({ message: "Not found" }, 404);
+    // A person who works for several companies has ONE password. Letting this
+    // company reset it would hand them control of that person's account at
+    // every other company — the exact takeover the invite flow exists to
+    // prevent. They must use "forgot password" themselves instead.
+    const memberOf = await db
+      .select()
+      .from(schema.memberships)
+      .where(eq(schema.memberships.userId, id));
+    if (memberOf.length > 1)
+      return c.json(
+        {
+          message:
+            "This person also works for another company, so their password can't be reset from here. Ask them to use \"Forgot password\" on the sign-in page.",
+        },
+        403,
+      );
     if (isAdminRole(target.role) && !isSuperadmin(me.role))
       return c.json({ message: "Only a superadmin can reset admin-level passwords" }, 403);
     const ctx = await auth.$context;
@@ -366,12 +484,34 @@ export const adminRoutes = new Hono()
       .select()
       .from(schema.user)
       .where(eq(schema.user.id, id));
-    if (!target || target.companyId !== tenantId(c)) return c.json({ message: "Not found" }, 404);
+    const cid = tenantId(c);
+    if (!target || !(await isMember(id, cid)))
+      return c.json({ message: "Not found" }, 404);
     // Deleting an admin-tier account requires superadmin.
     if (isAdminRole(target.role) && !isSuperadmin(me.role))
       return c.json({ message: "Only a superadmin can delete admin-level accounts" }, 403);
     // clean up rider profile if any
     await tx(c).delete(schema.riders, eq(schema.riders.userId, id));
+
+    // If they also work for another company, deleting the user row would wipe
+    // them from that company's records too. Only end OUR relationship.
+    const memberOf = await db
+      .select()
+      .from(schema.memberships)
+      .where(eq(schema.memberships.userId, id));
+    if (memberOf.length > 1) {
+      await detachMembership(id, cid);
+      return c.json(
+        {
+          ok: true,
+          deletedAccount: false,
+          message:
+            "Removed from your company. Their NVC360 login stays active because they also work for another company.",
+        },
+        200,
+      );
+    }
+
     await db.delete(schema.user).where(eq(schema.user.id, id));
-    return c.json({ ok: true }, 200);
+    return c.json({ ok: true, deletedAccount: true }, 200);
   });
