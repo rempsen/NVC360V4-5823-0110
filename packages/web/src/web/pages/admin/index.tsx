@@ -1,36 +1,37 @@
-import { lazy, Suspense } from "react";
+import { Suspense } from "react";
 import { Route, Switch } from "wouter";
 import { AdminShell } from "./shell";
+import { lazyRoute } from "../../lib/lazy-route";
 
 // Admin sub-pages are lazy-loaded so opening the dashboard doesn't also pull in
 // the scheduler, reports (charts), zones (maps), catalog, etc. Each page splits
 // into its own chunk and loads only when its route is visited.
-const AdminDashboard = lazy(() => import("./dashboard"));
-const FleetPage = lazy(() => import("./fleet"));
-const SchedulerPage = lazy(() => import("./scheduler"));
-const WorkOrdersPage = lazy(() => import("./bookings"));
-const BuilderPage = lazy(() => import("./builder"));
-const TechsPage = lazy(() => import("./riders"));
-const ClientsPage = lazy(() => import("./users"));
-const AutomationPage = lazy(() => import("./automation"));
-const MaintenancePage = lazy(() => import("./maintenance"));
-const InboxPage = lazy(() => import("./inbox"));
-const IntegrationsPage = lazy(() => import("./integrations"));
-const ReportsPage = lazy(() => import("./reports"));
-const SettingsPage = lazy(() => import("./settings"));
-const TagsPage = lazy(() => import("./tags"));
-const PayoutsPage = lazy(() => import("./payouts"));
-const AuditPage = lazy(() => import("./audit"));
-const ZonesPage = lazy(() => import("./zones"));
-const ServicesPage = lazy(() => import("./services"));
-const CatalogPage = lazy(() => import("./catalog"));
-const OptionsCatalogPage = lazy(() => import("./options-catalog"));
-const ReviewsPage = lazy(() => import("./reviews"));
-const NotificationsPage = lazy(() => import("./notifications"));
-const ApiAccessPage = lazy(() => import("./api-access"));
-const IntakeFormsPage = lazy(() => import("./intake-forms"));
-const CompaniesPage = lazy(() => import("./companies"));
-const JobReportPage = lazy(() => import("./job-report"));
+const AdminDashboard = lazyRoute(() => import("./dashboard"));
+const FleetPage = lazyRoute(() => import("./fleet"));
+const SchedulerPage = lazyRoute(() => import("./scheduler"));
+const WorkOrdersPage = lazyRoute(() => import("./bookings"));
+const BuilderPage = lazyRoute(() => import("./builder"));
+const TechsPage = lazyRoute(() => import("./riders"));
+const ClientsPage = lazyRoute(() => import("./users"));
+const AutomationPage = lazyRoute(() => import("./automation"));
+const MaintenancePage = lazyRoute(() => import("./maintenance"));
+const InboxPage = lazyRoute(() => import("./inbox"));
+const IntegrationsPage = lazyRoute(() => import("./integrations"));
+const ReportsPage = lazyRoute(() => import("./reports"));
+const SettingsPage = lazyRoute(() => import("./settings"));
+const TagsPage = lazyRoute(() => import("./tags"));
+const PayoutsPage = lazyRoute(() => import("./payouts"));
+const AuditPage = lazyRoute(() => import("./audit"));
+const ZonesPage = lazyRoute(() => import("./zones"));
+const ServicesPage = lazyRoute(() => import("./services"));
+const CatalogPage = lazyRoute(() => import("./catalog"));
+const OptionsCatalogPage = lazyRoute(() => import("./options-catalog"));
+const ReviewsPage = lazyRoute(() => import("./reviews"));
+const NotificationsPage = lazyRoute(() => import("./notifications"));
+const ApiAccessPage = lazyRoute(() => import("./api-access"));
+const IntakeFormsPage = lazyRoute(() => import("./intake-forms"));
+const CompaniesPage = lazyRoute(() => import("./companies"));
+const JobReportPage = lazyRoute(() => import("./job-report"));
 
 function AdminNotFound() {
   return (

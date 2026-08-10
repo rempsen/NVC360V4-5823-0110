@@ -29,7 +29,7 @@ function isExpected(err: unknown): boolean {
 }
 
 /** A stale lazy chunk after a redeploy — a reload genuinely fixes it. */
-function isStaleChunk(err: unknown): boolean {
+export function isStaleChunkError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err ?? "");
   return /Failed to fetch dynamically imported module|Importing a module script failed|ChunkLoadError/i.test(
     msg,
@@ -41,7 +41,7 @@ export function installGlobalErrorHandlers() {
   installed = true;
 
   const handle = (err: unknown, source: "error" | "unhandledrejection") => {
-    if (isStaleChunk(err)) {
+    if (isStaleChunkError(err)) {
       toast({
         kind: "warning",
         key: "stale-chunk",

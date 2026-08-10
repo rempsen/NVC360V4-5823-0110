@@ -1,7 +1,8 @@
-import { lazy, Suspense } from "react";
+import { Suspense } from "react";
 import { Route, Switch } from "wouter";
 import Index from "./pages/index";
 import AuthPage from "./pages/auth";
+import { lazyRoute } from "./lib/lazy-route";
 import { Provider } from "./components/provider";
 import { ProtectedRoute } from "./components/protected-route";
 import { AgentFeedback } from "@runablehq/website-runtime";
@@ -17,16 +18,16 @@ import { RootErrorBoundary, RouteErrorBoundary } from "./components/error-bounda
 // (customer / rider / admin) and rarely-hit public pages load on demand. This
 // is the core cold-start win: a first-time visitor no longer downloads the
 // entire admin console + maps + charts before the landing page renders.
-const ForgotPasswordPage = lazy(() => import("./pages/forgot-password"));
-const ResetPasswordPage = lazy(() => import("./pages/reset-password"));
-const TrackPublic = lazy(() => import("./pages/track-public"));
-const SelectionsPublic = lazy(() => import("./pages/selections-public"));
-const PropertyPublic = lazy(() => import("./pages/property-public"));
-const IntakeForm = lazy(() => import("./pages/intake-form"));
-const JoinTech = lazy(() => import("./pages/join-tech"));
-const CustomerApp = lazy(() => import("./pages/customer"));
-const RiderApp = lazy(() => import("./pages/rider"));
-const AdminApp = lazy(() => import("./pages/admin"));
+const ForgotPasswordPage = lazyRoute(() => import("./pages/forgot-password"));
+const ResetPasswordPage = lazyRoute(() => import("./pages/reset-password"));
+const TrackPublic = lazyRoute(() => import("./pages/track-public"));
+const SelectionsPublic = lazyRoute(() => import("./pages/selections-public"));
+const PropertyPublic = lazyRoute(() => import("./pages/property-public"));
+const IntakeForm = lazyRoute(() => import("./pages/intake-form"));
+const JoinTech = lazyRoute(() => import("./pages/join-tech"));
+const CustomerApp = lazyRoute(() => import("./pages/customer"));
+const RiderApp = lazyRoute(() => import("./pages/rider"));
+const AdminApp = lazyRoute(() => import("./pages/admin"));
 
 function NotFound() {
   return (
