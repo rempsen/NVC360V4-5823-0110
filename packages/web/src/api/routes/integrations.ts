@@ -11,6 +11,53 @@ import {
 import { uploadToDrive, DEFAULT_BACKUP_FOLDER } from "../../services/google-drive";
 import { loadDataset, toCsv, toXlsx, DATASET_COLUMNS } from "./export";
 import { audit } from "../lib/audit";
+import { z } from "zod";
+import { parseBody, shortText, longText, bool } from "../lib/validate";
+
+/* -------------------------------------------------------------------------- */
+/*  Request bodies                                                            */
+/*                                                                            */
+/*  Reproduced live on :4200 before this pass:                                */
+/*                                                                            */
+/*   - PUT /app-credentials/google_drive { clientId: { a: 1 } } -> 200, and    */
+/*     the stored client id was the literal string "[object Object]". That is  */
+/*     the OAuth app id every tenant's Google connection is built from, so a   */
+/*     fat-fingered paste silently breaks connecting for everyone with no      */
+/*     error anywhere — the credential just never works.                      */
+/*   - PUT /drive/settings { subfolderByMonth: "yes" } -> 200 reporting the    */
+/*     OLD value. The typeof guard skipped the write, so the response looked   */
+/*     successful while nothing changed: a toggle that silently doesn't save.  */
+/*   - PUT /drive/settings { folderName: 5,000 chars } -> 200 (truncated to    */
+/*     80 with no complaint) and { folderName: {} } -> 200, silently ignored.  */
+/*   - POST /:id/disconnect <bogus id> -> 200 {} — reports a disconnect that   */
+/*     never happened, on a row that may belong to another tenant. Compare     */
+/*     /:id/sync, which correctly 404s.                                       */
+/* -------------------------------------------------------------------------- */
+
+const AppCredentialsBody = z.object({
+  // Real OAuth client ids are long opaque strings, never objects.
+  clientId: shortText("Client ID", 400),
+  // Blank/absent means "keep the existing secret" — the form shows it masked.
+  clientSecret: z.string().trim().max(600, "Client secret is too long").optional(),
+  enabled: bool("Enabled").optional(),
+});
+
+const DriveExportBody = z.object({
+  dataset: shortText("Dataset", 60),
+  format: z.enum(["csv", "xlsx"], { error: "Format must be csv or xlsx" }).optional(),
+});
+
+const DriveSettingsBody = z
+  .object({
+    // Length-capped but NOT min(1): the real UI submits this field on every
+    // save, and clearing it legitimately means "use the default folder name".
+    // A min-length rule here would break the Drive settings dialog.
+    folderName: longText(80),
+    subfolderByDataset: bool("Dataset subfolders"),
+    subfolderByMonth: bool("Month subfolders"),
+  })
+  .partial()
+  .refine((b) => Object.keys(b).length > 0, { error: "Nothing to update" });
 
 // short-lived state store for the OAuth handshake (CSRF + which integration row)
 const stateStore = new Map<string, { integrationId: string; provider: ProviderId; exp: number }>();
@@ -97,10 +144,10 @@ export const integrationsRoutes = new Hono()
     if (!isSuperadmin(u?.role)) return c.json({ message: "Forbidden" }, 403);
     const provider = c.req.param("provider") as ProviderId;
     if (!PROVIDERS[provider]) return c.json({ message: "Unsupported provider" }, 400);
-    const body = await c.req.json().catch(() => ({}));
-    const clientId = String(body.clientId ?? "").trim();
+    const body = await parseBody(c, AppCredentialsBody);
+    const clientId = body.clientId;
     const clientSecretRaw = body.clientSecret;
-    const enabled = body.enabled === undefined ? true : !!body.enabled;
+    const enabled = body.enabled === undefined ? true : body.enabled;
 
     const existing = await db.select().from(schema.oauthAppCredentials)
       .where(eq(schema.oauthAppCredentials.provider, provider)).then((r) => r[0]);
@@ -108,7 +155,7 @@ export const integrationsRoutes = new Hono()
     // Empty secret on update = keep existing secret (form shows it masked).
     const clientSecret = clientSecretRaw === undefined || clientSecretRaw === ""
       ? (existing?.clientSecret ?? "")
-      : String(clientSecretRaw).trim();
+      : clientSecretRaw;
 
     if (existing) {
       await db.update(schema.oauthAppCredentials).set({
@@ -191,14 +238,12 @@ export const integrationsRoutes = new Hono()
   // lands in the company's own connected Google Drive ("NVC360 Backups" folder).
   .post("/drive/export", requireAuth, async (c) => {
     const t = tx(c);
-    const body = await c.req.json().catch(() => ({}));
-    const dataset = String(body.dataset ?? "").trim();
-    const format = (String(body.format ?? "csv").toLowerCase() === "xlsx"
-      ? "xlsx"
-      : "csv") as "csv" | "xlsx";
+    const body = await parseBody(c, DriveExportBody);
+    const dataset = body.dataset;
+    const format: "csv" | "xlsx" = body.format ?? "csv";
 
     if (!DATASET_COLUMNS[dataset])
-      return c.json({ message: "Unknown dataset" }, 400);
+      return c.json({ message: "Unknown dataset", fields: { dataset: "Unknown dataset" } }, 400);
 
     // find this tenant's connected Drive integration
     const drive = await t.selectOne(
@@ -308,17 +353,17 @@ export const integrationsRoutes = new Hono()
       eq(schema.integrations.provider, "google_drive"),
     );
     if (!drive) return c.json({ message: "Google Drive is not connected." }, 412);
-    const body = await c.req.json().catch(() => ({}));
+    const body = await parseBody(c, DriveSettingsBody);
     let cfg: any = {};
     try { cfg = JSON.parse(drive.config || "{}"); } catch { cfg = {}; }
 
-    if (typeof body.folderName === "string") {
+    if (body.folderName !== undefined) {
       // Strip slashes/control chars — this is a single folder name, not a path.
-      const clean = body.folderName.replace(/[\\/]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
+      const clean = body.folderName.replace(/[\\/]+/g, " ").replace(/\s+/g, " ").trim();
       cfg.folderName = clean || DEFAULT_BACKUP_FOLDER;
     }
-    if (typeof body.subfolderByDataset === "boolean") cfg.subfolderByDataset = body.subfolderByDataset;
-    if (typeof body.subfolderByMonth === "boolean") cfg.subfolderByMonth = body.subfolderByMonth;
+    if (body.subfolderByDataset !== undefined) cfg.subfolderByDataset = body.subfolderByDataset;
+    if (body.subfolderByMonth !== undefined) cfg.subfolderByMonth = body.subfolderByMonth;
 
     await t.update(schema.integrations, { config: JSON.stringify(cfg) }, eq(schema.integrations.id, drive.id));
     return c.json({
@@ -330,6 +375,10 @@ export const integrationsRoutes = new Hono()
   })
 
   .post("/:id/disconnect", requireAuth, async (c) => {
+    // Was returning 200 {} for an id that doesn't exist in this tenant,
+    // reporting a disconnect that never happened.
+    const found = await tx(c).selectOne(schema.integrations, eq(schema.integrations.id, c.req.param("id")));
+    if (!found) return c.json({ message: "Not found" }, 404);
     const [r] = await tx(c).update(schema.integrations, {
       status: "disconnected", accountLabel: "", accessToken: "", refreshToken: "", expiresAt: null, scope: "", externalAccountId: "",
     }, eq(schema.integrations.id, c.req.param("id")));

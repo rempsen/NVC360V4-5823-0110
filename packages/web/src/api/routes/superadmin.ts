@@ -34,7 +34,113 @@ import {
   removeDomain,
 } from "../../services/email-domains";
 
+import { z } from "zod";
+import {
+  parseBody, shortText, longText, optText, hexColor, outboundUrl, imageRef, email as emailField, phone,
+} from "../lib/validate";
+
 type SessionUser = { id: string; name?: string };
+
+/* -------------------------------------------------------------------------- */
+/*  Request bodies                                                            */
+/*                                                                            */
+/*  Reproduced live on :4200 before this pass (mutations were aimed at the     */
+/*  acme-hvac demo tenant and its settings row was snapshotted through         */
+/*  drizzle first, then restored):                                            */
+/*                                                                            */
+/*   - POST /brand-scout { website: "http://127.0.0.1:4200/api/health" }       */
+/*     -> 200, and the returned proposal carried primaryColor "#ffffff"        */
+/*     scraped from that response. The server fetches whatever URL the caller  */
+/*     supplies and echoes parsed content back: a working SSRF with an output  */
+/*     channel. { website: "http://169.254.169.254/latest/meta-data/" } (cloud */
+/*     instance metadata) was also accepted and attempted.                     */
+/*   - PATCH /companies/:id/brand { brand: { logoUrl: "javascript:alert(1)" }} */
+/*     -> 200 and STORED. That value is rendered as an <img src> in the tenant */
+/*     UI and in outbound notification email headers.                          */
+/*   - Same route: primaryColor "chartreuse-ish" stored (breaks the CSS custom */
+/*     property and the email theme), email "not-an-email" stored as the        */
+/*     tenant's public contact address (guaranteeing bounces on every reply),  */
+/*     and a 20,000-character jobNoun stored — that noun is rendered in every  */
+/*     label, table header and email subject line in the product.              */
+/*   - POST /companies validated nothing beyond "name present": adminPassword  */
+/*     had no minimum length, adminEmail was never checked for being an email  */
+/*     address, and the slug-collision check ran BEFORE the credential checks, */
+/*     so a request with both problems reported only the collision.            */
+/* -------------------------------------------------------------------------- */
+
+/** Terminology + footer details the AI scout proposes, all optional. */
+const BrandProposal = z
+  .object({
+    primaryColor: hexColor("Primary colour").nullable(),
+    accentColor: hexColor("Accent colour").nullable(),
+    // Rendered in an <img src> in-app AND in email headers.
+    logoUrl: imageRef("Logo URL").nullable(),
+    logoSourceUrl: imageRef("Logo source URL").nullable(),
+    workerNoun: shortText("Worker noun", 40).nullable(),
+    workerNounPlural: shortText("Worker noun (plural)", 40).nullable(),
+    customerNoun: shortText("Customer noun", 40).nullable(),
+    customerNounPlural: shortText("Customer noun (plural)", 40).nullable(),
+    jobNoun: shortText("Job noun", 40).nullable(),
+    jobNounPlural: shortText("Job noun (plural)", 40).nullable(),
+    tagline: longText(300).nullable(),
+    hours: longText(300).nullable(),
+    address: longText(300).nullable(),
+    email: emailField("Contact email").nullable(),
+    phone: phone.nullable(),
+    website: longText(300).nullable(),
+    services: z.union([z.string().max(20_000), z.array(z.unknown()).max(200), z.record(z.string(), z.unknown())]).nullable(),
+    socials: z.union([z.string().max(5_000), z.record(z.string(), z.unknown())]).nullable(),
+  })
+  .partial()
+  // brand-scout returns explicit nulls for anything it couldn't read off the
+  // site, and the admin submits that proposal object as-is. Nulls must be
+  // accepted (and are ignored downstream) or the whole onboarding flow 400s.
+  .transform((b) => {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(b)) if (v !== null && v !== undefined) out[k] = v;
+    return out as typeof b;
+  });
+
+const BrandScoutBody = z.object({
+  // outboundUrl() blocks javascript:, loopback, link-local (169.254.x) and
+  // RFC1918 space — this URL is fetched BY THE SERVER.
+  //
+  // The preprocess step matters for the real UI: admins type a bare domain
+  // ("acme.com") into the Grab Brand Assets box and brand-scout's own
+  // normalizeUrl() used to add the scheme. Adding it here first keeps that
+  // flow working instead of 400ing on a URL the user considers valid.
+  website: z.preprocess(
+    (v) => (typeof v === "string" && v.trim() && !/^[a-z][a-z0-9+.-]*:/i.test(v.trim()) ? `https://${v.trim()}` : v),
+    outboundUrl("Website"),
+  ),
+  companyId: optText(120),
+  name: optText(200),
+});
+
+const BrandPatchBody = z.object({ brand: BrandProposal });
+
+const CompanyCreateBody = z.object({
+  name: shortText("Company name", 200),
+  slug: optText(80),
+  contactEmail: z.union([emailField("Contact email"), z.literal("")]).optional(),
+  phone: phone.optional(),
+  plan: z.enum(["starter", "pro", "enterprise"], { error: "Unknown plan" }).optional(),
+  industry: optText(80),
+  industryOther: optText(200),
+  // The tenant's own marketing site. Stored and displayed, never fetched by
+  // the server from this route — brand-scout is the one that fetches, and it
+  // has the stricter outboundUrl() rule.
+  website: longText(300).optional(),
+  adminName: optText(200),
+  adminEmail: emailField("Admin email"),
+  // better-auth's own minimum. Enforced here so provisioning fails loudly at
+  // the edge instead of half-way through creating a tenant.
+  adminPassword: z.string().min(8, "Admin password must be at least 8 characters").max(200),
+  managerName: optText(200),
+  managerEmail: z.union([emailField("Manager email"), z.literal("")]).optional(),
+  managerPassword: z.union([z.string().min(8, "Manager password must be at least 8 characters").max(200), z.literal("")]).optional(),
+  brand: BrandProposal.optional(),
+});
 
 /**
  * Load curated deep-research knowledge for an ICP (icpKnowledgeBase), if any
@@ -277,9 +383,8 @@ export const superadminRoutes = new Hono()
   // No DB writes. The admin reviews/edits the result, then submits it as the
   // `brand` payload on POST /companies (or PATCH for an existing tenant).
   .post("/brand-scout", requireSuperadmin, async (c) => {
-    const b = await c.req.json().catch(() => ({}));
-    const website = String(b.website ?? "").trim();
-    if (!website) return c.json({ message: "website is required" }, 400);
+    const b = await parseBody(c, BrandScoutBody);
+    const website = b.website;
     // companyId only used to namespace the hosted logo object; may not exist
     // as a tenant yet (we're onboarding). Fall back to a derived slug.
     const companyId = slugify(String(b.companyId ?? b.name ?? "") || website);
@@ -303,10 +408,7 @@ export const superadminRoutes = new Hono()
       .from(schema.companies)
       .where(eq(schema.companies.id, id));
     if (!co) return c.json({ message: "Not found" }, 404);
-    const brand = ((await c.req.json().catch(() => ({}))).brand ?? {}) as Record<
-      string,
-      any
-    >;
+    const brand = (await parseBody(c, BrandPatchBody)).brand as Record<string, any>;
     const set: Record<string, any> = { updatedAt: new Date() };
     const map: [string, string][] = [
       ["primaryColor", "brandColor"],
@@ -378,10 +480,11 @@ export const superadminRoutes = new Hono()
   // ---- provision a new tenant + its admin & manager users ---------------
   .post("/companies", requireSuperadmin, async (c) => {
     const me = c.get("user") as SessionUser;
-    const b = await c.req.json().catch(() => ({}));
+    // Every field is validated up front, so a request with a bad admin email
+    // AND a colliding slug now reports both problems instead of only the slug.
+    const b = await parseBody(c, CompanyCreateBody);
 
-    const name = String(b.name ?? "").trim();
-    if (!name) return c.json({ message: "Company name is required" }, 400);
+    const name = b.name;
 
     // slug = tenant id, stamped everywhere. derive from name unless supplied.
     const slug = slugify(String(b.slug ?? "") || name);
@@ -441,9 +544,7 @@ export const superadminRoutes = new Hono()
       name,
       contactEmail: String(b.contactEmail ?? "").trim(),
       phone: String(b.phone ?? "").trim(),
-      plan: ["starter", "pro", "enterprise"].includes(b.plan)
-        ? b.plan
-        : "starter",
+      plan: b.plan ?? "starter",
       industry: resolvedIndustry,
       industryOther: resolvedIndustry === "other" ? industryOther : "",
       status: "active",
