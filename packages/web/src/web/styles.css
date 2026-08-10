@@ -188,6 +188,29 @@
 .nvc-glow { box-shadow: 0 0 0 1px rgba(14,165,233,0.25), 0 8px 40px -8px rgba(14,165,233,0.45); }
 .nvc-glow-sm { box-shadow: 0 0 24px -6px rgba(14,165,233,0.5); }
 .nvc-glass { background: rgba(12,18,32,0.72); backdrop-filter: blur(14px); border: 1px solid rgba(148,163,184,0.12); }
+
+/* horizontal scroll without a visible bar — used by the fleet map's status
+   legend so it stays swipeable instead of overflowing on narrow windows */
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* Leaflet's zoom buttons ship in default white. Every map in this app is dark,
+   and on the fleet map they float over the basemap next to the glass toolbar,
+   so match them to the same glass treatment. */
+.leaflet-container .leaflet-bar {
+  border: 1px solid rgba(148,163,184,0.14);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.45);
+}
+.leaflet-container .leaflet-bar a,
+.leaflet-container .leaflet-bar a:hover {
+  background: rgba(12,18,32,0.86);
+  backdrop-filter: blur(14px);
+  color: #e2e8f0;
+  border-bottom-color: rgba(148,163,184,0.14);
+}
+.leaflet-container .leaflet-bar a:hover { background: rgba(34,211,238,0.16); color: #ffffff; }
 .text-glow { text-shadow: 0 0 30px rgba(14,165,233,0.5); }
 .nvc-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); }
 

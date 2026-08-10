@@ -180,11 +180,18 @@ export function FleetMap({
     // fadeAnimation: false — avoids a Leaflet bug where cached tiles never
     // fire `load` (already `complete` before the listener attaches), leaving
     // the tile stuck at opacity:0 forever (blank map). See zones.tsx for detail.
+    // zoomControl: false + an explicit bottom-left control. Leaflet's default
+    // puts +/- at the TOP LEFT, exactly where this page floats its glass
+    // toolbar (Map / Drivers-Jobs-Both / date range / status legend), so the
+    // white 44x88 zoom stack sat underneath the pills and poked out at every
+    // window width. Bottom left is clear of both the toolbar and the tech
+    // detail panel (top right) at every breakpoint.
     const map = L.map(elRef.current, {
-      zoomControl: true,
+      zoomControl: false,
       attributionControl: false,
       fadeAnimation: false,
     }).setView([43.6532, -79.3832], 12);
+    L.control.zoom({ position: "bottomleft" }).addTo(map);
     L.tileLayer(
       "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
       { maxZoom: 19 },

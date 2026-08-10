@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { api } from "../../lib/api";
@@ -153,6 +153,21 @@ export default function FleetPage() {
     return a;
   }, {});
 
+  // The floating toolbar wraps onto 2-3 rows as the window narrows (or as the
+  // browser zoom changes), so nothing below it can use a fixed `top-20`.
+  // Measure the real rendered height and offset the detail panel / empty-state
+  // card off that, so they never end up underneath a wrapped toolbar row.
+  const barRef = useRef<HTMLDivElement | null>(null);
+  const [barH, setBarH] = useState(72);
+  useEffect(() => {
+    const el = barRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setBarH(el.getBoundingClientRect().height));
+    ro.observe(el);
+    setBarH(el.getBoundingClientRect().height);
+    return () => ro.disconnect();
+  }, [showJobs, showDrivers]);
+
   return (
     <div className="relative h-[calc(100vh-0px)] md:h-screen">
       <FleetMap
@@ -177,8 +192,11 @@ export default function FleetPage() {
       />
 
       {showDrivers && techs.length - (counts.offline ?? 0) === 0 && (
-        <div className="pointer-events-none absolute inset-0 z-[1000] grid place-items-center">
-          <div className="pointer-events-none rounded-xl border border-white/10 bg-ink/90 px-4 py-3 text-center shadow-lg backdrop-blur-sm">
+        <div
+          className="pointer-events-none absolute inset-0 z-[1000] grid place-items-center px-4"
+          style={{ paddingTop: barH }}
+        >
+          <div className="pointer-events-none max-w-full rounded-xl border border-white/10 bg-ink/90 px-4 py-3 text-center shadow-lg backdrop-blur-sm">
             <p className="text-sm font-semibold text-slate-300">No technicians active right now</p>
             <p className="mt-0.5 text-xs text-slate-500">
               {techs.length === 0 ? "No technicians on the team yet." : "Everyone on the team is currently offline."}
@@ -193,19 +211,26 @@ export default function FleetPage() {
         onClose={() => setJobFor(null)}
       />
 
-      {/* top overlay bar */}
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex flex-wrap items-center gap-2 p-4">
-        <div className="nvc-glass pointer-events-auto flex items-center gap-2 rounded-xl px-4 py-2.5">
+      {/* top overlay bar — wraps row by row, every pill allowed to shrink, so
+          it never spills past the viewport or collides at any window size */}
+      <div
+        ref={barRef}
+        className="pointer-events-none absolute inset-x-0 top-0 z-10 flex max-w-full flex-wrap items-start gap-2 p-3 sm:p-4"
+      >
+        <div className="nvc-glass pointer-events-auto flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 sm:px-4 sm:py-2.5">
           <Navigation className="h-4 w-4 text-cyan-glow" />
           <span className="font-display text-sm font-bold text-white">Map</span>
-          <span className="ml-1 flex h-2 w-2">
+          {/* `relative` matters: without it the animate-ping ring anchored to
+              the nearest positioned ancestor (the toolbar itself) and rendered
+              in the wrong place entirely. */}
+          <span className="relative ml-1 flex h-2 w-2">
             <span className="absolute inline-flex h-2 w-2 animate-ping rounded-full bg-emerald-live opacity-75" />
             <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-live" />
           </span>
         </div>
 
         {/* view toggle: drivers / jobs / both */}
-        <div className="nvc-glass pointer-events-auto flex items-center gap-1 rounded-xl p-1">
+        <div className="nvc-glass pointer-events-auto flex shrink-0 items-center gap-1 rounded-xl p-1">
           <ToggleChip
             active={mode === "drivers"}
             onClick={() => setMode(true, false)}
@@ -228,7 +253,7 @@ export default function FleetPage() {
 
         {/* date range — only relevant when jobs are visible */}
         {showJobs && (
-          <div className="nvc-glass pointer-events-auto flex items-center gap-2 rounded-xl px-3 py-2 text-xs">
+          <div className="nvc-glass pointer-events-auto flex max-w-full flex-wrap items-center gap-2 rounded-xl px-3 py-2 text-xs">
             <Clock className="h-3.5 w-3.5 text-cyan-glow" />
             <input aria-label="Date From"
               type="date"
@@ -262,9 +287,9 @@ export default function FleetPage() {
 
         {/* tech status legend */}
         {showDrivers && (
-          <div className="nvc-glass pointer-events-auto flex items-center gap-3 rounded-xl px-4 py-2.5 text-xs">
+          <div className="nvc-glass no-scrollbar pointer-events-auto flex max-w-full items-center gap-3 overflow-x-auto rounded-xl px-3 py-2 text-xs sm:px-4 sm:py-2.5">
             {Object.entries(TECH_STATUS).map(([k, m]) => (
-              <span key={k} className="flex items-center gap-1.5">
+              <span key={k} className="flex shrink-0 items-center gap-1.5">
                 <span
                   className="h-2 w-2 rounded-full"
                   style={{ background: m.color }}
@@ -279,7 +304,10 @@ export default function FleetPage() {
 
       {/* tech detail panel */}
       {active && (
-        <div className="absolute right-4 top-20 bottom-4 z-20 w-[340px] max-w-[calc(100vw-2rem)] overflow-y-auto rounded-2xl border border-white/10 bg-ink-2/95 backdrop-blur-xl shadow-2xl">
+        <div
+          className="absolute right-3 bottom-3 z-20 w-[340px] max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-2xl border border-white/10 bg-ink-2/95 backdrop-blur-xl shadow-2xl sm:right-4 sm:bottom-4"
+          style={{ top: barH + 8 }}
+        >
           <div className="flex items-center gap-3 border-b border-white/5 p-4">
             <TechAvatar
               name={active.name}
