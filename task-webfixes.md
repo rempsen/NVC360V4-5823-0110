@@ -134,3 +134,45 @@ crash-sweep.py ALL CLEAN. Verifier suite all green.
 tags.ts / superadmin.ts / integrations.ts / custom-fields.ts (3 each),
 track.ts / templates.ts / shifts.ts / notifications.ts / maintenance.ts /
 forms.ts / fleet.ts / automation.ts (2 each), ~12 files with 1.
+
+## Fix 8 progress log (continued)
+
+Done and committed:
+- f6ae037 identity routes (team/riders/invites/api-keys) — verify-fix9, 80/80
+- 1071aa3 notif-config + dead Channels tab — verify-fix10, 106/106
+- 4dbd126 option-catalog / option-selections / messages
+- 9bc40bb fleet.tsx jobNoun crash
+- 1f30ebe admin.ts user-management bodies
+- 1349011 work-order foreign keys
+- a056641 tags.ts + custom-fields.ts — verify-fix12, 45/45
+  * Headline: options:"a,b,c" stored a JSON string; renderer's .map() threw and
+    put the WHOLE technician drawer behind the error boundary for every admin.
+    Fixed at the API and hardened in web/components/custom-fields.tsx.
+  * tags entity-link route used to delete existing links BEFORE validating the
+    payload — silent data loss on a malformed body.
+- 8971175 integrations.ts + superadmin.ts — verify-fix13, 44/44
+  * Headline: brand-scout was a live SSRF (fetched 127.0.0.1 / 169.254.169.254
+    and echoed parsed content back). Now behind outboundUrl().
+  * Brand patch stored javascript: logos, junk hex colours, invalid contact
+    emails and a 20k jobNoun.
+
+Remaining c.req.json() sites (raw bodies), in risk order:
+  track.ts, templates.ts, shifts.ts, notifications.ts, maintenance.ts, forms.ts,
+  fleet.ts, automation.ts  (2 each)
+  tracking.ts, skills.ts, settings.ts, reviews.ts, public-forms.ts, mcp.ts,
+  bookings.ts  (1 each; messages.ts / notif-config.ts / admin.ts counts are the
+  doc comments only)
+
+Probe hygiene learned this pass:
+- superadmin has NO delete-company route, so never let a probe create a tenant;
+  only exercise rejection paths that fail before the insert.
+- For routes that write tenant settings, snapshot the row through drizzle
+  (not the API) and restore it at the end — verify-fix13 does this for acme-hvac.
+- Do NOT put min(1) on a field the real UI submits blank (folderName,
+  smsFromNumber, smsSenderId, emailFromName). Always replay the actual payload.
+- Baseline tsc error count is now 245 (bunx tsc --noEmit -p tsconfig.app.json).
+
+Verifier suite (all green as of 8971175):
+  set -a && source ../../.env && set +a && bun verify-fix1.ts && bun verify-fix2.ts \
+    && bun verify-fix3.ts && bun verify-fix8.ts && bun verify-fix9.ts \
+    && bun verify-fix10.ts && bun verify-fix12.ts && bun verify-fix13.ts
