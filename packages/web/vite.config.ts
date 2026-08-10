@@ -7,9 +7,34 @@ import honoDevPlugin from "./vite/plugins/hono-dev-plugin";
 
 const root = path.resolve(__dirname, "../..");
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ command, mode }) => {
 	const env = loadEnv(mode, root, '');
-	Object.assign(process.env, env);
+
+	// Load the monorepo root .env into process.env so the Hono dev plugin and
+	// anything else running in the config/server process can read it.
+	//
+	// NEVER copy NODE_ENV across. That root .env is the SERVER's env file and it
+	// carries NODE_ENV=development. Vite derives `isProduction` from
+	// process.env.NODE_ENV, so assigning it here silently turned every
+	// production build into a development build: `import.meta.env.DEV` compiled
+	// to `true`, React was bundled in development mode (dev warnings, ~2-3x
+	// slower renders), the AgentFeedback dev widget shipped to real users, and
+	// Sentry's `if (!DSN || import.meta.env.DEV) return;` was constant-folded to
+	// an unconditional return -- which tree-shook the entire @sentry/react SDK
+	// out of the bundle, so web crash reporting could never work no matter what
+	// DSN was configured.
+	const { NODE_ENV: _rootNodeEnv, ...safeEnv } = env;
+	Object.assign(process.env, safeEnv);
+
+	// loadEnv() has a side effect that is easy to miss: when any .env file it
+	// reads declares NODE_ENV, Vite stashes it in process.env.VITE_USER_NODE_ENV
+	// and then applies it while resolving the config -- AFTER this function
+	// returns. So simply not copying NODE_ENV above is not enough; the root
+	// .env's `development` still wins unless we clear the stash too.
+	delete process.env.VITE_USER_NODE_ENV;
+	// Be explicit rather than relying on whatever NODE_ENV the shell happens to
+	// carry: `vite build` is production unless someone asked for another mode.
+	process.env.NODE_ENV = command === "build" && mode !== "development" ? "production" : "development";
 
 	return {
 		plugins: [honoDevPlugin(), react(), runableAnalyticsPlugin(), tailwind()],
