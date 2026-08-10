@@ -41,6 +41,7 @@ export default function AdminClients() {
   const { noun: customerNoun, nounPlural: customerNounPlural } = useCustomerNoun();
   const roleLabel = (r: string) =>
     r === "rider" ? noun : r === "customer" ? customerNoun : ROLE_LABEL_BASE[r] ?? r;
+  const [, go] = useLocation();
   const [q, setQ] = useState("");
   const [role, setRole] = useState("all");
   const [showAdd, setShowAdd] = useState(false);
@@ -90,6 +91,33 @@ export default function AdminClients() {
     onError: () => setDelUser(null),
   });
 
+  /**
+   * The action button follows the person-type tab you are looking at, so it
+   * never offers to add a customer while you are staring at a technician list.
+   * Technicians are not creatable from this directory (their create flow needs
+   * skills, vehicle and payout fields), so that tab sends you to the
+   * technicians page instead of opening the wrong modal. Every other tab opens
+   * the add modal with the matching account type already selected.
+   */
+  const addAction =
+    role === "rider"
+      ? { label: `Add ${noun}`, onClick: () => go("/admin/techs") }
+      : role === "admin"
+        ? {
+            label: "Add Dispatcher",
+            onClick: () => {
+              setForm((f) => ({ ...f, role: "admin" }));
+              setShowAdd(true);
+            },
+          }
+        : {
+            label: `Add ${customerNoun}`,
+            onClick: () => {
+              setForm((f) => ({ ...f, role: "customer" }));
+              setShowAdd(true);
+            },
+          };
+
   if (users.isLoading) return <FullLoader label="Loading directory…" />;
   let list = users.data?.users ?? [];
   if (role !== "all") list = list.filter((u) => u.role === role);
@@ -107,8 +135,8 @@ export default function AdminClients() {
         title="Directory"
         subtitle={`${list.length} accounts`}
         actions={
-          <BtnPrimary onClick={() => setShowAdd(true)}>
-            <UserPlus className="h-4 w-4" /> Add {customerNoun}
+          <BtnPrimary onClick={addAction.onClick}>
+            <UserPlus className="h-4 w-4" /> {addAction.label}
           </BtnPrimary>
         }
       />
@@ -215,8 +243,8 @@ export default function AdminClients() {
       <Modal
         open={showAdd}
         onClose={() => setShowAdd(false)}
-        title="Add Account"
-        subtitle="Create a client or dispatcher login"
+        title={form.role === "admin" ? "Add Dispatcher" : `Add ${customerNoun}`}
+        subtitle={`Create a ${form.role === "admin" ? "dispatcher" : customerNoun.toLowerCase()} login`}
         footer={
           <>
             <BtnGhost onClick={() => setShowAdd(false)}>Cancel</BtnGhost>
