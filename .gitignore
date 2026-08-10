@@ -68,7 +68,22 @@ ios
 android
 
 # scripts (local-only provisioning)
-scripts/
+# (glob the contents, not the folder itself — git will not descend into an
+#  excluded directory, so `scripts/` would make the negations below dead.
+#  `scripts/*` contains a slash, so it anchors to the repo root — the nested
+#  packages/*/scripts folders therefore need their own lines.)
+scripts/*
+packages/web/scripts/
+# ...except the ICP knowledge-base ones. That table is the research the whole
+# per-tenant AI customization is grounded in, migration 0002 creates it EMPTY,
+# and it lived nowhere but one remote Turso database. These four files make it
+# reproducible from a clone.
+!scripts/seed-icp-knowledge-base.ts
+!scripts/seed-icp-knowledge-base-wave2.ts
+!scripts/export-icp-knowledge-base.ts
+!scripts/restore-icp-knowledge-base.ts
+!scripts/icp-knowledge-base.json
+!scripts/README-icp-knowledge-base.md
 !packages/mobile/scripts/
 packages/mobile/scripts/*
 !packages/mobile/scripts/generate-ios-certs.py
