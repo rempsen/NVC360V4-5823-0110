@@ -530,7 +530,7 @@ export const bookingsRoutes = new Hono()
         const hasOwnFields = Array.isArray(body.fieldData?._customFields) && body.fieldData._customFields.length > 0;
         if (!hasOwnFields) {
           const seeded = templateFieldsToCustomFields(tpl.fields);
-          if (seeded.length) fieldData = JSON.stringify({ ...(body.fieldData ?? {}), _customFields: seeded });
+          if (seeded.length) fieldData = JSON.stringify({ ...body.fieldData, _customFields: seeded });
         }
         try {
           const checklist = JSON.parse(tpl.checklist || "[]");

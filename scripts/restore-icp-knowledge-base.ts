@@ -53,7 +53,7 @@ let updated = 0;
 
 for (const r of file.rows) {
   const isNew = !existing.has(String(r.industry));
-  isNew ? created++ : updated++;
+  if (isNew) created++; else updated++;
   console.log(`${isNew ? "CREATE" : "UPDATE"}  ${r.industry}`);
   if (!APPLY) continue;
 

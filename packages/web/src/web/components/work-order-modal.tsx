@@ -1468,7 +1468,7 @@ function FieldRecordPanel({ bookingId }: { bookingId: string }) {
                 </div>
                 {e.meta?.url && (
                   // eslint-disable-next-line jsx-a11y/media-has-caption
-                  <audio controls src={e.meta.url} className="w-full" />
+                  <audio controls aria-label={`Voice note from ${e.actorName || "the technician"}`} src={e.meta.url} className="w-full" />
                 )}
                 {e.detail ? (
                   <p className="mt-2 whitespace-pre-wrap text-xs text-slate-300">{e.detail}</p>

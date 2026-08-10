@@ -19,7 +19,7 @@ const PASSWORD = "NVC423!!";
 let pass = 0;
 let fail = 0;
 const check = (name: string, ok: boolean, extra = "") => {
-  ok ? pass++ : fail++;
+  if (ok) pass++; else fail++;
   console.log(`  ${ok ? "✓" : "✗"} ${name}${extra ? ` — ${extra}` : ""}`);
 };
 
@@ -71,7 +71,7 @@ console.log("\n=== Money / duration edge cases ===");
 const badValues: Array<[string, any, string]> = [
   ["negative price", { name: "P", category: "c", basePrice: -1 }, "basePrice"],
   ["NaN price", { name: "P", category: "c", basePrice: Number.NaN }, "basePrice"],
-  ["Infinity price", { name: "P", category: "c", basePrice: 1e999 }, "basePrice"],
+  ["Infinity price", { name: "P", category: "c", basePrice: Number.POSITIVE_INFINITY }, "basePrice"],
   ["string price", { name: "P", category: "c", basePrice: "100" }, "basePrice"],
   ["absurd price", { name: "P", category: "c", basePrice: 99_999_999_999 }, "basePrice"],
   ["zero duration", { name: "P", category: "c", durationMins: 0 }, "durationMins"],
@@ -171,7 +171,7 @@ console.log("\n=== Error envelope shape (what the new client parses) ===");
 console.log("\n=== cleanup ===");
 {
   let removed = 0;
-  for (const id of [...new Set(created)]) {
+  for (const id of new Set(created)) {
     const r = await req("DELETE", `/api/services/${id}`);
     if (r.status === 200) removed++;
   }

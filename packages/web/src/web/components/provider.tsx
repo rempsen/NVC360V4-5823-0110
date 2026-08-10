@@ -20,6 +20,9 @@ function SentryIdentity() {
   const { user, role } = useAuth();
   useEffect(() => {
     setSentryUser(user ? { id: user.id, role } : null);
+    // Only the id and role are sent to Sentry, so depending on the whole `user`
+    // object would re-send identical identity on every unrelated user refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, role]);
   return null;
 }

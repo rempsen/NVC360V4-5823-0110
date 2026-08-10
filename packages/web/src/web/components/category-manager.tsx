@@ -118,6 +118,8 @@ export function CategoryManagerModal({ onClose }: { onClose: () => void }) {
                   <>
                     <input
                       aria-label="Rename category"
+                      // deliberate focus management: this input only exists after the user clicks Rename, so moving focus into it is expected, not a surprise page-load focus grab.
+                      // eslint-disable-next-line jsx-a11y/no-autofocus
                       autoFocus
                       className="min-w-0 flex-1 rounded-md border border-brand/40 bg-ink px-2 py-1 text-sm text-white outline-none"
                       value={editValue}

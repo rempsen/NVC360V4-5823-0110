@@ -6,7 +6,6 @@ import { requireAuth, requireAdmin, tx } from "../middleware/auth";
 import {
   AVG_KMH,
   distKm,
-  minsForKm,
   predictDelays,
   rankCandidates,
   techWorkload,

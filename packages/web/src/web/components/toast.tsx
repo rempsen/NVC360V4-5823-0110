@@ -185,11 +185,11 @@ function ToastViewport({
 }) {
   if (!items.length) return null;
   return (
-    <div
+    <output
       // z-index sits above the modal layer (z-[1050], see components/modal.tsx)
-      // so a failed save inside a dialog is still visible.
+      // so a failed save inside a dialog is still visible. <output> carries an
+      // implicit role="status", so no explicit role attribute is needed.
       className="pointer-events-none fixed inset-x-0 bottom-0 z-[1200] flex flex-col items-center gap-2 p-4 sm:inset-x-auto sm:right-4 sm:items-end"
-      role="status"
       aria-live="polite"
       aria-atomic="false"
     >
@@ -224,6 +224,6 @@ function ToastViewport({
           </div>
         );
       })}
-    </div>
+    </output>
   );
 }

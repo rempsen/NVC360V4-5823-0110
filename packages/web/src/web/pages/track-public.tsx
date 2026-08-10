@@ -111,7 +111,7 @@ function JobTimeline({
                     onClick={() => onPhoto(photoUrl)}
                     className="mt-2 block overflow-hidden rounded-lg border border-white/10 transition hover:border-cyan-glow/50"
                   >
-                    <img src={photoUrl} alt="Job photo" className="h-20 w-28 object-cover" />
+                    <img src={photoUrl} alt="Attached to this job update" className="h-20 w-28 object-cover" />
                   </button>
                 )}
               </div>
@@ -247,7 +247,11 @@ function Lightbox({ url, onClose }: { url: string; onClose: () => void }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
   return (
+    // The backdrop is a click-to-dismiss surface, not a control: role="presentation"
+    // keeps it out of the accessibility tree so screen-reader and keyboard users get
+    // the real Close button (and the Escape handler above) instead of a phantom widget.
     <div
+      role="presentation"
       onClick={onClose}
       className="fixed inset-0 z-[1000] grid place-items-center bg-black/85 p-4 backdrop-blur-sm"
     >
@@ -258,12 +262,13 @@ function Lightbox({ url, onClose }: { url: string; onClose: () => void }) {
       >
         <X className="h-5 w-5" />
       </button>
-      <img
-        src={url}
-        alt="Job photo"
-        onClick={(e) => e.stopPropagation()}
-        className="max-h-[85vh] max-w-full rounded-xl object-contain"
-      />
+      <div role="presentation" onClick={(e) => e.stopPropagation()} className="max-h-[85vh] max-w-full">
+        <img
+          src={url}
+          alt="Attached to this job"
+          className="max-h-[85vh] max-w-full rounded-xl object-contain"
+        />
+      </div>
     </div>
   );
 }

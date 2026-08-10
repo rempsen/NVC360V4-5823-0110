@@ -232,6 +232,8 @@ export function IntakeFormsSection({ publicKeys }: { publicKeys: PubKey[] }) {
                   <div className="mt-2 flex items-center gap-2">
                     <input
                       aria-label="Recipient email"
+                      // deliberate focus management: this field is only rendered after the user opens the "set recipient" editor, so focus belongs here.
+                      // eslint-disable-next-line jsx-a11y/no-autofocus
                       autoFocus
                       type="email"
                       value={quickRecipient}

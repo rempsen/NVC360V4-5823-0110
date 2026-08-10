@@ -131,7 +131,9 @@ export default function InboxPage() {
     };
   }, [qc]);
 
-  const threads = inbox.data?.threads ?? [];
+  // Memoised so the `?? []` fallback doesn't hand a brand-new array to the
+  // filter/sort memo below on every render (which would defeat it entirely).
+  const threads = useMemo(() => inbox.data?.threads ?? [], [inbox.data?.threads]);
   const counts = inbox.data?.counts ?? {};
 
   const visible = useMemo(() => {

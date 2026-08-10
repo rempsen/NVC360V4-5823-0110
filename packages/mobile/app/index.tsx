@@ -59,11 +59,11 @@ export default function Index() {
       }
       await tryUnlockAndProceed();
     })();
-  }, [
-	isPending,
-	session,
-	router
-]);
+    // `tryUnlockAndProceed` is redefined on every render, so listing it would
+    // re-run this boot effect constantly. The `attempted` ref already makes the
+    // unlock run exactly once per mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPending, session, router]);
 
   if (phase === "locked") {
     return (

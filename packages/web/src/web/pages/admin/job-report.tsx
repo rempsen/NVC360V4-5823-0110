@@ -259,11 +259,11 @@ export default function JobReportPage() {
       </div>
 
       {lightbox && (
-        <div className="fixed inset-0 z-[1100] grid place-items-center bg-black/90 p-6" onClick={() => setLightbox(null)}>
+        <div role="presentation" className="fixed inset-0 z-[1100] grid place-items-center bg-black/90 p-6" onClick={() => setLightbox(null)}>
           <button aria-label="Close" className="absolute right-5 top-5 rounded-full bg-white/10 p-2 text-white hover:bg-white/20" onClick={() => setLightbox(null)}>
             <X className="h-5 w-5" />
           </button>
-          <img src={lightbox} alt="Job photo" className="max-h-[85vh] max-w-[90vw] rounded-lg object-contain" />
+          <img src={lightbox} alt="Attached to this job" className="max-h-[85vh] max-w-[90vw] rounded-lg object-contain" />
         </div>
       )}
 

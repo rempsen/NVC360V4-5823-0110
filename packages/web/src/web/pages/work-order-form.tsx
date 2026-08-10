@@ -102,6 +102,8 @@ export default function WorkOrderForm({ companyId, slug, cfg, services }: { comp
             <p className="mt-1 text-sm text-slate-500">Enter the employee access code to create a work order.</p>
           </div>
           <form onSubmit={(e) => { e.preventDefault(); verifyCode(code); }} className="space-y-3">
+            {/* eslint-disable-next-line jsx-a11y/no-autofocus -- this gate screen has a
+                single purpose and a single field; focusing it is the expected behaviour. */}
             <input aria-label="Access code" autoFocus inputMode="numeric" className={`${inputCls} text-center text-lg tracking-[0.3em] font-mono`} style={ring(brand)}
               value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 8))} placeholder="••••••" />
             {codeErr && <p className="text-center text-sm font-medium text-red-600">{codeErr}</p>}

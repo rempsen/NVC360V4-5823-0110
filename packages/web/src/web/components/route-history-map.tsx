@@ -57,6 +57,10 @@ export function RouteHistoryMap({
       map.remove();
       mapRef.current = null;
     };
+    // Runs once to create the Leaflet instance. `pings` is only read for the
+    // initial centre; re-running on every ping update would tear down and
+    // rebuild the whole map. The effect below handles ping changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {

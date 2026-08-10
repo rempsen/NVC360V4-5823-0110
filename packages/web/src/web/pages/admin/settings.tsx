@@ -231,7 +231,9 @@ function CompanySettingsTab() {
               3 stars or below never are — they raise a private alert so you can
               fix it first.
             </p>
-            <label className="flex items-center justify-between gap-3">
+            {/* Not a <label>: the control is a button, which a label cannot be
+                associated with. The button carries its own aria-label. */}
+            <div className="flex items-center justify-between gap-3">
               <span className="text-sm text-white/80">Ask for a review after every job</span>
               <button
                 type="button"
@@ -247,7 +249,7 @@ function CompanySettingsTab() {
                   }`}
                 />
               </button>
-            </label>
+            </div>
             <Field label="Send how long after completion?" hint="Minutes. Default 120 (2 hours)">
               <input aria-label="Review request delay minutes"
                 type="number"
@@ -416,6 +418,8 @@ function CategoriesCard() {
                 <>
                   <input
                     aria-label="Rename category"
+                    // deliberate focus management: this input only exists after the user clicks Rename, so moving focus into it is expected, not a surprise page-load focus grab.
+                    // eslint-disable-next-line jsx-a11y/no-autofocus
                     autoFocus
                     className="min-w-0 flex-1 rounded-md border border-brand/40 bg-ink px-2 py-1 text-sm text-white outline-none"
                     value={editValue}

@@ -38,7 +38,7 @@ const BASE = process.env.BASE || "http://localhost:4200";
 let pass = 0;
 let fail = 0;
 const check = (name: string, ok: boolean, extra = "") => {
-  ok ? pass++ : fail++;
+  if (ok) pass++; else fail++;
   console.log(`  ${ok ? "✓" : "✗"} ${name}${extra ? ` — ${extra}` : ""}`);
 };
 

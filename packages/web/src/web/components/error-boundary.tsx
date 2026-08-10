@@ -31,20 +31,25 @@ type Props = {
   fullScreen?: boolean;
 };
 
-type State = { error: Error | null };
+type State = { error: Error | null; resetKey?: string };
 
 class Boundary extends Component<Props, State> {
   state: State = { error: null };
 
-  static getDerivedStateFromError(error: Error): State {
+  static getDerivedStateFromError(error: Error): Partial<State> {
     return { error };
   }
 
-  componentDidUpdate(prev: Props) {
-    // Navigating away from a crashed page should clear the crash.
-    if (this.state.error && prev.resetKey !== this.props.resetKey) {
-      this.setState({ error: null });
-    }
+  /**
+   * Navigating away from a crashed page should clear the crash. Derived during
+   * render rather than in componentDidUpdate + setState, which would render the
+   * crash screen once more before clearing it (and trip react/no-did-update-set-state).
+   */
+  static getDerivedStateFromProps(props: Props, state: State): Partial<State> | null {
+    if (props.resetKey === state.resetKey) return null;
+    return state.error
+      ? { error: null, resetKey: props.resetKey }
+      : { resetKey: props.resetKey };
   }
 
   componentDidCatch(error: Error, info: { componentStack?: string | null }) {
