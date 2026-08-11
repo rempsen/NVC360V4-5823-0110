@@ -103,6 +103,7 @@ export function InternalTeamTab() {
   const [err, setErr] = useState("");
   const [newPw, setNewPw] = useState("");
   const [pwMsg, setPwMsg] = useState("");
+  const [inviteMsg, setInviteMsg] = useState("");
   const [form, setForm] = useState({
     name: "",
     email: "",
@@ -166,6 +167,24 @@ export function InternalTeamTab() {
     onError: (e: any) => setErr(e.message),
   });
 
+  /**
+   * An invite that lands in spam otherwise leaves the person stuck as "Invite
+   * pending" with no way for the admin to nudge them.
+   */
+  const resendInvite = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await api.team[":id"]["resend-invite"].$post({ param: { id } });
+      const data = await res.json();
+      if (!res.ok) throw new Error((data as any).message || "Couldn't resend");
+      return data as { email?: string };
+    },
+    onSuccess: (d) => {
+      setInviteMsg(`Invite re-sent to ${d?.email ?? "them"}.`);
+      setTimeout(() => setInviteMsg(""), 4000);
+    },
+    onError: (e: any) => setErr(e.message),
+  });
+
   const del = useMutation({
     mutationFn: async (id: string) => {
       const res = await api.team[":id"].$delete({ param: { id } });
@@ -195,6 +214,12 @@ export function InternalTeamTab() {
           <UserPlus className="h-4 w-4" /> New Employee
         </BtnPrimary>
       </div>
+
+      {inviteMsg && (
+        <output className="mb-3 block rounded-lg bg-emerald-live/10 px-3 py-2 text-xs font-medium text-emerald-live">
+          {inviteMsg}
+        </output>
+      )}
 
       {employees.length === 0 ? (
         <div className="nvc-card grid place-items-center py-16 text-center text-slate-500">
@@ -237,12 +262,19 @@ export function InternalTeamTab() {
                         </span>
                       )}
                       {e.membershipStatus === "invited" && (
-                        <span
-                          title="Invite sent — they haven't accepted yet, so they can't see your jobs."
-                          className="inline-block rounded-full border border-amber-warn/30 bg-amber-warn/10 px-2 py-0.5 text-[11px] font-semibold text-amber-warn"
+                        <button
+                          type="button"
+                          disabled={resendInvite.isPending}
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            resendInvite.mutate(e.id);
+                          }}
+                          title="Invite sent — they haven't accepted yet, so they can't see your jobs. Click to send it again."
+                          className="inline-flex items-center gap-1 rounded-full border border-amber-warn/30 bg-amber-warn/10 px-2 py-0.5 text-[11px] font-semibold text-amber-warn transition hover:bg-amber-warn/20 disabled:opacity-50"
                         >
                           Invite pending
-                        </span>
+                          <span className="text-amber-warn/70">· resend</span>
+                        </button>
                       )}
                     </div>
                   </div>

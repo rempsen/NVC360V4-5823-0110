@@ -418,6 +418,48 @@ export const teamRoutes = new Hono()
     return c.json({ ok: true });
   })
 
+  /**
+   * Re-send a pending join invite.
+   *
+   * Without this, an invite that lands in spam is a dead end: the admin sees
+   * "Invite pending" on the roster forever, the person can't see any jobs, and
+   * the only fix is editing the database by hand (which is exactly what had to
+   * be done the first time this happened in testing). There is deliberately NO
+   * endpoint to force a membership active without the person accepting —
+   * accepting is what proves the account owner agreed to work for this company,
+   * and skipping it would let any admin bolt a stranger's existing login onto
+   * their roster.
+   */
+  .post("/:id/resend-invite", requirePermission("techs:create"), async (c) => {
+    const id = c.req.param("id");
+    const cid = tenantId(c);
+    const [target] = await db.select().from(schema.user).where(eq(schema.user.id, id));
+    if (!target) return c.json({ message: "Not found" }, 404);
+    const [membership] = await db
+      .select()
+      .from(schema.memberships)
+      .where(
+        and(eq(schema.memberships.userId, id), eq(schema.memberships.companyId, cid)),
+      );
+    // 404 (not 403) for a non-member: never confirm to one company that a
+    // person exists on another company's roster.
+    if (!membership) return c.json({ message: "Not found" }, 404);
+    if (membership.status === "active")
+      return c.json({ message: "They've already accepted — nothing to resend" }, 400);
+    try {
+      await sendJoinCompanyInvite({
+        email: target.email,
+        name: target.name,
+        companyId: cid,
+        membershipId: membership.id,
+      });
+    } catch (e) {
+      console.error("resend join-company invite failed", e);
+      return c.json({ message: "Couldn't send the email. Try again shortly." }, 502);
+    }
+    return c.json({ ok: true, email: target.email });
+  })
+
   // ---- delete an employee ------------------------------------------------
   .delete("/:id", requirePermission("techs:delete"), async (c) => {
     const id = c.req.param("id");

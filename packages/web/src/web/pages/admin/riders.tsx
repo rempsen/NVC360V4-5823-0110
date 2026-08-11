@@ -88,6 +88,7 @@ function FieldStaffTab() {
     payRatePerHour: 0,
   });
   const [err, setErr] = useState("");
+  const [inviteMsg, setInviteMsg] = useState("");
 
   const riders = useQuery({
     queryKey: ["riders"],
@@ -108,6 +109,25 @@ function FieldStaffTab() {
       setShowAdd(false);
       setForm({ name: "", email: "", password: "", phone: "", skillClass: "General", vehicle: "Van", licensePlate: "", licenseNumber: "", address: "", notes: "", skills: [], payRatePerHour: 0 });
       setErr("");
+    },
+    onError: (e: any) => setErr(e.message),
+  });
+
+  /**
+   * Techs get their invite through the same membership record as internal
+   * employees, so this reuses the team endpoint (keyed by user id) rather than
+   * duplicating the logic on the riders route.
+   */
+  const resendInvite = useMutation({
+    mutationFn: async (userId: string) => {
+      const res = await (api as any).team[":id"]["resend-invite"].$post({ param: { id: userId } });
+      const data = await res.json();
+      if (!res.ok) throw new Error((data as any).message || "Couldn't resend");
+      return data as { email?: string };
+    },
+    onSuccess: (d) => {
+      setInviteMsg(`Invite re-sent to ${d?.email ?? "them"}.`);
+      setTimeout(() => setInviteMsg(""), 4000);
     },
     onError: (e: any) => setErr(e.message),
   });
@@ -147,6 +167,12 @@ function FieldStaffTab() {
           </BtnPrimary>
         }
       />
+
+      {inviteMsg && (
+        <output className="mb-3 block rounded-lg bg-emerald-live/10 px-3 py-2 text-xs font-medium text-emerald-live">
+          {inviteMsg}
+        </output>
+      )}
 
       {/* filter + sort */}
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -233,12 +259,19 @@ function FieldStaffTab() {
                     </span>
                   )}
                   {r.membershipStatus === "invited" && (
-                    <span
-                      title="Invite sent — they haven't accepted yet, so they can't see your jobs."
-                      className="rounded-md bg-amber-warn/10 px-2 py-0.5 text-xs font-medium text-amber-warn"
+                    <button
+                      type="button"
+                      disabled={resendInvite.isPending}
+                      onClick={(ev) => {
+                        ev.stopPropagation();
+                        resendInvite.mutate(r.userId ?? r.id);
+                      }}
+                      title="Invite sent — they haven't accepted yet, so they can't see your jobs. Click to send it again."
+                      className="inline-flex items-center gap-1 rounded-md bg-amber-warn/10 px-2 py-0.5 text-xs font-medium text-amber-warn transition hover:bg-amber-warn/20 disabled:opacity-50"
                     >
                       Invite pending
-                    </span>
+                      <span className="text-amber-warn/70">· resend</span>
+                    </button>
                   )}
                 </div>
                 <div className="mt-3 space-y-1 border-t border-white/5 pt-3 text-xs text-slate-400">
