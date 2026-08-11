@@ -171,6 +171,77 @@ export const meRoutes = new Hono()
     return c.json({ ok: true, companyId: m.companyId });
   })
 
+  /**
+   * Decline a pending invite.
+   *
+   * Separate from `/leave-company` on purpose: that route refuses when it would
+   * leave you with no company ("You can't leave your only company"), which is
+   * right for an ACTIVE membership but wrong for an invite — a brand new tech
+   * whose only membership is the pending invite must still be able to say no.
+   * Declining never touches an active membership, so it can't strand anyone.
+   */
+  .post("/join-company/:membershipId/decline", requireAuth, async (c) => {
+    const me = c.get("user") as unknown as SessionUser;
+    const [m] = await db
+      .select()
+      .from(schema.memberships)
+      .where(eq(schema.memberships.id, c.req.param("membershipId")));
+    // 404 (not 403) for someone else's invite: never confirm to one person that
+    // an invite exists for another account.
+    if (!m || m.status !== "invited" || m.userId !== me.id)
+      return c.json({ message: "This invite is no longer valid" }, 404);
+
+    await detachMembership(me.id, m.companyId);
+    return c.json({ ok: true });
+  })
+
+  /**
+   * Pending invites for the signed-in person — "someone has added you to their
+   * roster, do you accept?".
+   *
+   * Why this exists: `/companies` deliberately returns only ACTIVE memberships
+   * (it feeds the company switcher, and you must not be able to act as a
+   * company you haven't accepted). That left an invited tech with no way to
+   * discover the invite anywhere except the email, so the driver app couldn't
+   * show it at all. This is the read side of accepting in-app.
+   *
+   * Scoped to the caller's own userId — never accepts a userId parameter, so
+   * one person can't enumerate another's invites.
+   */
+  .get("/invites", requireAuth, async (c) => {
+    const me = c.get("user") as unknown as SessionUser;
+    const pending = await db
+      .select()
+      .from(schema.memberships)
+      .where(
+        and(
+          eq(schema.memberships.userId, me.id),
+          eq(schema.memberships.status, "invited"),
+        ),
+      );
+    if (pending.length === 0) return c.json({ invites: [] });
+
+    const rows = await db
+      .select()
+      .from(schema.companies)
+      .where(inArray(schema.companies.id, pending.map((m) => m.companyId)));
+    const byId = new Map(rows.map((r) => [r.id, r]));
+
+    return c.json({
+      invites: pending
+        // A suspended company must not be offered as somewhere to go to work.
+        .filter((m) => byId.get(m.companyId)?.status !== "suspended")
+        .map((m) => ({
+          membershipId: m.id,
+          companyId: m.companyId,
+          company: byId.get(m.companyId)?.name ?? m.companyId,
+          role: m.role,
+          staffType: m.staffType,
+          invitedAt: m.createdAt,
+        })),
+    });
+  })
+
   /** Decline / leave a company you were invited to. */
   .post("/leave-company", requireAuth, async (c) => {
     const me = c.get("user") as unknown as SessionUser;
