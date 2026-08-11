@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useLocation, Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
@@ -9,6 +9,16 @@ import { AddressAutocomplete } from "../../components/address-autocomplete";
 import {
   Calendar, Clock, MapPin, MessageSquare, ArrowLeft, CheckCircle2, Star,
 } from "lucide-react";
+
+/** Debounce a rapidly-changing value (the address updates on every keystroke). */
+function useDebounced<T>(value: T, ms: number): T {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return v;
+}
 
 function nextSlots() {
   const slots: { label: string; value: string }[] = [];
@@ -44,6 +54,36 @@ export default function BookPage() {
     queryFn: async () => (await api.services[":id"].$get({ param: { id } })).json(),
   });
 
+  const basePrice = (svc.data as any)?.service?.basePrice as number | undefined;
+
+  /**
+   * Real tax for this address, from the server.
+   *
+   * This page used to hardcode `basePrice * 0.13` — Ontario HST — for everyone.
+   * The invoice is computed from the actual region, so a Calgary customer was
+   * quoted 13% and invoiced 5%, and a Montreal customer was quoted 13% and
+   * invoiced 14.975% (billed MORE than the total they agreed to). We ask the
+   * server, which uses the same region resolution as the invoice, so the two
+   * can't drift — and so we don't have to guess the tenant's default region
+   * when an address hasn't resolved to a province/state yet.
+   *
+   * Debounced: the address updates on every keystroke via onResolve.
+   */
+  const debouncedAddress = useDebounced(address, 400);
+  const quote = useQuery({
+    queryKey: ["tax-preview", debouncedAddress, basePrice],
+    // No address typed yet = nothing to base tax on. Don't ask, and don't show
+    // the company-default figure as if it were this customer's tax.
+    enabled: basePrice != null && debouncedAddress.trim().length > 0,
+    queryFn: async () => {
+      const res = await api.pricing["tax-preview"].$post({
+        json: { address: debouncedAddress, amount: basePrice as number },
+      });
+      if (!res.ok) throw new Error("tax preview failed");
+      return res.json();
+    },
+  });
+
   const create = useMutation({
     mutationFn: async () => {
       const res = await api.bookings.$post({
@@ -62,8 +102,9 @@ export default function BookPage() {
   const service = (svc.data as any)?.service;
   if (!service) return <p>Service not found.</p>;
   const slots = nextSlots();
-  const tax = +(service.basePrice * 0.13).toFixed(2);
-  const total = +(service.basePrice + tax).toFixed(2);
+  const q = quote.data as
+    | { taxLabel: string; taxAmount: number; total: number; fromAddress: boolean }
+    | undefined;
 
   if (done) {
     return (
@@ -167,10 +208,39 @@ export default function BookPage() {
             <h3 className="font-bold text-white">Order summary</h3>
             <div className="mt-4 space-y-2 text-sm">
               <Row label={service.name} value={money(service.basePrice)} />
-              <Row label="Tax (13%)" value={money(tax)} />
-              <div className="my-2 border-t border-white/5" />
-              <Row label="Total" value={money(total)} bold />
+              {/*
+                Never show a guessed tax figure. Until the address resolves to a
+                real region we say so, rather than printing a number the invoice
+                won't match.
+              */}
+              {q ? (
+                <>
+                  <Row
+                    label={q.taxLabel || "Tax"}
+                    value={money(q.taxAmount)}
+                    hint={q.fromAddress ? undefined : "estimated — confirm your address"}
+                  />
+                  <div className="my-2 border-t border-white/5" />
+                  <Row label="Total" value={money(q.total)} bold />
+                </>
+              ) : (
+                <>
+                  <Row
+                    label="Tax"
+                    value={quote.isError ? "—" : "Calculated from your address"}
+                    muted
+                  />
+                  <div className="my-2 border-t border-white/5" />
+                  <Row label="Subtotal" value={money(service.basePrice)} bold />
+                </>
+              )}
             </div>
+            {q && !q.fromAddress && address.trim().length > 0 && (
+              <p className="mt-2 text-[11px] text-amber-400/90">
+                We couldn't identify the province or state in that address, so tax
+                is estimated. Pick a suggestion from the address list to confirm it.
+              </p>
+            )}
             <div className="mt-3 flex items-center gap-1.5 text-xs text-slate-500">
               <Clock className="h-3.5 w-3.5" /> Est. {service.durationMins} min
             </div>
@@ -208,11 +278,28 @@ function Section({ icon: Icon, title, children }: any) {
   );
 }
 
-function Row({ label, value, bold }: { label: string; value: string; bold?: boolean }) {
+function Row({
+  label, value, bold, muted, hint,
+}: {
+  label: string; value: string; bold?: boolean; muted?: boolean; hint?: string;
+}) {
   return (
-    <div className="flex justify-between">
-      <span className={bold ? "font-bold text-white" : "text-slate-500"}>{label}</span>
-      <span className={bold ? "text-lg font-extrabold text-cyan-glow" : "font-medium text-slate-200"}>{value}</span>
+    <div className="flex justify-between gap-3">
+      <span className={bold ? "font-bold text-white" : "text-slate-500"}>
+        {label}
+        {hint && <span className="ml-1 text-[11px] text-amber-400/80">({hint})</span>}
+      </span>
+      <span
+        className={
+          bold
+            ? "text-lg font-extrabold text-cyan-glow"
+            : muted
+              ? "text-right text-xs text-slate-500"
+              : "font-medium text-slate-200"
+        }
+      >
+        {value}
+      </span>
     </div>
   );
 }
