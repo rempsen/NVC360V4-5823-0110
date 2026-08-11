@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { StatusBadge } from "../../components/brand";
 import { FullLoader, Loader } from "../../components/loader";
+import { StoredImage } from "../../components/stored-image";
 import { fmtDate, money } from "../../lib/utils";
 import { MapPin, Calendar, ArrowRight, Power, AlertCircle } from "lucide-react";
 
@@ -118,7 +119,7 @@ function JobCard({ b, cta }: { b: any; cta: string }) {
   return (
     <Link to={`/rider/job/${b.id}`}>
       <div className="group flex items-center gap-4 rounded-2xl border border-white/5 bg-ink-2 p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
-        {b.service?.image && <img src={b.service.image} alt="" className="h-14 w-14 rounded-xl object-cover" />}
+        {b.service?.image && <StoredImage src={b.service.image} className="h-14 w-14 rounded-xl object-cover" />}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <h3 className="truncate font-bold text-white">{b.service?.name}</h3>

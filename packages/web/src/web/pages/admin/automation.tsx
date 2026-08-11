@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { DialogPanel } from "../../components/dialog-panel";
+import { useConfirm } from "../../components/confirm-dialog";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { FullLoader } from "../../components/loader";
@@ -59,6 +60,8 @@ export default function AutomationPage() {
     minMinutes: "",
     message: "",
   });
+
+  const confirm = useConfirm();
 
   const rules = useQuery({
     queryKey: ["automation"],
@@ -205,7 +208,19 @@ export default function AutomationPage() {
               />
             </button>
             <button
-              onClick={() => del.mutate(r.id)}
+              type="button"
+              aria-label={`Delete automation ${r.name}`}
+              title={`Delete automation ${r.name}`}
+              onClick={async () => {
+                if (
+                  await confirm({
+                    title: `Delete "${r.name}"?`,
+                    message: "This automation will stop running immediately. This can't be undone.",
+                    confirmLabel: "Delete",
+                  })
+                )
+                  del.mutate(r.id);
+              }}
               className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-500 hover:bg-red-500/10 hover:text-red-400"
             >
               <Trash2 className="h-4 w-4" />

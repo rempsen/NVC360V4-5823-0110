@@ -148,12 +148,75 @@ export const keyByToken: KeyFn = (c) => {
 export const keyByIp: KeyFn = (c) => `ip:${clientIp(c)}`;
 
 // ---- presets --------------------------------------------------------------
-/** Tight limiter for auth/login surfaces (brute-force defense). */
+/**
+ * Tight limiter for CREDENTIAL-VERIFYING auth surfaces (brute-force defense):
+ * sign-in, sign-up, password reset, email verification. Keyed by IP on purpose
+ * — the attacker has no account yet, so per-user keying would be useless.
+ *
+ * This must NOT be applied to the whole of /api/auth/*. `get-session` lives
+ * under that prefix and is called on EVERY page load, so a 20/min IP budget
+ * meant an admin clicking through ~20 pages in a minute started getting 429s
+ * on their own session read. The frontend saw no session and bounced them to
+ * /sign-in mid-work. Because the key is the IP, a whole office behind one NAT
+ * shared the 20/min budget and logged each other out. See sessionLimiter.
+ */
 export const authLimiter = rateLimit({
   name: "auth",
   limit: Number(process.env.RL_AUTH_LIMIT ?? 20),
   windowMs: 60_000,
   keyFn: keyByIp,
+});
+
+/**
+ * Session reads (`get-session`, token refresh, sign-out). These are already
+ * authenticated, cheap, and called constantly by the SPA, so they get a
+ * generous per-user budget — brute force is not a threat model for reading
+ * your own session. Falls back to per-IP for anonymous callers.
+ */
+export const sessionLimiter = rateLimit({
+  name: "authsession",
+  limit: Number(process.env.RL_SESSION_LIMIT ?? 600),
+  windowMs: 60_000,
+  keyFn: keyByUser,
+});
+
+/**
+ * Paths under /api/auth/* that actually verify or change credentials. Matched
+ * as a substring of the pathname so better-auth's sub-routes
+ * (e.g. /api/auth/sign-in/email) are covered.
+ */
+const SENSITIVE_AUTH_PATHS = [
+  "/sign-in",
+  "/sign-up",
+  "/forget-password",
+  "/forgot-password",
+  "/reset-password",
+  "/change-password",
+  "/change-email",
+  "/send-verification-email",
+  "/verify-email",
+  "/two-factor",
+  "/magic-link",
+  "/callback",
+];
+
+/**
+ * Applies the tight brute-force limiter to credential endpoints and the
+ * generous one to everything else under /api/auth/* (session reads).
+ * Fail-closed by default: an unrecognised auth path is treated as sensitive,
+ * so a future better-auth route can't silently land in the generous bucket.
+ */
+export const authSurfaceLimiter = createMiddleware(async (c, next) => {
+  const path = new URL(c.req.url).pathname;
+  const sensitive = SENSITIVE_AUTH_PATHS.some((p) => path.includes(p));
+  const isSessionRead =
+    path.endsWith("/get-session") ||
+    path.endsWith("/session") ||
+    path.endsWith("/sign-out") ||
+    path.endsWith("/refresh-token") ||
+    path.endsWith("/list-sessions");
+  if (sensitive || !isSessionRead) return authLimiter(c, next);
+  return sessionLimiter(c, next);
 });
 /** General API limiter, per-user when logged in else per-IP. */
 export const apiLimiter = rateLimit({

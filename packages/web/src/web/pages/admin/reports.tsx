@@ -167,11 +167,13 @@ export default function ReportsPage() {
             className="rounded-lg bg-ink-3/60 px-2.5 py-2 text-slate-200 outline-none [color-scheme:dark]" />
         </div>
         <select value={techId} onChange={(e) => setTechId(e.target.value)}
+          aria-label={`Filter by ${nounPlural.toLowerCase()}`}
           className="rounded-lg bg-ink-3/60 px-2.5 py-2 text-xs text-slate-200 outline-none [color-scheme:dark]">
           <option value="">All {nounPlural.toLowerCase()}</option>
           {f?.techs?.map((t: any) => <option key={t.id} value={t.id}>{t.name}</option>)}
         </select>
         <select value={status} onChange={(e) => setStatus(e.target.value)}
+          aria-label="Filter by status"
           className="rounded-lg bg-ink-3/60 px-2.5 py-2 text-xs text-slate-200 outline-none [color-scheme:dark] capitalize">
           <option value="">Any status</option>
           {f?.statuses?.map((s: string) => <option key={s} value={s}>{s.replace(/_/g, " ")}</option>)}

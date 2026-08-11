@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { StoredImage } from "./stored-image";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, apiHeaders } from "../lib/api";
 import { FileText, ImageIcon, Upload, Trash2, Loader2, Download } from "lucide-react";
@@ -118,8 +119,16 @@ export function AttachmentManager({
                 className="flex items-center gap-3 rounded-lg border border-white/5 bg-ink-3/40 px-3 py-2"
               >
                 {isImg ? (
-                  <a href={f.url} target="_blank" rel="noreferrer" aria-label={`Open ${f.name}`}>
-                    <img src={f.url} alt="" className="h-9 w-9 rounded object-cover" />
+                  <a href={f.url} target="_blank" rel="noreferrer" aria-label={`Open ${f.filename}`}>
+                    <StoredImage
+                      src={f.url}
+                      className="h-9 w-9 rounded object-cover"
+                      fallback={
+                        <span className="grid h-9 w-9 place-items-center rounded bg-brand/10 text-brand">
+                          <ImageIcon className="h-4 w-4" />
+                        </span>
+                      }
+                    />
                   </a>
                 ) : (
                   <span className="grid h-9 w-9 place-items-center rounded bg-brand/10 text-brand">

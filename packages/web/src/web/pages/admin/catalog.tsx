@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, apiHeaders } from "../../lib/api";
 import { FullLoader } from "../../components/loader";
 import { CategoryManagerButton } from "../../components/category-manager";
+import { StoredImage } from "../../components/stored-image";
 import { money, dismiss } from "../../lib/utils";
 import {
   Plus,
@@ -166,13 +167,15 @@ export default function AdminCatalog() {
           const margin = r.resolvedMarginPct ?? marginPct(cost, price);
           return (
             <div key={r.id} className="overflow-hidden rounded-2xl border border-white/5 nvc-card">
-              {r.image ? (
-                <img src={r.image} alt="" className="h-28 w-full object-cover" />
-              ) : (
-                <div className="grid h-28 w-full place-items-center bg-white/5">
-                  <Icon className={`h-8 w-8 ${M.tint} opacity-40`} />
-                </div>
-              )}
+              <StoredImage
+                src={r.image}
+                className="h-28 w-full object-cover"
+                fallback={
+                  <div className="grid h-28 w-full place-items-center bg-white/5">
+                    <Icon className={`h-8 w-8 ${M.tint} opacity-40`} />
+                  </div>
+                }
+              />
               <div className="p-4">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
@@ -209,6 +212,8 @@ export default function AdminCatalog() {
                       if (await confirm({ title: `Archive "${r.name}"?`, message: "It stays on past work orders but can't be added to new ones.", confirmLabel: "Archive" }))
                         del.mutate(r.id);
                     }}
+                    aria-label={`Archive ${r.name}`}
+                    title={`Archive ${r.name}`}
                     className="grid w-10 place-items-center rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -443,13 +448,15 @@ function CatalogModal({
             </Field>
             <Field label="Picture">
               <div className="flex items-center gap-3">
-                {form.image ? (
-                  <img src={form.image} alt="" className="h-14 w-14 rounded-lg object-cover" />
-                ) : (
-                  <div className="grid h-14 w-14 place-items-center rounded-lg bg-white/5 text-slate-600">
-                    <Package className="h-5 w-5" />
-                  </div>
-                )}
+                <StoredImage
+                  src={form.image}
+                  className="h-14 w-14 rounded-lg object-cover"
+                  fallback={
+                    <div className="grid h-14 w-14 place-items-center rounded-lg bg-white/5 text-slate-600">
+                      <Package className="h-5 w-5" />
+                    </div>
+                  }
+                />
                 <input aria-label="File upload"
                   ref={fileRef}
                   type="file"

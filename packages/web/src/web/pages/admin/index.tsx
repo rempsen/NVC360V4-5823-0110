@@ -40,7 +40,19 @@ function AdminNotFound() {
         404
       </div>
       <p style={{ marginBottom: "1rem" }}>This admin page doesn't exist or the link is out of date.</p>
-      <a href="/admin" style={{ color: "#0ea5e9", fontWeight: 600, textDecoration: "none" }}>
+      <a
+        href="/admin"
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: 44,
+          padding: "0 1.25rem",
+          color: "#0ea5e9",
+          fontWeight: 600,
+          textDecoration: "none",
+        }}
+      >
         ← Back to Dashboard
       </a>
     </div>

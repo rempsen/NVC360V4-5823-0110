@@ -426,14 +426,14 @@ function CategoriesCard() {
                     onChange={(e) => setEditValue(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter" && editValue.trim()) rename.mutate({ id: cat.id, name: editValue.trim() }); if (e.key === "Escape") setEditingId(null); }}
                   />
-                  <button type="button" onClick={() => editValue.trim() && rename.mutate({ id: cat.id, name: editValue.trim() })} className="shrink-0 rounded-md p-1 text-emerald-400 hover:bg-white/5"><Check className="h-4 w-4" /></button>
-                  <button type="button" onClick={() => setEditingId(null)} className="shrink-0 rounded-md p-1 text-slate-500 hover:bg-white/5"><X className="h-4 w-4" /></button>
+                  <button type="button" aria-label="Save name" title="Save name" onClick={() => editValue.trim() && rename.mutate({ id: cat.id, name: editValue.trim() })} className="shrink-0 rounded-md p-1 text-emerald-400 hover:bg-white/5"><Check className="h-4 w-4" /></button>
+                  <button type="button" aria-label="Cancel rename" title="Cancel rename" onClick={() => setEditingId(null)} className="shrink-0 rounded-md p-1 text-slate-500 hover:bg-white/5"><X className="h-4 w-4" /></button>
                 </>
               ) : (
                 <>
                   <span className="min-w-0 flex-1 truncate text-sm text-white">{cat.name}</span>
-                  <button type="button" onClick={() => { setEditingId(cat.id); setEditValue(cat.name); }} className="shrink-0 rounded-md p-1 text-slate-500 hover:bg-white/5 hover:text-white"><Pencil className="h-3.5 w-3.5" /></button>
-                  <button type="button" onClick={() => { setDelRow(cat); setDelError(""); }} className="shrink-0 rounded-md p-1 text-slate-500 hover:bg-red-500/10 hover:text-red-400"><Trash2 className="h-3.5 w-3.5" /></button>
+                  <button type="button" aria-label={`Rename ${cat.name}`} title={`Rename ${cat.name}`} onClick={() => { setEditingId(cat.id); setEditValue(cat.name); }} className="shrink-0 rounded-md p-1 text-slate-500 hover:bg-white/5 hover:text-white"><Pencil className="h-3.5 w-3.5" /></button>
+                  <button type="button" aria-label={`Delete ${cat.name}`} title={`Delete ${cat.name}`} onClick={() => { setDelRow(cat); setDelError(""); }} className="shrink-0 rounded-md p-1 text-slate-500 hover:bg-red-500/10 hover:text-red-400"><Trash2 className="h-3.5 w-3.5" /></button>
                 </>
               )}
             </div>

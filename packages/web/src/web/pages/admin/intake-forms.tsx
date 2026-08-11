@@ -265,7 +265,7 @@ export function IntakeFormsSection({ publicKeys }: { publicKeys: PubKey[] }) {
                 <a href={publicUrl(f)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-2.5 py-1.5 text-xs font-semibold text-slate-300 hover:bg-white/5"><ExternalLink className="h-3.5 w-3.5" /> Open</a>
                 <button onClick={() => setEmbedFor(f)} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-2.5 py-1.5 text-xs font-semibold text-slate-300 hover:bg-white/5"><Code2 className="h-3.5 w-3.5" /> Embed</button>
                 <button onClick={() => setEditing(f)} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-2.5 py-1.5 text-xs font-semibold text-slate-300 hover:bg-white/5"><Pencil className="h-3.5 w-3.5" /> Edit</button>
-                <button onClick={() => setDelTarget(f)} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-2.5 py-1.5 text-xs font-semibold text-rose-300 hover:bg-white/5"><Trash2 className="h-3.5 w-3.5" /></button>
+                <button onClick={() => setDelTarget(f)} aria-label={`Delete ${f.title}`} title={`Delete ${f.title}`} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-2.5 py-1.5 text-xs font-semibold text-rose-300 hover:bg-white/5"><Trash2 className="h-3.5 w-3.5" /></button>
               </div>
             </div>
           ))}

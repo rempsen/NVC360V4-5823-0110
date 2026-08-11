@@ -400,10 +400,10 @@ export default function AdminZones() {
                         {z.active ? "Active" : "Inactive"}
                       </p>
                     </div>
-                    <button onClick={(e) => { e.stopPropagation(); editZone(z); }} className="rounded-lg p-1.5 text-slate-400 opacity-0 transition hover:bg-white/10 hover:text-white group-hover:opacity-100">
+                    <button onClick={(e) => { e.stopPropagation(); editZone(z); }} aria-label={`Edit ${z.name}`} title={`Edit ${z.name}`} className="rounded-lg p-1.5 text-slate-400 opacity-0 transition hover:bg-white/10 hover:text-white group-hover:opacity-100">
                       <Pencil className="h-3.5 w-3.5" />
                     </button>
-                    <button onClick={(e) => { e.stopPropagation(); setDelZone(z); }} className="rounded-lg p-1.5 text-slate-400 opacity-0 transition hover:bg-rose-500/15 hover:text-rose-400 group-hover:opacity-100">
+                    <button onClick={(e) => { e.stopPropagation(); setDelZone(z); }} aria-label={`Delete ${z.name}`} title={`Delete ${z.name}`} className="rounded-lg p-1.5 text-slate-400 opacity-0 transition hover:bg-rose-500/15 hover:text-rose-400 group-hover:opacity-100">
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   </div>

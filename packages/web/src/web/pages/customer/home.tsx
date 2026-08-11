@@ -1,4 +1,5 @@
 import { Link } from "wouter";
+import { StoredImage } from "../../components/stored-image";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { useAuth } from "../../hooks/use-auth";
@@ -98,7 +99,12 @@ export default function CustomerHome() {
                 <Link key={s.id} to={`/app/book/${s.id}`}>
                   <div className="group h-full overflow-hidden rounded-2xl border border-white/5 nvc-card transition hover:-translate-y-1 hover:shadow-lg">
                     <div className="relative h-32 overflow-hidden">
-                      <img src={s.image} alt={s.name} className="h-full w-full object-cover transition duration-500 group-hover:scale-105" />
+                      <StoredImage
+                        src={s.image}
+                        alt={s.name}
+                        className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
+                        fallback={<div className="h-full w-full bg-white/5" />}
+                      />
                       <div className="absolute left-3 top-3 grid h-9 w-9 place-items-center rounded-lg bg-ink-2/90 text-cyan-glow backdrop-blur">
                         <Icon className="h-4.5 w-4.5" />
                       </div>

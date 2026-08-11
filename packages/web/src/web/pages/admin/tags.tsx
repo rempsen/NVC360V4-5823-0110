@@ -99,7 +99,7 @@ export default function AdminTags() {
                   <span className="h-3 w-3 rounded-full" style={{ background: t.color }} />
                   <span className="font-semibold text-white">{t.label}</span>
                   <span className="rounded-full bg-white/5 px-2 py-0.5 text-[11px] capitalize text-slate-400">{t.scope}</span>
-                  <button onClick={() => setDelTag(t.id)} className="ml-auto grid h-7 w-7 place-items-center rounded-lg text-slate-600 hover:bg-red-500/10 hover:text-red-400">
+                  <button onClick={() => setDelTag(t.id)} aria-label={`Delete tag ${t.label}`} title={`Delete tag ${t.label}`} className="ml-auto grid h-7 w-7 place-items-center rounded-lg text-slate-600 hover:bg-red-500/10 hover:text-red-400">
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </li>

@@ -192,6 +192,7 @@ function FieldStaffTab() {
           ))}
         </div>
         <select
+          aria-label="Sort by"
           value={sortBy}
           onChange={(e) => setSortBy(e.target.value as any)}
           className="rounded-lg border border-white/10 bg-ink-2 px-3 py-1.5 text-xs font-semibold text-slate-300 focus:border-brand focus:outline-none"

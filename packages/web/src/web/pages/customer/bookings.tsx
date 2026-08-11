@@ -1,4 +1,5 @@
 import { Link } from "wouter";
+import { StoredImage } from "../../components/stored-image";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { StatusBadge } from "../../components/brand";
@@ -33,7 +34,7 @@ export default function CustomerBookings() {
             <Link key={b.id} to={`/app/track/${b.id}`}>
               <div className="group flex items-center gap-4 rounded-2xl border border-white/5 bg-ink-2 p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
                 {b.service?.image && (
-                  <img src={b.service.image} alt="" className="h-16 w-16 rounded-xl object-cover" />
+                  <StoredImage src={b.service.image} className="h-16 w-16 rounded-xl object-cover" />
                 )}
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">

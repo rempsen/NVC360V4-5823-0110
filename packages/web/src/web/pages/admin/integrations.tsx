@@ -132,6 +132,7 @@ export default function IntegrationsPage() {
                             </button>
                           )}
                           <button onClick={() => disconnect.mutate(it.id)}
+                            aria-label={`Disconnect ${it.name}`} title={`Disconnect ${it.name}`}
                             className="flex items-center justify-center gap-1.5 rounded-lg bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-400 hover:bg-red-500/20">
                             <Link2Off className="h-3.5 w-3.5" />
                           </button>
@@ -523,6 +524,7 @@ function ProviderForm({ p, stored, onSaved }: { p: any; stored: any; onSaved: ()
             </button>
             {isDb && (
               <button onClick={() => remove.mutate()} disabled={remove.isPending}
+                aria-label="Remove credentials" title="Remove credentials"
                 className="flex items-center justify-center gap-1.5 rounded-lg bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-400 hover:bg-red-500/20 disabled:opacity-50">
                 <Trash2 className="h-3.5 w-3.5" />
               </button>

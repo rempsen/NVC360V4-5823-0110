@@ -3,6 +3,7 @@ import { useParams, useLocation, Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { FullLoader, Loader } from "../../components/loader";
+import { StoredImage } from "../../components/stored-image";
 import { money } from "../../lib/utils";
 import { AddressAutocomplete } from "../../components/address-autocomplete";
 import {
@@ -102,7 +103,12 @@ export default function BookPage() {
         <div className="space-y-6">
           {/* service header */}
           <div className="overflow-hidden rounded-2xl border border-white/5 nvc-card">
-            <img src={service.image} alt={service.name} className="h-44 w-full object-cover" />
+            <StoredImage
+              src={service.image}
+              alt={service.name}
+              className="h-44 w-full object-cover"
+              fallback={<div className="h-44 w-full bg-white/5" />}
+            />
             <div className="p-5">
               <div className="flex items-center justify-between">
                 <h1 className="text-xl font-extrabold text-white">{service.name}</h1>

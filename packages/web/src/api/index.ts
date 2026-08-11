@@ -5,7 +5,7 @@ import { authMiddleware } from "./middleware/auth";
 import { AppError } from "./lib/errors";
 import { captureException, requestLogger } from "./lib/logger";
 import { recordError } from "./lib/alerts";
-import { apiLimiter, authLimiter } from "./lib/rate-limit";
+import { apiLimiter, authSurfaceLimiter } from "./lib/rate-limit";
 import { recordHttp, renderProm, renderJson, templatePath } from "./lib/metrics";
 import { servicesRoutes } from "./routes/services";
 import { catalogRoutes } from "./routes/catalog";
@@ -171,8 +171,9 @@ const app = new Hono<{ Variables: Variables }>()
   .notFound((c) =>
     c.json({ error: { code: "not_found", message: "Not found" }, requestId: c.get("requestId") }, 404),
   )
-  // throttle auth surfaces hard (brute-force defense)
-  .use("/api/auth/*", authLimiter)
+  // throttle credential auth surfaces hard (brute-force defense); session reads
+  // (get-session etc.) get a generous budget so page loads never 429 -> /sign-in
+  .use("/api/auth/*", authSurfaceLimiter)
   .on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw))
   // Stripe webhook — MUST stay before basePath/authMiddleware/json parsing so
   // the handler can read the raw body for signature verification, and so it is
