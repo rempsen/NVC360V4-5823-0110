@@ -7,7 +7,7 @@ import { resolvePublicKey, hashApiKey } from "../middleware/auth";
 import { putObject } from "../lib/storage";
 import { rateLimit, keyByIp } from "../lib/rate-limit";
 import { fireEvent } from "../../services/dispatch";
-import { isInAnyZone } from "../../shared/zone-utils";
+import { checkServiceZone } from "../../services/zones";
 import { attachMembership, findCompanyUserByEmail } from "../lib/memberships";
 import { recomputeBooking } from "../../services/billing";
 import { reconcileRiderStatus } from "../../services/presence";
@@ -551,13 +551,14 @@ export const publicFormsRoutes = new Hono()
     }
 
     // ---- zone enforcement (if client submitted geocoded lat/lng with the form) ----
+    // Shared with both booking-create paths (services/zones.ts) — this used to
+    // be a third inline copy. `Number.isFinite`, not truthiness: lat/lng 0 are
+    // real coordinates and used to skip enforcement entirely.
     const subLat = typeof body.lat === "number" ? body.lat : parseFloat(body.lat);
     const subLng = typeof body.lng === "number" ? body.lng : parseFloat(body.lng);
-    if (subLat && subLng && !isNaN(subLat) && !isNaN(subLng)) {
-      const allZones = await t.select(schema.serviceZones);
-      const parsedZones = allZones.map((z) => ({ polygon: JSON.parse(z.polygon || "[]") as [number, number][], active: z.active }));
-      const activeZones = parsedZones.filter((z) => z.active && z.polygon.length >= 3);
-      if (activeZones.length > 0 && !isInAnyZone(subLat, subLng, parsedZones)) {
+    if (Number.isFinite(subLat) && Number.isFinite(subLng)) {
+      const zone = await checkServiceZone(t.companyId, subLat, subLng);
+      if (!zone.ok) {
         return c.json({ message: "Sorry, your address is outside our service area. Please contact us directly for availability." }, 422);
       }
     }
@@ -724,14 +725,12 @@ async function submitWorkOrder(c: any, companyId: string, form: typeof schema.in
     if (rider) riderId = rider.id;
   }
 
-  // ---- zone enforcement, same as the admin route ----
+  // ---- zone enforcement, shared with both booking-create paths ----
   // `!= null`, not truthiness: lat 0 is a real coordinate and the old check
   // let a submission at the equator skip zone enforcement entirely.
   if (body.lat != null && body.lng != null) {
-    const allZones = await t.select(schema.serviceZones);
-    const parsedZones = allZones.map((z) => ({ polygon: JSON.parse(z.polygon || "[]") as [number, number][], active: z.active }));
-    const activeZones = parsedZones.filter((z) => z.active && z.polygon.length >= 3);
-    if (activeZones.length > 0 && !isInAnyZone(body.lat, body.lng, parsedZones)) {
+    const zone = await checkServiceZone(t.companyId, body.lat, body.lng);
+    if (!zone.ok) {
       return c.json({ message: "Address is outside all active service zones." }, 422);
     }
   }
