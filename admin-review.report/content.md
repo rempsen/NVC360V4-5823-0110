@@ -77,7 +77,9 @@ Membership integrity was also verified live this session: a merely-invited user 
 
 **After:** the re-run audit reports **zero unnamed controls and zero unlabelled inputs** across all 24 pages at both widths. The single remaining hit is a Leaflet-generated marker `div` on `/admin/fleet` — library-owned, not ours. No images missing `alt` anywhere.
 
-**To reach 9.5:** no automated a11y gate exists. Wire the audit script into CI so a new icon-only button fails the build, and do one keyboard-only pass through work-order creation (focus order, modal focus trap, Esc to close).
+**Gate added (`102b824`).** `a11y-gate.py` now runs all 24 pages at both widths and exits 1 on any new finding, so a future icon-only button fails the check instead of waiting for the next manual audit. Verified by sabotage: injecting an unlabelled button makes it fail and name the exact element; reverting makes it pass. Kept out of `bun run build` deliberately — it needs Chrome and a live server, which would break the platform's deploy.
+
+**To reach 9.5:** do one keyboard-only pass through work-order creation (focus order, modal focus trap, Esc to close) — the gate checks names and sizes, not focus behaviour.
 
 ## 5. Information architecture & navigation — 8.0 / 10
 
@@ -135,10 +137,12 @@ Sentry is wired on both client (`web/lib/sentry.ts`, `main.tsx`, `provider.tsx`,
 - Stripe no longer loads on first paint
 - Charts/maps confirmed already lazy (no change needed)
 
+**P1 — done since (`102b824`)**
+- Automated a11y gate (`a11y-gate.py`, 24 pages × 2 widths, verified by sabotage)
+
 **P1 — still open**
 1. Add `VITE_SENTRY_DSN` / `SENTRY_DSN` to publish settings *(your action)*
-2. Automated a11y gate in CI
-3. Alert when the rate limiter fails open on a Redis outage
+2. Alert when the rate limiter fails open on a Redis outage
 
 **P2 — headroom**
 4. Card layout for work-orders and scheduler tables under `sm`
