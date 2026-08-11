@@ -417,11 +417,35 @@ export default function JobDetail() {
       }
       return;
     }
-    const rec = await startVoiceNote();
-    if (!rec) {
-      Alert.alert("Mic unavailable", "Allow microphone access to record voice notes.");
+    // Prompts for mic access on first use; only complains when it truly can't.
+    const started = await startVoiceNote();
+    if (!started.ok) {
+      if (started.reason === "blocked") {
+        // iOS never re-prompts once denied — Settings is the only way back.
+        Alert.alert(
+          "Microphone is turned off",
+          "Turn on Microphone for NVC360 in iPhone Settings to record voice notes.",
+          [
+            { text: "Not now", style: "cancel" },
+            { text: "Open Settings", onPress: () => Linking.openSettings() },
+          ],
+        );
+      } else if (started.reason === "denied") {
+        Alert.alert(
+          "Microphone access needed",
+          "Tap the mic button again and choose Allow so you can dictate notes instead of typing.",
+        );
+      } else if (started.reason === "unsupported") {
+        Alert.alert(
+          "Update needed",
+          "Voice notes need the latest version of the app. Update from TestFlight or the App Store.",
+        );
+      } else {
+        Alert.alert("Couldn't start recording", started.error || "Try again");
+      }
       return;
     }
+    const rec = started.recording;
     setRecording(rec);
   }
 
