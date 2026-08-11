@@ -11,7 +11,7 @@ import {
 } from "phosphor-react-native";
 import { C } from "../../lib/theme";
 import { api } from "../../lib/api";
-import { getToken } from "../../lib/auth";
+import { authHeaders } from "../../lib/auth";
 import { useLocationHeartbeat } from "../../lib/use-location-heartbeat";
 import { usePushNotifications, setAppBadgeCount } from "../../lib/push";
 
@@ -54,7 +54,7 @@ export default function RiderLayout() {
     queryKey: ["dispatch-unread"],
     queryFn: async () => {
       const res = await fetch(`${API}/api/messages/direct/unread`, {
-        headers: { Authorization: `Bearer ${getToken()}` },
+        headers: authHeaders(),
       });
       if (!res.ok) return { count: 0 };
       return res.json() as Promise<{ count: number }>;

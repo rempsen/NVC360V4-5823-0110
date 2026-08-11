@@ -3,6 +3,7 @@ import { inferAdditionalFields } from "better-auth/client/plugins";
 import { Platform } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import Constants from "expo-constants";
+import { getActiveCompany } from "./active-company";
 
 const isWeb = Platform.OS === "web";
 const TOKEN_KEY = "bearer_token";
@@ -102,5 +103,29 @@ export const authClient = createAuthClient({
 
 export async function clearToken() {
   await removeToken();
+}
+
+/**
+ * The one place request headers are built for the driver app.
+ *
+ * Every authenticated call needs BOTH the bearer token and the active company
+ * — the backend resolves what this driver is allowed to see from
+ * `X-Company-Id` on each request. Before this helper existed the token was
+ * hand-written into ~19 separate `fetch()` header objects, which is exactly
+ * how you end up with one screen that forgets the company header and quietly
+ * serves the wrong company's jobs. Adding a header now happens once, here.
+ *
+ * The company header is omitted when no company has been chosen, which makes
+ * the backend fall back to the driver's home company — the right behaviour for
+ * a single-company driver who never sees the picker.
+ */
+export function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  const token = getToken();
+  const company = getActiveCompany();
+  return {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(company ? { "X-Company-Id": company } : {}),
+    ...extra,
+  };
 }
 

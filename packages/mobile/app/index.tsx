@@ -25,7 +25,9 @@ export default function Index() {
       });
       if (result.success) {
         await markUnlockedNow();
-        router.replace("/(rider)");
+        // The company picker sits AFTER the security gate on purpose: the
+        // driver proves who they are, THEN says who they're working for today.
+        router.replace("/pick-company");
       } else {
         // Cancelled or failed — this is NOT a sign-out, just stay here with
         // a retry option (matches how Uber/DoorDash handle a declined
@@ -54,7 +56,7 @@ export default function Index() {
     (async () => {
       const needsPrompt = await shouldPromptBiometric();
       if (!needsPrompt) {
-        router.replace("/(rider)");
+        router.replace("/pick-company");
         return;
       }
       await tryUnlockAndProceed();

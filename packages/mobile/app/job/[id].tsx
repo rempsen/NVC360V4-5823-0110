@@ -51,7 +51,7 @@ import {
 import { api } from "../../lib/api";
 import { useCustomerNoun, useJobNoun } from "../../lib/use-brand";
 import { useLiveMessageSignal } from "../../lib/live-messages";
-import { getToken } from "../../lib/auth";
+import { getToken, authHeaders } from "../../lib/auth";
 import { C, money, fmtDate, assetUrl } from "../../lib/theme";
 import { StatusBadge, Button, FullLoader } from "../../components/ui";
 import { SignaturePad } from "../../components/signature-pad";
@@ -156,7 +156,7 @@ export default function JobDetail() {
     mutationFn: async ({ index, done }: { index: number; done: boolean }) => {
       const res = await fetch(`${API}/api/bookings/${id}/checklist`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ index, done }),
       });
       if (!res.ok) throw new Error("Failed");
@@ -174,7 +174,7 @@ export default function JobDetail() {
     queryKey: ["dispatch-thread"],
     queryFn: async () => {
       const res = await fetch(`${API}/api/messages/direct`, {
-        headers: { Authorization: `Bearer ${getToken()}` },
+        headers: authHeaders(),
       });
       if (!res.ok) throw new Error("Failed");
       return res.json() as Promise<{ direct: any[]; job: any }>;
@@ -200,7 +200,7 @@ export default function JobDetail() {
     mutationFn: async (body: string) => {
       const res = await fetch(`${API}/api/messages/direct`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ body }),
       });
       if (!res.ok) throw new Error("Failed");
@@ -217,7 +217,7 @@ export default function JobDetail() {
     try {
       const res = await fetch(`${API}/api/bookings/${id}/driver-notes`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ notes: driverNote.trim() }),
       });
       if (res.ok) {
@@ -273,7 +273,7 @@ export default function JobDetail() {
           const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
           const res = await fetch(`${API}/api/tracking/${id}/ping`, {
             method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+            headers: authHeaders({ "Content-Type": "application/json" }),
             body: JSON.stringify({ lat: loc.coords.latitude, lng: loc.coords.longitude }),
           });
           // Update Live Activity ETA if server returns one
@@ -348,7 +348,7 @@ export default function JobDetail() {
       form.append("phase", phase);
       const res = await fetch(`${API}/api/bookings/${id}/photos`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${getToken()}` },
+        headers: authHeaders(),
         body: form,
       });
       if (!res.ok) throw new Error("Upload failed");
@@ -372,7 +372,7 @@ export default function JobDetail() {
     try {
       const res = await fetch(`${API}/api/bookings/${id}/signature`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.message || "Save failed");

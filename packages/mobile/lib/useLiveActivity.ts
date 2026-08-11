@@ -13,7 +13,7 @@
 import { useEffect, useRef } from "react";
 import { Platform } from "react-native";
 import Constants from "expo-constants";
-import { getToken } from "./auth";
+import { authHeaders } from "./auth";
 
 // Lazy import so Android bundle doesn't fail if native module isn't linked
 let LiveActivity: typeof import("expo-live-activity") | null = null;
@@ -85,10 +85,7 @@ async function sendTokenToServer(jobId: string, token: string, type: "update" | 
   try {
     await fetch(`${API}/api/tracking/${jobId}/live-activity-token`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${getToken()}`,
-      },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ token, type }),
     });
   } catch {

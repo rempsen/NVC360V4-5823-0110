@@ -22,7 +22,7 @@ import {
   CaretRight,
   Wrench,
 } from "phosphor-react-native";
-import { getToken } from "../../lib/auth";
+import { authHeaders } from "../../lib/auth";
 import { C } from "../../lib/theme";
 import { FullLoader } from "../../components/ui";
 import { setAppBadgeCount } from "../../lib/push";
@@ -51,7 +51,7 @@ export default function Messages() {
     queryKey: ["dispatch-thread"],
     queryFn: async () => {
       const res = await fetch(`${API}/api/messages/direct`, {
-        headers: { Authorization: `Bearer ${getToken()}` },
+        headers: authHeaders(),
       });
       if (!res.ok) throw new Error("Failed");
       return res.json() as Promise<{ direct: DirectMsg[]; job: any }>;
@@ -69,7 +69,7 @@ export default function Messages() {
     queryKey: ["bookings"],
     queryFn: async () => {
       const res = await fetch(`${API}/api/bookings`, {
-        headers: { Authorization: `Bearer ${getToken()}` },
+        headers: authHeaders(),
       });
       if (!res.ok) throw new Error("Failed");
       const j = (await res.json()) as { bookings: any[] };
@@ -82,10 +82,7 @@ export default function Messages() {
     mutationFn: async (body: string) => {
       const res = await fetch(`${API}/api/messages/direct`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${getToken()}`,
-        },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ body }),
       });
       if (!res.ok) throw new Error("Failed");
@@ -107,7 +104,7 @@ export default function Messages() {
     useCallback(() => {
       fetch(`${API}/api/messages/direct/mark-read`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${getToken()}` },
+        headers: authHeaders(),
       })
         .then(() => {
           qc.invalidateQueries({ queryKey: ["dispatch-unread"] });

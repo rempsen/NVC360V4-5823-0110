@@ -15,7 +15,7 @@ import { authClient } from "../../lib/auth";
 import { C, fmtDate, money } from "../../lib/theme";
 import { StatusBadge, Card, Button, FullLoader, Empty } from "../../components/ui";
 import Constants from "expo-constants";
-import { getToken } from "../../lib/auth";
+import { authHeaders } from "../../lib/auth";
 import { useCustomerNoun } from "../../lib/use-brand";
 
 const API = ((Constants.expoConfig?.extra?.apiUrl as string) ?? "").replace(/\/$/, "");
@@ -45,7 +45,7 @@ export default function Jobs() {
     queryKey: ["today-stats"],
     queryFn: async () => {
       const res = await fetch(`${API}/api/bookings/today-stats`, {
-        headers: { Authorization: `Bearer ${getToken()}` },
+        headers: authHeaders(),
       });
       if (!res.ok) return { jobsDone: 0, earnings: 0, activeJobs: 0, totalToday: 0 };
       return res.json() as Promise<{ jobsDone: number; earnings: number; activeJobs: number; totalToday: number }>;

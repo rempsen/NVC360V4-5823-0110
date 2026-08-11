@@ -7,13 +7,14 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import * as ImagePicker from "expo-image-picker";
 import { Camera, SignOut } from "phosphor-react-native";
 import { api } from "../../lib/api";
-import { authClient, clearToken, getToken } from "../../lib/auth";
+import { authClient, clearToken, authHeaders } from "../../lib/auth";
 import { unregisterPushToken } from "../../lib/push";
 import { stopLocationSharing } from "../../lib/use-location-heartbeat";
 import Constants from "expo-constants";
 import { C } from "../../lib/theme";
 import { Avatar, Card, Button, FullLoader, Row } from "../../components/ui";
 import { isBiometricAvailable, getLockPreference, setLockPreference, clearUnlockStamp } from "../../lib/biometric-lock";
+import { clearActiveCompany, getActiveCompany, setActiveCompany, type CompanyOption } from "../../lib/active-company";
 
 const API = ((Constants.expoConfig?.extra?.apiUrl as string) ?? "").replace(/\/$/, "");
 
@@ -37,6 +38,41 @@ export default function Profile() {
       return enabled;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["biometric-lock"] }),
+  });
+
+  // Tracked in state (not read inline) so the card re-renders immediately
+  // after a switch instead of showing the old company until the next render.
+  const [activeCompany, setActiveCompanyState] = useState(getActiveCompany());
+
+  const companies = useQuery({
+    queryKey: ["my-companies"],
+    queryFn: async () => {
+      const res = await fetch(`${API}/api/me/companies`, { headers: authHeaders() });
+      if (!res.ok) throw new Error("Failed");
+      const json = (await res.json()) as { companies?: CompanyOption[] };
+      return json.companies ?? [];
+    },
+    staleTime: 5 * 60_000,
+  });
+
+  const switching = useMutation({
+    mutationFn: async (companyId: string) => {
+      // Go offline first. Staying "available" under company A while the app
+      // starts asking for company B's jobs would leave dispatch at A able to
+      // assign work to a tech who is no longer looking at their board.
+      await api.riders.me.$patch({ json: { status: "offline" } }).catch(() => {});
+      await stopLocationSharing().catch(() => {});
+      await setActiveCompany(companyId);
+      return companyId;
+    },
+    onSuccess: (companyId) => {
+      setActiveCompanyState(companyId);
+      // Everything cached was fetched under the previous company — clearing is
+      // what actually prevents company A's jobs lingering under company B.
+      qc.clear();
+      router.replace("/(rider)");
+    },
+    onError: () => Alert.alert("Couldn't switch", "Check your connection and try again."),
   });
 
   const me = useQuery({
@@ -89,7 +125,7 @@ export default function Profile() {
       } as any);
       const res = await fetch(`${API}/api/riders/me/photo`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${getToken()}` },
+        headers: authHeaders(),
         body: form,
       });
       if (!res.ok) throw new Error("Upload failed");
@@ -116,6 +152,9 @@ export default function Profile() {
           await unregisterPushToken().catch(() => {});
           await stopLocationSharing().catch(() => {});
           await clearUnlockStamp().catch(() => {});
+          // Leaving a stale company id behind would point the NEXT driver on a
+          // shared work phone at this driver's company until they re-pick.
+          await clearActiveCompany().catch(() => {});
           await authClient.signOut().catch(() => {});
           await clearToken();
           qc.clear();
@@ -226,6 +265,57 @@ export default function Profile() {
           </Card>
         )}
 
+        {(companies.data?.length ?? 0) > 1 && (
+          <Card>
+            <Text style={s.cardTitle}>Working for</Text>
+            <Text style={s.availSub}>
+              You're on {companies.data!.length} rosters. Switching reloads your jobs for that
+              company — anything in progress stays with the company you started it under.
+            </Text>
+            <View style={{ gap: 8, marginTop: 12 }}>
+              {companies.data!.map((co) => {
+                const isActive = co.id === activeCompany;
+                return (
+                  <Pressable
+                    key={co.id}
+                    disabled={isActive || switching.isPending}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+                      Alert.alert(
+                        `Switch to ${co.name}?`,
+                        "Your job list will reload to show only this company's work.",
+                        [
+                          { text: "Cancel", style: "cancel" },
+                          { text: "Switch", onPress: () => switching.mutate(co.id) },
+                        ],
+                      );
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Switch to ${co.name}`}
+                    accessibilityState={{ selected: isActive }}
+                    style={[s.coRow, isActive && s.coRowActive]}
+                  >
+                    <View style={s.coAvatar}>
+                      <Text style={s.coAvatarTxt}>{co.name?.[0]?.toUpperCase() ?? "?"}</Text>
+                    </View>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={s.coName} numberOfLines={1}>{co.name}</Text>
+                      <Text style={s.coRole}>
+                        {isActive ? "Current shift" : "Tap to switch"}
+                      </Text>
+                    </View>
+                    {switching.isPending && switching.variables === co.id ? (
+                      <ActivityIndicator color={C.brand} size="small" />
+                    ) : isActive ? (
+                      <View style={s.coDot} />
+                    ) : null}
+                  </Pressable>
+                );
+              })}
+            </View>
+          </Card>
+        )}
+
         <Card>
           <Text style={s.cardTitle}>Details</Text>
           <Row label="Skill class" value={rider?.skillClass} />
@@ -243,6 +333,29 @@ export default function Profile() {
 }
 
 const s = StyleSheet.create({
+  coRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: C.bg3,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: C.border,
+    padding: 12,
+  },
+  coRowActive: { borderColor: C.brand, backgroundColor: "rgba(14,165,233,0.10)" },
+  coAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 11,
+    backgroundColor: C.bg2,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  coAvatarTxt: { color: C.brand, fontSize: 15, fontWeight: "800" },
+  coName: { color: C.text, fontSize: 14.5, fontWeight: "700" },
+  coRole: { color: C.sub, fontSize: 11.5, marginTop: 1 },
+  coDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: C.brand },
   safe: { flex: 1, backgroundColor: C.bg },
   header: { paddingHorizontal: 20, paddingTop: 6, paddingBottom: 8 },
   title: { color: C.text, fontSize: 24, fontWeight: "800" },

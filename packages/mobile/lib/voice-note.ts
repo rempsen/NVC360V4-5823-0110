@@ -7,6 +7,8 @@
  * binaries instead of crashing them. Once the next TestFlight/production build
  * ships, the button appears with no further code change.
  */
+import { authHeaders } from "./auth";
+
 let mod: any = null;
 let tried = false;
 
@@ -83,7 +85,10 @@ export async function uploadVoiceNote(opts: {
     form.append("durationSecs", String(opts.durationSecs));
     const res = await fetch(`${opts.api}/api/bookings/${opts.bookingId}/voice-note`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${opts.token}` },
+      // opts.token is passed in by the caller, but the company header must
+      // still come from the shared builder or a voice note uploads against the
+      // driver's home company instead of the one they are working for today.
+      headers: authHeaders({ Authorization: `Bearer ${opts.token}` }),
       body: form,
     });
     if (!res.ok) return { ok: false, error: `Upload failed (${res.status})` };

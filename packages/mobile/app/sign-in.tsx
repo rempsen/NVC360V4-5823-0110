@@ -15,7 +15,6 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import Constants from "expo-constants";
 import { authClient, captureToken } from "../lib/auth";
-import { hasSeenOnboarding } from "../lib/onboarding";
 import { C } from "../lib/theme";
 import { Button } from "../components/ui";
 
@@ -45,8 +44,10 @@ export default function SignIn() {
         setLoading(false);
         return;
       }
-      const seen = await hasSeenOnboarding();
-      router.replace(seen ? "/(rider)" : "/onboarding");
+      // Straight to the company picker — it self-skips for anyone on a single
+      // company's roster, and it forwards to onboarding when that's still due,
+      // so this one destination is correct for every driver.
+      router.replace("/pick-company");
     } catch (e: any) {
       setError(e?.message || "Something went wrong");
       setLoading(false);

@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "react";
 import EventSource from "react-native-sse";
 import Constants from "expo-constants";
-import { getToken } from "./auth";
+import { getToken, authHeaders } from "./auth";
+import { getActiveCompany } from "./active-company";
 
 const API = ((Constants.expoConfig?.extra?.apiUrl as string) ?? "").replace(/\/$/, "");
 
@@ -28,13 +29,22 @@ export function useLiveMessageSignal(path: string | null | undefined, onSignal: 
   const onSignalRef = useRef(onSignal);
   onSignalRef.current = onSignal;
 
+  // Re-subscribing on company change is what actually tears down the old
+  // company's stream — the effect would otherwise keep the previous
+  // subscription alive for the rest of the session after a switch.
+  const company = getActiveCompany();
+
   useEffect(() => {
     if (!path) return;
     const token = getToken();
     if (!token) return;
 
+    // The company header matters here as much as on a normal fetch: the
+    // stream is authorized per company, so without it a driver working for
+    // company B would subscribe to their home company's message bus and get
+    // "you have a new message" pings for the wrong company's threads.
     const es = new EventSource<"new-message" | "ping">(`${API}${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: authHeaders(),
       debug: false,
     });
     es.addEventListener("new-message", () => onSignalRef.current());
@@ -43,5 +53,5 @@ export function useLiveMessageSignal(path: string | null | undefined, onSignal: 
     // polling interval covers anything this stream misses entirely.
 
     return () => es.close();
-  }, [path]);
+  }, [path, company]);
 }
