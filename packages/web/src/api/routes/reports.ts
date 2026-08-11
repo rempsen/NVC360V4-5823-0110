@@ -4,6 +4,8 @@ import * as schema from "../database/schema";
 import { requireAuth, tenantId } from "../middleware/auth";
 import { tdb, type TenantDb } from "../database/tenant";
 import { inPoly } from "../../shared/zone-utils";
+import { companyTimeZone } from "../../services/company-tz";
+import { namedDayBounds, zonedDayKey } from "../../shared/tz";
 
 /* ---------------------------------------------------------------------------
  * Reports engine — aggregated, date-range + filter aware.
@@ -35,19 +37,31 @@ const C = {
   slate: "#94a3b8",
 };
 
-function parseRange(c: any) {
+/**
+ * Inclusive day bounds for the requested range, in the TENANT's time zone.
+ *
+ * This used setHours() on a Date, i.e. the server process time zone — UTC in
+ * production. For a Winnipeg tenant that shifted every range five hours: a
+ * report "for August 1" ran from 19:00 Jul 31 to 19:00 Aug 1 local, so evening
+ * jobs fell into the next day and the first evening of the range was missing.
+ * A bare "2026-08-01" from the date picker also parses as UTC midnight, which
+ * is the previous local day — namedDayBounds() takes the calendar date from the
+ * string instead of re-deriving it.
+ */
+function parseRange(c: any, tz: string) {
   const fromQ = c.req.query("from");
   const toQ = c.req.query("to");
-  const to = toQ ? new Date(toQ) : new Date();
-  const from = fromQ ? new Date(fromQ) : new Date(to.getTime() - 30 * 86_400_000);
-  // normalise to inclusive day bounds
-  const f = new Date(from); f.setHours(0, 0, 0, 0);
-  const t = new Date(to); t.setHours(23, 59, 59, 999);
-  return { from: f, to: t };
+  const toB = namedDayBounds(toQ || new Date(), tz);
+  const fromB = namedDayBounds(
+    fromQ || new Date(toB.end.getTime() - 30 * 86_400_000),
+    tz,
+  );
+  return { from: fromB.start, to: toB.end };
 }
 
 const money = (n: number) => `$${(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const dayKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+/** Day bucket in the tenant's time zone (see parseRange). */
+const dayKey = (d: Date, tz: string) => zonedDayKey(d, tz);
 const niceDay = (k: string) => {
   const [, m, d] = k.split("-");
   return `${["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(m)]} ${Number(d)}`;
@@ -82,7 +96,8 @@ export const reportsRoutes = new Hono()
   .get("/:report", requireAuth, async (c) => {
     const report = c.req.param("report");
     const t = tdb(tenantId(c));
-    const { from, to } = parseRange(c);
+    const tz = await companyTimeZone(tenantId(c));
+    const { from, to } = parseRange(c, tz);
     const fStatus = c.req.query("status") || "";
     const fTech = c.req.query("techId") || "";
     const fZone = c.req.query("zone") || "";
@@ -119,7 +134,7 @@ export const reportsRoutes = new Hono()
           revenue += total;
           tax += Number(b.taxAmount || 0);
           cogs += Number(b.lineItemsCost || 0);
-          const k = dayKey(new Date(b.scheduledAt));
+          const k = dayKey(new Date(b.scheduledAt), tz);
           const d = byDay.get(k) ?? { revenue: 0, jobs: 0, tax: 0 };
           d.revenue += total; d.jobs += 1; d.tax += Number(b.taxAmount || 0);
           byDay.set(k, d);

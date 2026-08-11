@@ -19,6 +19,8 @@ import { checkServiceZone, OUTSIDE_ZONE_MESSAGE, OUTSIDE_ZONE_MESSAGE_ADMIN } fr
 import { forwardGeocode } from "../../services/geocode";
 import { linkBookingToProperty } from "../../services/properties";
 import { logJobEvent, jobTimeline } from "../../services/job-events";
+import { companyTimeZone } from "../../services/company-tz";
+import { zonedDayBounds } from "../../shared/tz";
 import { z } from "zod";
 import {
   parseBody,
@@ -414,6 +416,41 @@ export const bookingsRoutes = new Hono()
       },
       200,
     );
+  })
+  // ── Today's stats for the logged-in tech ────────────────────────────────
+  // GET /api/bookings/today-stats
+  //
+  // MUST stay above `/:id`. Hono matches in registration order, and this route
+  // used to be declared at the very bottom of the file — so `/:id` swallowed it
+  // and every call returned 404 "Not found" with `id = "today-stats"`. The
+  // driver app treats a non-ok response as zeros, so the home screen showed
+  // 0 jobs / $0 earnings for every technician, always.
+  // Returns { jobsDone, earnings, activeJobs, totalToday } for the tenant's
+  // local day.
+  .get("/today-stats", requireAuth, async (c) => {
+    const u = c.get("user") as SessionUser;
+    const t = tx(c);
+    // find rider record for this user
+    const rider = await t.selectOne(schema.riders, eq(schema.riders.userId, u.id));
+    if (!rider) return c.json({ jobsDone: 0, earnings: 0, activeJobs: 0 }, 200);
+    const all = await t.select(schema.bookings, eq(schema.bookings.riderId, rider.id));
+    // "Today" is the tenant's local day, not the server's. setHours() here ran
+    // in the process time zone (UTC in production), so for a Winnipeg tenant
+    // the window rolled over at 19:00 local: the tech's completed jobs and
+    // earnings for the day disappeared from their phone mid-evening, and an
+    // evening job counted toward tomorrow.
+    const tz = await companyTimeZone(tenantId(c));
+    const { start: todayStart, end: todayEnd } = zonedDayBounds(new Date(), tz);
+    const todayJobs = all.filter(b => {
+      const d = b.scheduledAt ? new Date(b.scheduledAt) : null;
+      return d && d >= todayStart && d <= todayEnd;
+    });
+    const jobsDone = todayJobs.filter(b => b.status === "completed").length;
+    const earnings = todayJobs
+      .filter(b => b.status === "completed")
+      .reduce((sum, b) => sum + (Number(b.price) || 0), 0);
+    const activeJobs = todayJobs.filter(b => ["assigned","enroute","arrived","in_progress"].includes(b.status)).length;
+    return c.json({ jobsDone, earnings, activeJobs, totalToday: todayJobs.length }, 200);
   })
   .get("/:id", requireAuth, async (c) => {
     const b = await tx(c).selectOne(schema.bookings, eq(schema.bookings.id, c.req.param("id")));
@@ -1085,27 +1122,5 @@ export const bookingsRoutes = new Hono()
     const { notes } = await parseBody(c, DriverNotesBody);
     await t.update(schema.bookings, { driverNotes: notes ?? "" }, eq(schema.bookings.id, id));
     return c.json({ ok: true }, 200);
-  })
-  // ── Today's stats for the logged-in tech ────────────────────────────────
-  // GET /api/bookings/today-stats
-  // Returns { jobsDone, earnings, activeJobs } for today's date (tenant-aware)
-  .get("/today-stats", requireAuth, async (c) => {
-    const u = c.get("user") as SessionUser;
-    const t = tx(c);
-    // find rider record for this user
-    const rider = await t.selectOne(schema.riders, eq(schema.riders.userId, u.id));
-    if (!rider) return c.json({ jobsDone: 0, earnings: 0, activeJobs: 0 }, 200);
-    const all = await t.select(schema.bookings, eq(schema.bookings.riderId, rider.id));
-    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-    const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
-    const todayJobs = all.filter(b => {
-      const d = b.scheduledAt ? new Date(b.scheduledAt) : null;
-      return d && d >= todayStart && d <= todayEnd;
-    });
-    const jobsDone = todayJobs.filter(b => b.status === "completed").length;
-    const earnings = todayJobs
-      .filter(b => b.status === "completed")
-      .reduce((sum, b) => sum + (Number(b.price) || 0), 0);
-    const activeJobs = todayJobs.filter(b => ["assigned","enroute","arrived","in_progress"].includes(b.status)).length;
-    return c.json({ jobsDone, earnings, activeJobs, totalToday: todayJobs.length }, 200);
   });
+

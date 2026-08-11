@@ -18,6 +18,8 @@ import { sendPush } from "./push";
 import { applyNotificationOverrides } from "./notification-presets";
 import { logJobEvent, type JobEventKind } from "./job-events";
 import { propertyUrl } from "./properties";
+import { companyTimeZone } from "./company-tz";
+import { zonedMinutesOfDay } from "../shared/tz";
 import { runAutomations, EVENT_TO_TRIGGER } from "./automation";
 import { scheduleReviewRequest } from "./reviews";
 
@@ -228,8 +230,22 @@ export async function sendDesignTest(companyId: string, to: string, subject: str
   return { ok: true };
 }
 
-/** Check whether a channel is globally enabled + outside quiet hours (best-effort). */
-export async function channelAllowed(companyId: string, channel: "inApp" | "email" | "sms" | "webhook"): Promise<boolean> {
+/**
+ * Check whether a channel is globally enabled + outside quiet hours.
+ *
+ * Quiet hours are the tenant's LOCAL hours (the label in Notifications says
+ * "24h local"). This used to read `new Date().getHours()`, which is the server
+ * process time zone — UTC in production. A Winnipeg tenant asking for quiet
+ * 21:00-08:00 actually got silence from 16:00 to 02:00 local: no customer SMS
+ * all afternoon, and messages delivered at 3 AM.
+ *
+ * `now` is injectable so the window can be tested at a fixed instant.
+ */
+export async function channelAllowed(
+  companyId: string,
+  channel: "inApp" | "email" | "sms" | "webhook",
+  now: Date = new Date(),
+): Promise<boolean> {
   const cfg = await channelConfig(companyId);
   if (!cfg) return true;
   const master: Record<string, boolean> = {
@@ -237,8 +253,8 @@ export async function channelAllowed(companyId: string, channel: "inApp" | "emai
   };
   if (!master[channel]) return false;
   if (cfg.quietHoursEnabled && cfg.quietChannels.split(",").map((s) => s.trim()).includes(channel)) {
-    const now = new Date();
-    const cur = now.getHours() * 60 + now.getMinutes();
+    const tz = await companyTimeZone(companyId);
+    const cur = zonedMinutesOfDay(now, tz);
     const [sh, sm] = cfg.quietStart.split(":").map(Number);
     const [eh, em] = cfg.quietEnd.split(":").map(Number);
     const start = sh * 60 + sm, end = eh * 60 + em;
