@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import * as schema from "../database/schema";
 import { requireAuth, tenantId } from "../middleware/auth";
 import { tdb, type TenantDb } from "../database/tenant";
+import { inPoly } from "../../shared/zone-utils";
 
 /* ---------------------------------------------------------------------------
  * Reports engine — aggregated, date-range + filter aware.
@@ -52,17 +53,9 @@ const niceDay = (k: string) => {
   return `${["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(m)]} ${Number(d)}`;
 };
 
-/** point-in-polygon for zone attribution */
-function inPoly(lat: number, lng: number, poly: [number, number][]) {
-  let inside = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const [yi, xi] = poly[i];
-    const [yj, xj] = poly[j];
-    const intersect = yi > lng !== yj > lng && lat < ((xj - xi) * (lng - yi)) / (yj - yi) + xi;
-    if (intersect) inside = !inside;
-  }
-  return inside;
-}
+// Zone attribution uses the SHARED point-in-polygon (shared/zone-utils.ts).
+// This file used to carry its own copy of it, with the same axis-swap bug, so
+// zone reports attributed zero jobs to every zone. One implementation now.
 
 async function techNameMap(t: TenantDb) {
   const riders = await t.select(schema.riders);

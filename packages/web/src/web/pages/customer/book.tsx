@@ -46,6 +46,13 @@ export default function BookPage() {
   const qc = useQueryClient();
   const [slot, setSlot] = useState("");
   const [address, setAddress] = useState("");
+  /**
+   * Coordinates from the address autocomplete. This page used to throw them
+   * away, so every customer booking landed on the server with no coordinates —
+   * and the server's NOT NULL lat/lng columns default to downtown Toronto, so
+   * the job was recorded at 43.6532,-79.3832 and skipped service-zone checks.
+   */
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [notes, setNotes] = useState("");
   const [done, setDone] = useState<string | null>(null);
 
@@ -87,8 +94,19 @@ export default function BookPage() {
   const create = useMutation({
     mutationFn: async () => {
       const res = await api.bookings.$post({
-        json: { serviceId: id, scheduledAt: slot, address, notes },
+        json: {
+          serviceId: id, scheduledAt: slot, address, notes,
+          ...(coords ? { lat: coords.lat, lng: coords.lng } : {}),
+        },
       });
+      // This never checked res.ok: a rejected create (e.g. the new
+      // out-of-service-area 422) still resolved, onSuccess ran, and
+      // `data.booking.id` threw a TypeError inside the success handler instead
+      // of showing the customer why it was refused.
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(body?.message || "Couldn't create booking. Please try again.");
+      }
       return res.json();
     },
     onSuccess: (data: any) => {
@@ -184,7 +202,10 @@ export default function BookPage() {
           <Section icon={MapPin} title="Service address">
             <AddressAutocomplete
               value={address}
-              onResolve={({ address }) => setAddress(address)}
+              onResolve={({ address, lat, lng }) => {
+                setAddress(address);
+                setCoords(lat != null && lng != null ? { lat, lng } : null);
+              }}
               placeholder="123 Main St, Toronto, ON"
               inputClassName="w-full rounded-xl border border-white/10 bg-ink-2 px-4 py-3 outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
             />
@@ -246,7 +267,7 @@ export default function BookPage() {
             </div>
             {create.isError && (
               <p className="mt-3 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-400">
-                Couldn't create booking. Try again.
+                {(create.error as Error)?.message || "Couldn't create booking. Try again."}
               </p>
             )}
             <button

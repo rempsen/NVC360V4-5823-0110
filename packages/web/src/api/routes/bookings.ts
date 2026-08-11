@@ -15,7 +15,8 @@ import { putObject } from "../lib/storage";
 import { capture } from "../lib/analytics";
 import { incr } from "../lib/metrics";
 import { publishTrack } from "../../services/realtime";
-import { isInAnyZone } from "../../shared/zone-utils";
+import { checkServiceZone, OUTSIDE_ZONE_MESSAGE, OUTSIDE_ZONE_MESSAGE_ADMIN } from "../../services/zones";
+import { forwardGeocode } from "../../services/geocode";
 import { linkBookingToProperty } from "../../services/properties";
 import { logJobEvent, jobTimeline } from "../../services/job-events";
 import { z } from "zod";
@@ -432,6 +433,23 @@ export const bookingsRoutes = new Hono()
       .select()
       .from(schema.user)
       .where(eq(schema.user.id, u.id));
+
+    // Resolve real coordinates for the address. The lat/lng columns are NOT NULL
+    // with a downtown-Toronto default, so a create with no coordinates used to
+    // record the job at 43.6532,-79.3832 — visible on the fleet map, feeding
+    // distance/ETA, and skipping the zone check below. If we still can't resolve
+    // them we do NOT invent a location and we do NOT zone-check on a guess.
+    const geo = body.lat != null && body.lng != null
+      ? { lat: body.lat, lng: body.lng }
+      : await forwardGeocode(body.address);
+
+    // Zone enforcement — the customer path had NONE, so a customer far outside
+    // every active zone got a confirmed booking, an invoice and a dispatch.
+    if (geo) {
+      const zone = await checkServiceZone(co, geo.lat, geo.lng);
+      if (!zone.ok) return c.json({ message: OUTSIDE_ZONE_MESSAGE }, 422);
+    }
+
     const [b] = await t.insert(schema.bookings, {
       customerId: u.id,
       serviceId: body.serviceId,
@@ -441,8 +459,8 @@ export const bookingsRoutes = new Hono()
       status: "confirmed",
       scheduledAt: new Date(body.scheduledAt),
       address: body.address,
-      lat: body.lat ?? 43.6532,
-      lng: body.lng ?? -79.3832,
+      lat: geo?.lat ?? 43.6532,
+      lng: geo?.lng ?? -79.3832,
       notes: body.notes ?? "",
       staffNotes: (body as any).staffNotes ?? "",
       fieldData: body.fieldData ? JSON.stringify(body.fieldData) : "{}",
@@ -461,7 +479,11 @@ export const bookingsRoutes = new Hono()
     // create invoice (unpaid)
     const num = `INV-${Date.now().toString().slice(-6)}`;
     const amount = bill?.subtotal ?? svc.basePrice;
-    const tax = bill?.taxAmount ?? +(svc.basePrice * 0.13).toFixed(2);
+    // No hardcoded 0.13 fallback: recomputeBooking() only returns null when the
+    // booking we just inserted can't be read back, and inventing Ontario HST for
+    // a Calgary customer is worse than invoicing tax-free and letting the office
+    // recompute. bill is the only source of tax.
+    const tax = bill?.taxAmount ?? 0;
     await t.insert(schema.invoices, {
       bookingId: b.id,
       customerId: u.id,
@@ -507,14 +529,15 @@ export const bookingsRoutes = new Hono()
       if (!rd) return c.json({ message: "Technician not found" }, 404);
     }
 
-    // Zone enforcement — only if the booking has a real geocoded lat/lng
-    if (body.lat && body.lng) {
-      const allZones = await t.select(schema.serviceZones);
-      const parsedZones = allZones.map((z) => ({ polygon: JSON.parse(z.polygon || "[]") as [number, number][], active: z.active }));
-      const activeZones = parsedZones.filter((z) => z.active && z.polygon.length >= 3);
-      if (activeZones.length > 0 && !isInAnyZone(body.lat, body.lng, parsedZones)) {
-        return c.json({ message: "Address is outside all active service zones. Please update the client address or adjust your service zones." }, 422);
-      }
+    // Coordinates + zone enforcement, identical logic to the customer path
+    // (services/zones.ts) so the two can't drift. Geocode when the office typed
+    // an address without picking a suggestion, instead of defaulting to Toronto.
+    const geo = body.lat != null && body.lng != null
+      ? { lat: body.lat, lng: body.lng }
+      : await forwardGeocode(body.address);
+    if (geo) {
+      const zone = await checkServiceZone(co, geo.lat, geo.lng);
+      if (!zone.ok) return c.json({ message: OUTSIDE_ZONE_MESSAGE_ADMIN }, 422);
     }
 
     // Seed field data + checklist from the chosen template. The admin modal
@@ -561,8 +584,8 @@ export const bookingsRoutes = new Hono()
       status: assignedRider ? "assigned" : "confirmed",
       scheduledAt: new Date(body.scheduledAt),
       address: body.address ?? "",
-      lat: body.lat ?? 43.6532,
-      lng: body.lng ?? -79.3832,
+      lat: geo?.lat ?? 43.6532,
+      lng: geo?.lng ?? -79.3832,
       notes: body.notes ?? "",
       staffNotes: (body as any).staffNotes ?? "",
       fieldData,

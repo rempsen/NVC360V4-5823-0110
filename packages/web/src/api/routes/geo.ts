@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { requireAuth } from "../middleware/auth";
+import { forwardGeocode } from "../../services/geocode";
 
 const KEY = process.env.GOOGLE_MAPS_API_KEY;
 
@@ -237,27 +238,14 @@ export const geoRoutes = new Hono()
     }
     return c.json({ message: "No geocoder configured" }, 500);
   })
-  // forward geocode a free-text address
+  // forward geocode a free-text address. Delegates to services/geocode.ts so
+  // this route and the booking-create paths share ONE implementation (and one
+  // timeout policy) instead of two copies that can drift.
   .get("/geocode", requireAuth, async (c) => {
     const address = c.req.query("address")?.trim();
     if (!address) return c.json({ message: "address required" }, 400);
-    if (KEY) {
-      const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
-      url.searchParams.set("address", address);
-      url.searchParams.set("key", KEY);
-      const r = await fetch(url);
-      const data = await r.json();
-      const loc = data.results?.[0]?.geometry?.location;
-      return c.json({ lat: loc?.lat ?? null, lng: loc?.lng ?? null, address: data.results?.[0]?.formatted_address ?? address }, 200);
-    }
-    const url = new URL("https://nominatim.openstreetmap.org/search");
-    url.searchParams.set("q", address);
-    url.searchParams.set("format", "json");
-    url.searchParams.set("limit", "1");
-    const r = await fetch(url, { headers: { "User-Agent": "NVC360/1.0" } });
-    const data = await r.json();
-    const hit = data?.[0];
-    return c.json({ lat: hit ? parseFloat(hit.lat) : null, lng: hit ? parseFloat(hit.lon) : null, address: hit?.display_name ?? address }, 200);
+    const hit = await forwardGeocode(address);
+    return c.json({ lat: hit?.lat ?? null, lng: hit?.lng ?? null, address: hit?.address ?? address }, 200);
   })
   // live driving ETA: ?oLat=&oLng=&dLat=&dLng=
   .get("/eta", requireAuth, async (c) => {
