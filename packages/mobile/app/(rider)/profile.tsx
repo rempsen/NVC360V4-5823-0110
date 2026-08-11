@@ -10,6 +10,7 @@ import { api } from "../../lib/api";
 import { authClient, clearToken, authHeaders } from "../../lib/auth";
 import { unregisterPushToken } from "../../lib/push";
 import { stopLocationSharing } from "../../lib/use-location-heartbeat";
+import { endAllLiveActivities } from "../../lib/useLiveActivity";
 import Constants from "expo-constants";
 import { C } from "../../lib/theme";
 import { Avatar, Card, Button, FullLoader, Row } from "../../components/ui";
@@ -96,7 +97,13 @@ export default function Profile() {
       // useLocationHeartbeat(onShift) effect will also pick this up once
       // ["me"] refetches, but stopping here is instant instead of depending
       // on network/query timing.
-      if (status === "offline") stopLocationSharing().catch(() => {});
+      if (status === "offline") {
+        stopLocationSharing().catch(() => {});
+        // Off the clock means nothing of ours should remain on the Lock Screen
+        // or in the Dynamic Island. iOS keeps a Live Activity alive until the
+        // app ends it, so going offline has to tear it down explicitly.
+        endAllLiveActivities().catch(() => {});
+      }
       qc.invalidateQueries({ queryKey: ["me"] });
     },
   });
@@ -151,6 +158,11 @@ export default function Profile() {
           // one fresh biometric prompt rather than inheriting today's unlock.
           await unregisterPushToken().catch(() => {});
           await stopLocationSharing().catch(() => {});
+          // A signed-out phone must go fully dark: end any Live Activity too,
+          // or the Dynamic Island keeps showing NVC360 job status to whoever
+          // holds the phone next, and iOS keeps treating us as having live
+          // background content.
+          await endAllLiveActivities().catch(() => {});
           await clearUnlockStamp().catch(() => {});
           // Leaving a stale company id behind would point the NEXT driver on a
           // shared work phone at this driver's company until they re-pick.

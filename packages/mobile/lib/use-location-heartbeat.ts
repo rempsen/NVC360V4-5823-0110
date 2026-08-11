@@ -62,15 +62,34 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 
 /** Shared throttle so background + foreground don't double-spam the API. */
 let lastSent = 0;
-async function pushLocation(lat: number, lng: number) {
-  if (!getToken()) return;
+
+/**
+ * @returns "off-duty" when the server (or a missing/rejected session) says
+ * this device should not be reporting location at all, so the caller can shut
+ * native tracking down. "ok" means keep going; "unknown" means we learned
+ * nothing this round (throttled, offline, timed out) and must NOT shut down —
+ * a flaky tunnel is not a reason to stop tracking a tech who is on a job.
+ */
+async function pushLocation(lat: number, lng: number): Promise<"ok" | "off-duty" | "unknown"> {
+  if (!getToken()) return "off-duty";
   const now = Date.now();
-  if (now - lastSent < 6_000) return; // at most once per 6s
+  if (now - lastSent < 6_000) return "unknown"; // at most once per 6s
   lastSent = now;
   try {
-    await withTimeout(api.riders.me.$patch({ json: { lat, lng } }), 15_000);
+    const res = await withTimeout(api.riders.me.$patch({ json: { lat, lng } }), 15_000);
+    // 401/403 = session revoked or the membership was pulled. Keeping the GPS
+    // running for a device the server no longer accepts is pure battery burn.
+    // Cast: the typed hono client only knows the handler's own 200/404 returns.
+    // 401/403 are produced by the auth middleware in front of it, so they are
+    // absent from the inferred union but very much possible at runtime.
+    const code = res.status as number;
+    if (code === 401 || code === 403) return "off-duty";
+    if (!res.ok) return "unknown";
+    const json = (await res.json()) as { rider?: { status?: string } | null };
+    return json?.rider?.status === "offline" ? "off-duty" : "ok";
   } catch {
     /* offline / transient / timed out — next tick retries */
+    return "unknown";
   }
 }
 
@@ -92,13 +111,34 @@ async function pingOnline() {
 }
 
 // ---- Background task definition (module scope — required by TaskManager) ----
+//
+// SELF-SHUTOFF (this is what stops the app running in the background forever):
+// a registered location task is owned by the OS, not by our React tree. When
+// the app is force-quit or iOS relaunches it HEADLESSLY to deliver a location,
+// the rider layout never mounts, so the `enabled === false` branch in
+// useLocationHeartbeat never runs and nothing was left to call
+// stopLocationUpdatesAsync. That is how a signed-out / off-shift tech kept
+// seeing the location indicator with the app apparently alive in the
+// background. The task therefore has to be able to cancel ITSELF, using only
+// what it can see from inside a background slice: is there still a session, and
+// does the server still consider this tech on duty.
 TaskManager.defineTask(BG_TASK, async ({ data, error }) => {
   if (error) return;
   try {
+    // No session at all — the driver signed out (or the token was cleared).
+    // Kill tracking here rather than reporting for a logged-out phone.
+    if (!getToken()) {
+      await stopBackgroundUpdates();
+      return;
+    }
     const locs = (data as { locations?: Location.LocationObject[] })?.locations;
     const loc = locs?.[locs.length - 1];
     if (loc) {
-      await pushLocation(loc.coords.latitude, loc.coords.longitude);
+      const verdict = await pushLocation(loc.coords.latitude, loc.coords.longitude);
+      // Only shut down on a definite off-duty answer. "unknown" (offline,
+      // timeout, throttled) must keep tracking alive — a tech driving through
+      // a dead zone still needs to be on the dispatch map.
+      if (verdict === "off-duty") await stopBackgroundUpdates();
     }
   } catch {
     // Never let an unexpected error inside the background delivery callback

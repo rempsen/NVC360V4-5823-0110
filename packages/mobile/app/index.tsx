@@ -6,6 +6,7 @@ import { authClient } from "../lib/auth";
 import { C } from "../lib/theme";
 import { Button } from "../components/ui";
 import { shouldPromptBiometric, markUnlockedNow, LocalAuthentication } from "../lib/biometric-lock";
+import { endAllLiveActivities } from "../lib/useLiveActivity";
 
 export default function Index() {
   const router = useRouter();
@@ -43,6 +44,10 @@ export default function Index() {
     if (isPending) return;
     const role = (session?.user as any)?.role;
     if (!session) {
+      // Safety net: a Live Activity outlives the app process, so if we ever
+      // reach a cold start with no session (session expired, sign-out that
+      // didn't finish, app force-quit mid-flow) clear anything still showing.
+      endAllLiveActivities().catch(() => {});
       router.replace("/sign-in");
       return;
     }

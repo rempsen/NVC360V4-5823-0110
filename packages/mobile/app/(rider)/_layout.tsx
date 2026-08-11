@@ -13,6 +13,7 @@ import { C } from "../../lib/theme";
 import { api } from "../../lib/api";
 import { authHeaders } from "../../lib/auth";
 import { useLocationHeartbeat } from "../../lib/use-location-heartbeat";
+import { endAllLiveActivities } from "../../lib/useLiveActivity";
 import { usePushNotifications, setAppBadgeCount } from "../../lib/push";
 
 const API = ((Constants.expoConfig?.extra?.apiUrl as string) ?? "").replace(/\/$/, "");
@@ -45,6 +46,18 @@ export default function RiderLayout() {
   // keep the technician's live GPS location flowing to dispatch while — and
   // ONLY while — they are on shift (independent of any specific job).
   useLocationHeartbeat(onShift);
+
+  // A Live Activity is owned by iOS and survives the app being closed, so the
+  // ONLY way it disappears is us ending it. Once the tech is confirmed off the
+  // clock, tear down anything still on the Lock Screen / Dynamic Island. This
+  // also catches the case where they went offline from another device or the
+  // dispatcher took them off shift server-side. Gated on `me.data` being
+  // loaded so a cold boot doesn't kill a legitimate in-progress job activity
+  // before we know the status.
+  useEffect(() => {
+    if (me.data?.status == null) return;
+    if (!onShift) endAllLiveActivities().catch(() => {});
+  }, [onShift, me.data?.status]);
 
   // register this device for push (job offers, enroute alerts) + handle taps.
   usePushNotifications();
