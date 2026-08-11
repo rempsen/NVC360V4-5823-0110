@@ -2,23 +2,25 @@
 
 **Reviewer stance:** 15-year senior engineer, App-Store-caliber bar. Same treatment as the July 2026 driver-app review.
 **Scope:** `packages/web` — 46 API route modules, 50 page components, 24 admin surfaces driven in real Chrome at 390px and 1440px.
-**Date:** August 11, 2026 · **Commit reviewed:** `bc701cd`
+**Date:** August 11, 2026 · **Commits:** `bc701cd` (P0 fixes) → `c52254a` (P1 pass)
 
 ---
 
 ## Bottom line
 
-**Overall: 8.1 / 10 — production-grade, ship it.**
+**Overall: 8.4 / 10 — production-grade, ship it.**
+
+*Updated Aug 11 after the P1 pass (`c52254a`): performance 7.0 → 8.0, reliability 8.5 → 9.0, security 9.0 → 9.5.*
 
 The platform is well past "works." It has real tenant-isolation tests, a crash sweep, structured logging, Sentry on both sides, and lazy-loaded routes. The one issue that would have shown up as "the software is broken" in customer conversations was our own rate limiter logging admins out mid-work — found, root-caused, fixed, and proven this session.
 
-What's left is polish and headroom, not correctness: the two vendor bundles are heavy, there is no automated a11y or E2E gate in CI, and 161 pre-existing type errors mean `tsc` can't be used as a gate.
+What's left is polish and headroom, not correctness: there is no automated a11y or E2E gate in CI, and ~160 pre-existing type errors mean `tsc` can't be used as a gate. The heaviest first-paint cost — three third-party Stripe scripts on every page, including the login screen — was found and removed in the P1 pass.
 
 | # | Criterion | Score | Direction |
 |---|-----------|-------|-----------|
-| 1 | Reliability & error handling | 8.5 | Fixed this pass |
-| 2 | Performance | 7.0 | Headroom |
-| 3 | Security & tenant isolation | 9.0 | Strongest area |
+| 1 | Reliability & error handling | 9.0 | Fixed + regression-tested |
+| 2 | Performance | 8.0 | Fixed this pass |
+| 3 | Security & tenant isolation | 9.5 | Strongest area |
 | 4 | Accessibility | 8.0 | Fixed this pass |
 | 5 | Information architecture | 8.0 | Solid |
 | 6 | Visual design & polish | 8.5 | Solid |
@@ -39,28 +41,35 @@ What's left is polish and headroom, not correctness: the two vendor bundles are 
 
 **Proven.** 30 consecutive `get-session` calls → all 200. 25 bad-credential POSTs to `/api/auth/sign-in/email` → 401 through #19, 429 from #20. Brute-force defense intact.
 
-**To reach 9.5:** put the reproduction (session reads survive 30 hits, sign-in throttles at 20) into `bun test` so it can never regress silently.
+**Closed (`c52254a`).** The reproduction is now 12 tests in `rate-limit-auth-surface.test.ts`, asserting all three properties: session reads survive the 30-call repro and a 120-call burst; credential endpoints still throttle at 20/min across sign-in, sign-up, reset, verification and 2FA, and rotating cookies doesn't buy a fresh budget; and an unrecognised `/api/auth/*` path lands in the tight bucket. Suite went 125 → 137 tests, 0 failures.
 
-## 2. Performance — 7.0 / 10
+## 2. Performance — 8.0 / 10
 
-**Evidence.** Routes are code-split and lazy-loaded — the largest page chunk is `riders` at 45 kB (11 kB gzip), and most pages are 5–8 kB gzip. That's good discipline.
+**Evidence.** Routes are code-split and lazy-loaded — the largest page chunk is `riders` at 45 kB (11 kB gzip), most pages are 5–8 kB gzip. Good discipline.
 
-The weight is in vendor: `vendor` 496 kB (164 gzip), `vendor-charts` 320 kB (88 gzip), `vendor-maps` 150 kB (43 gzip), CSS 122 kB (19 gzip). On a phone on hotel wifi that's a slow first paint.
+**Correction to my first pass.** I flagged `vendor-charts` (88 kB gzip) and `vendor-maps` (43 kB gzip) as possibly eager. **They are not** — that was a bad read on my part. A grep showed the entry chunk referencing those filenames, but those are just strings in Vite's preload map, not imports. Loading `/sign-in` and `/admin` in a real browser fetches only `index`, `vendor`, `vendor-auth` and the CSS. Charts and maps are correctly lazy. No change needed.
 
-**Recommendations, in order of payoff:**
-1. `vendor-charts` (88 kB gzip) is only needed on `/admin/reports` and the dashboard. It should already be lazy — confirm it isn't pulled into the initial graph by an eager import of a chart component.
-2. Same check for `vendor-maps` (43 kB gzip) — zones, fleet, live tracking only.
-3. The 122 kB CSS suggests Tailwind is emitting more than is used; verify the content globs.
+**The real finding — fixed (`c52254a`).** Stripe was loading on **every page, including the sign-in screen.** `@stripe/stripe-js` injects its remote `<script>` as a *module side effect at import time*, and Rollup had placed the package in the eagerly loaded `vendor` chunk. So every visitor fetched three third-party scripts on first paint: `js.stripe.com`, its fingerprinted inner bundle, and `m.stripe.network`'s fingerprinting bundle — including someone on the login page who will never pay for anything. That's wasted latency on hotel wifi and needless third-party tracking on your login screen.
 
-**Do not** hand-split the React ecosystem across `manualChunks` — that has bitten this project before.
+Switched to the `@stripe/stripe-js/pure` entrypoint, which defers all of it until `loadStripe()` actually runs. The `Stripe` type now comes from a type-only import, erased at compile time, so it can't reintroduce the side effect.
 
-## 3. Security & tenant isolation — 9.0 / 10
+**Proven.** Real Chrome: **0 Stripe requests at first paint** (was 3). Then, dynamically importing the app's own built vendor chunk and calling its bundled loader injects the script and issues 10 `js.stripe.com` requests — payments still work, just on demand.
+
+**Remaining headroom:** the 122 kB CSS suggests Tailwind is emitting more than is used; verify the content globs. The 164 kB gzip `vendor` chunk is React + router + query and is reasonable — do **not** hand-split the React ecosystem across `manualChunks`, which has bitten this project before.
+
+## 3. Security & tenant isolation — 9.5 / 10
 
 **Evidence.** This is the strongest part of the platform. `bun test src` runs **125 tests, 0 failures, 385 assertions**, and a large share are explicit tenant-isolation tests asserting that company A cannot enumerate or read company B's rows — including sensitive tables like `api_keys` and `company_settings`, with a deliberate carve-out proving the `companies` registry is intentionally global. Four payments tests assert the "Stripe not configured" fail-closed path, which is the right default.
 
 Membership integrity was also verified live this session: a merely-invited user does **not** appear to have the company (`/companies` excludes it), and passing `X-Company-Id` for a pending invite is ignored and falls back to zero-access. No endpoint can force a membership `active` without the account owner accepting. Cross-user invite access returns 404 rather than confirming an invite exists for someone else.
 
-**To reach 10:** rate-limit budgets are now correct per surface, but they're in-process. If the app ever runs more than one instance, move the counters to the existing Redis so the limits are global rather than per-process.
+**Correction to my first pass.** I listed "move rate-limit counters to Redis before running multiple instances" as future work. It's **already done** — `initRateLimitStore()` runs at boot, and the server log confirms `rate-limit: using Redis store (multi-node)` with an atomic Lua INCR+PEXPIRE so the counter can't race. Limits are already global across instances.
+
+**Hardened further (`c52254a`).** Session-read throttling was keyed by `keyByUser`, which was silently wrong: this middleware runs on `/api/auth/*`, mounted *before* `authMiddleware`, so `c.get("user")` is always null there and the key degraded to per-IP — the exact failure mode the fix was meant to remove. One office behind a single NAT still shared one budget. Now keyed by the credential that *is* available pre-auth: the bearer token (mobile) or session cookie (web), **hashed** so a raw session token is never used as a map key or written to a log line — with a test asserting that. Anonymous callers still fall back to per-IP, correctly.
+
+**Proven live** with `RL_SESSION_LIMIT=40`: admin A burned exactly their own 40 and got 10× 429; admin B on the **same IP** with a different session got 30/30 200s.
+
+**To reach 10:** the limiter fails *open* if Redis hiccups (deliberate — availability over strictness). That's the right default, but it means a Redis outage silently disables brute-force protection. Worth an alert on that fallback path.
 
 ## 4. Accessibility — 8.0 / 10
 
@@ -120,17 +129,22 @@ Sentry is wired on both client (`web/lib/sentry.ts`, `main.tsx`, `provider.tsx`,
 - Broken-image glyph on `/admin/catalog` (`bc701cd`)
 - Sub-32px touch targets (`bc701cd`)
 
-**P1 — next**
+**P1 — done since (`c52254a`)**
+- Regression tests for the rate-limit split (12 tests)
+- Session reads bucketed per session, not per IP
+- Stripe no longer loads on first paint
+- Charts/maps confirmed already lazy (no change needed)
+
+**P1 — still open**
 1. Add `VITE_SENTRY_DSN` / `SENTRY_DSN` to publish settings *(your action)*
-2. Regression tests for the rate-limit split
-3. Confirm charts and maps vendor chunks are truly lazy
-4. Automated a11y gate in CI
+2. Automated a11y gate in CI
+3. Alert when the rate limiter fails open on a Redis outage
 
 **P2 — headroom**
-5. Card layout for work-orders and scheduler tables under `sm`
-6. Move rate-limit counters to Redis before running multiple instances
-7. Chip away at the 161 pre-existing type errors so `tsc` becomes a usable gate
-8. Group rarely-used platform surfaces behind one nav entry
+4. Card layout for work-orders and scheduler tables under `sm`
+5. Verify Tailwind content globs (122 kB CSS looks over-emitted)
+6. Chip away at the ~160 pre-existing type errors so `tsc` becomes a usable gate
+7. Group rarely-used platform surfaces behind one nav entry
 
 ---
 
@@ -139,11 +153,13 @@ Sentry is wired on both client (`web/lib/sentry.ts`, `main.tsx`, `provider.tsx`,
 | Gate | Result |
 |---|---|
 | `oxlint packages/web packages/mobile --deny-warnings` | 0 warnings, 0 errors (275 files) |
-| `tsc --noEmit -p tsconfig.app.json`, excluding known TS2769 | 160 (baseline 161 — no new errors) |
-| `bun test src` (without env sourced) | **125 pass / 0 fail**, 385 assertions |
+| `tsc --noEmit -p tsconfig.app.json`, excluding known TS2769 | 160 (baseline — no new errors) |
+| `bun test src` (without env sourced) | **137 pass / 0 fail**, 410 assertions (+12 new) |
 | `bunx vite build` | ✓ 7.58s |
 | `crash-sweep.py` (16 admin pages, real Chrome) | **ALL CLEAN** |
 | Admin audit (24 pages × 390px & 1440px, real Chrome) | 0 overflow, 0 missing alt, 0 unnamed controls, 0 unlabelled inputs, 0 load failures |
 | Rate-limit reproduction | 30× get-session all 200; sign-in 429 from #20 |
+| Per-session keying (live, limit 40) | A: 40×200 + 10×429; B same IP: 30×200 |
+| Stripe at first paint (real Chrome) | 0 requests (was 3); loads on demand when called |
 
 **Method note.** Every finding above was produced by driving the real application against the real Turso database — not by reading code. Two caveats carried from earlier work: `tsc` alone is not a reliable check in this repo (project references plus a long-standing Hono method-chain false positive), and `bun test src` must be run **without** sourcing the root `.env` or four payments tests fail because they assert the unconfigured-Stripe path.
