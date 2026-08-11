@@ -147,6 +147,41 @@ export const keyByToken: KeyFn = (c) => {
 };
 export const keyByIp: KeyFn = (c) => `ip:${clientIp(c)}`;
 
+/**
+ * Bucket by the caller's session credential rather than their user id.
+ *
+ * Why not keyByUser: this runs on /api/auth/* which is mounted BEFORE
+ * authMiddleware, so `c.get("user")` is always null there and keyByUser
+ * silently degrades to per-IP. Per-IP is exactly the failure mode we're
+ * fixing — one office behind a single NAT shares one budget.
+ *
+ * The session token is available without any auth middleware: mobile sends it
+ * as a bearer token (better-auth's bearer plugin), the web app as a cookie. We
+ * hash it so a raw session token is never used as a map key or written to a
+ * log line. Anonymous callers (no credential yet) fall back to per-IP, which is
+ * correct — there's no session to bucket by.
+ */
+export const keyBySession: KeyFn = (c) => {
+  const auth = c.req.header("authorization") || "";
+  const bearer = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
+  const cookie = c.req.header("cookie") || "";
+  // matches better-auth's session cookie under any prefix (__Secure-, __Host-)
+  const m = cookie.match(/(?:^|;\s*)(?:__Secure-|__Host-)?[\w.-]*session_token=([^;]+)/);
+  const cred = bearer || (m ? m[1] : "");
+  if (!cred) return `ip:${clientIp(c)}`;
+  return `s:${hashCred(cred)}`;
+};
+
+/** Short, stable, non-reversible fingerprint of a credential (FNV-1a 32-bit). */
+function hashCred(v: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < v.length; i++) {
+    h ^= v.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16);
+}
+
 // ---- presets --------------------------------------------------------------
 /**
  * Tight limiter for CREDENTIAL-VERIFYING auth surfaces (brute-force defense):
@@ -170,14 +205,19 @@ export const authLimiter = rateLimit({
 /**
  * Session reads (`get-session`, token refresh, sign-out). These are already
  * authenticated, cheap, and called constantly by the SPA, so they get a
- * generous per-user budget — brute force is not a threat model for reading
- * your own session. Falls back to per-IP for anonymous callers.
+ * generous budget — brute force is not a threat model for reading your own
+ * session.
+ *
+ * Keyed by session credential (see keyBySession), NOT by IP and NOT by user id:
+ * this middleware runs before authMiddleware so no user is resolved yet, and
+ * per-IP keying is the original bug (one NAT = one shared budget). One admin
+ * hammering their own tab can therefore never throttle a colleague.
  */
 export const sessionLimiter = rateLimit({
   name: "authsession",
   limit: Number(process.env.RL_SESSION_LIMIT ?? 600),
   windowMs: 60_000,
-  keyFn: keyByUser,
+  keyFn: keyBySession,
 });
 
 /**

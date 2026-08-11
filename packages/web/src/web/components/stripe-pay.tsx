@@ -1,6 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { DialogPanel } from "./dialog-panel";
-import { loadStripe, type Stripe } from "@stripe/stripe-js";
+// NOTE: import from "@stripe/stripe-js/pure", NOT "@stripe/stripe-js".
+// The normal entrypoint injects <script src="js.stripe.com/..."> as a MODULE
+// SIDE EFFECT, at import time. Rollup placed this package in the eagerly loaded
+// `vendor` chunk, so every visitor — including someone sitting on the sign-in
+// screen who will never pay for anything — was fetching three remote Stripe
+// scripts (js.stripe.com plus m.stripe.network's fingerprinting bundle) on
+// first paint. The `/pure` entrypoint defers that network work until loadStripe()
+// is actually called, i.e. when a customer opens the payment modal.
+import { loadStripe } from "@stripe/stripe-js/pure";
+// Type-only import: `import type` is erased at compile time, so this pulls in
+// no runtime module and cannot reintroduce the side effect described above.
+// (The /pure entrypoint doesn't re-export the Stripe type itself.)
+import type { Stripe } from "@stripe/stripe-js";
 import {
   Elements,
   PaymentElement,
