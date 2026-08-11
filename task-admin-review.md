@@ -23,5 +23,5 @@ App-Store-caliber criteria, then fix findings in order.
 
 ## Status
 - [x] Inventory the admin surface
-- [ ] Score each criterion with evidence
-- [ ] Write findings report
+- [x] Score each criterion with evidence
+- [x] Write findings report -> admin-review.report/content.md (overall 8.1/10, commit bc701cd)
