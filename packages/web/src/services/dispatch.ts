@@ -28,6 +28,7 @@ export type NvcEvent =
   | "assigned"
   | "accepted"
   | "declined"
+  | "released"
   | "enroute"
   | "arrived"
   | "started"
@@ -45,6 +46,11 @@ export const EVENT_META: Record<
   assigned: { label: "Tech assigned", defaultTitle: "You've been assigned a job", notifType: "assigned" },
   accepted: { label: "Tech accepts", defaultTitle: "Technician accepted the job", notifType: "assigned" },
   declined: { label: "Tech declines", defaultTitle: "Technician declined the job", notifType: "reminder" },
+  // A tech bailing on a job they already ACCEPTED (van broke down, emergency,
+  // running too late). Separate from "declined" on purpose: declining an offer
+  // is routine, dropping a committed job mid-flight is an operational problem
+  // the office must see and re-dispatch.
+  released: { label: "Tech releases an accepted job", defaultTitle: "Technician released a job back to dispatch", notifType: "reminder" },
   enroute: { label: "En route (on the way)", defaultTitle: "Your technician is on the way", notifType: "enroute" },
   arrived: { label: "Arrived", defaultTitle: "Your technician has arrived", notifType: "arrived" },
   started: { label: "Job started", defaultTitle: "Service has started", notifType: "reminder" },
@@ -69,6 +75,8 @@ function defaultMessage(event: NvcEvent, recipient: Recipient, v: Vars): string 
       return `${co}: ${v.techName} accepted work order #${v.shortId}.`;
     case "declined":
       return `${co}: ${v.techName} declined work order #${v.shortId}. It's back in the dispatch queue.`;
+    case "released":
+      return `${co}: ${v.techName} can no longer do work order #${v.shortId} (${v.service} at ${v.address}). It's unassigned and back in the dispatch queue — needs a new tech.`;
     case "enroute":
       if (recipient === "client")
         return `${co}: Your technician ${v.techName} is on the way!${v.eta ? ` ETA ~${v.eta} min.` : ""} Track live, see ETA & message them: ${v.trackUrl}`;
@@ -375,10 +383,11 @@ export async function fireEvent(event: NvcEvent, bookingId: string) {
       companyId,
       bookingId: b.id,
       kind: event as JobEventKind,
-      actorRole: event === "accepted" || event === "declined" ? "tech" : "system",
+      actorRole:
+        event === "accepted" || event === "declined" || event === "released" ? "tech" : "system",
       actorName: riderUser?.name || "",
       detail:
-        event === "declined" && b.declineReason ? b.declineReason : "",
+        (event === "declined" || event === "released") && b.declineReason ? b.declineReason : "",
       meta: { status: b.status, service: vars.service },
     });
 
@@ -683,6 +692,7 @@ export async function seedNotificationRules(companyId: string) {
     { event: "accepted", recipient: "office", inApp: true, email: false, sms: false, webhook: false },
     { event: "accepted", recipient: "client", inApp: true, email: false, sms: false, webhook: false },
     { event: "declined", recipient: "office", inApp: true, email: true, sms: false, webhook: false },
+    { event: "released", recipient: "office", inApp: true, email: true, sms: false, webhook: false },
     { event: "enroute", recipient: "client", inApp: true, email: true, sms: true, webhook: false },
     { event: "arrived", recipient: "client", inApp: true, email: true, sms: true, webhook: false },
     { event: "started", recipient: "client", inApp: true, email: false, sms: false, webhook: false },

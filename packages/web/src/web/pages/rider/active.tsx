@@ -8,8 +8,22 @@ import { StatusBadge } from "../../components/brand";
 import { FullLoader, Loader } from "../../components/loader";
 import { fmtDate } from "../../lib/utils";
 import {
-  ArrowLeft, MapPin, Phone, Navigation, CheckCircle2, Play, Flag, Radio, Check, X, AlertTriangle,
+  ArrowLeft, MapPin, Phone, Navigation, CheckCircle2, Play, Flag, Radio, Check, X, AlertTriangle, HandMetal,
 } from "lucide-react";
+
+// Handing back a job the tech already ACCEPTED. Fixed reasons so the office can
+// see patterns. Must stay in sync with RELEASE_REASONS in
+// packages/web/src/api/routes/bookings.ts and the driver app.
+const RELEASE_REASONS: { key: string; label: string }[] = [
+  { key: "emergency", label: "Personal emergency" },
+  { key: "vehicle", label: "Vehicle breakdown" },
+  { key: "running_late", label: "Running too late to make it" },
+  { key: "missing_parts", label: "Missing parts or equipment" },
+  { key: "unsafe_site", label: "Unsafe site conditions" },
+  { key: "wrong_skills", label: "Wrong skill set for this job" },
+  { key: "other", label: "Other" },
+];
+const RELEASABLE = new Set(["assigned", "confirmed", "enroute", "arrived", "onsite", "in_progress", "paused"]);
 
 // status flow buttons for the rider
 const FLOW: Record<string, { next: string; label: string; icon: any }> = {
@@ -27,6 +41,10 @@ export default function RiderActive() {
   const [pos, setPos] = useState<{ lat: number; lng: number } | null>(null);
   const [declineOpen, setDeclineOpen] = useState(false);
   const [declineReason, setDeclineReason] = useState("");
+  const [releaseOpen, setReleaseOpen] = useState(false);
+  const [releaseReason, setReleaseReason] = useState("");
+  const [releaseNote, setReleaseNote] = useState("");
+  const [releaseErr, setReleaseErr] = useState("");
   const watchRef = useRef<number | null>(null);
   const simRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -59,6 +77,31 @@ export default function RiderActive() {
   const decline = useMutation({
     mutationFn: async (reason: string) => { await api.bookings[":id"].decline.$post({ param: { id }, json: { reason } }); },
     onSuccess: () => { setDeclineOpen(false); qc.invalidateQueries({ queryKey: ["bookings"] }); navigate("/rider"); },
+  });
+
+  // Hand an accepted job back to dispatch (breakdown, emergency, running late).
+  // The job goes back to the queue unassigned; the office is notified.
+  const release = useMutation({
+    mutationFn: async ({ reason, note }: { reason: string; note: string }) => {
+      const res = await fetch(`/api/bookings/${id}/release`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ reason, note }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error((body as any)?.error?.message || (body as any)?.message || "Couldn't release this job");
+      }
+    },
+    onSuccess: () => {
+      setReleaseOpen(false);
+      setReleaseReason("");
+      setReleaseNote("");
+      qc.invalidateQueries({ queryKey: ["bookings"] });
+      navigate("/rider");
+    },
+    onError: (e: any) => setReleaseErr(e?.message || "Couldn't release this job"),
   });
 
   const b = (booking.data as any)?.booking;
@@ -119,6 +162,9 @@ export default function RiderActive() {
   if (!b) return <p>Job not found.</p>;
   const isOffered = b.status === "assigned" && b.assignStatus === "offered";
   const step = isOffered ? null : FLOW[b.status];
+  // Only for a job this tech committed to: an un-accepted offer is a Decline,
+  // and a finished/cancelled job has nothing to hand back.
+  const canRelease = !isOffered && !!b.riderId && RELEASABLE.has(b.status);
   
 
   return (
@@ -223,6 +269,15 @@ export default function RiderActive() {
               <CheckCircle2 className="h-5 w-5" /> Job completed
             </div>
           )}
+
+          {canRelease && (
+            <button
+              onClick={() => { setReleaseErr(""); setReleaseOpen(true); }}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-ink py-3 text-sm font-bold text-amber-300 transition hover:border-amber-400/40"
+            >
+              <HandMetal className="h-4 w-4" /> I can't do this job
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -261,6 +316,64 @@ export default function RiderActive() {
               className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-red-500 py-3 text-sm font-bold text-white hover:bg-red-600 disabled:opacity-60"
             >
               {decline.isPending ? <Loader className="h-4 w-4 border-white/30 border-t-white" /> : "Confirm decline"}
+            </button>
+          </div>
+        </DialogPanel>
+      </div>
+    )}
+
+    {/* Release (hand back to dispatch) — a job the tech already accepted */}
+    {releaseOpen && (
+      <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 sm:items-center">
+        <DialogPanel onClose={() => setReleaseOpen(false)} label="Send this job back to dispatch" className="w-full max-w-sm rounded-t-3xl bg-ink-2 p-6 shadow-2xl sm:rounded-2xl">
+          <div className="mb-4 flex items-center gap-3">
+            <div className="grid h-10 w-10 place-items-center rounded-xl bg-amber-400/10 text-amber-300">
+              <AlertTriangle className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="font-bold text-white">Send back to dispatch?</h3>
+              <p className="text-xs text-slate-500">The office is notified and will reassign it. The customer isn't told.</p>
+            </div>
+          </div>
+          <fieldset className="space-y-2">
+            <legend className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Reason (required)</legend>
+            {RELEASE_REASONS.map((r) => (
+              <label key={r.key} className={`flex cursor-pointer items-center gap-2.5 rounded-xl border px-3 py-2.5 text-sm ${releaseReason === r.key ? "border-brand bg-brand/10 text-white" : "border-white/10 text-slate-300 hover:border-white/20"}`}>
+                <input
+                  type="radio"
+                  name="release-reason"
+                  value={r.key}
+                  checked={releaseReason === r.key}
+                  onChange={() => setReleaseReason(r.key)}
+                  aria-label={r.label}
+                  className="h-4 w-4 accent-cyan-400"
+                />
+                {r.label}
+              </label>
+            ))}
+          </fieldset>
+          <textarea
+            aria-label="Note for dispatch, optional"
+            value={releaseNote}
+            onChange={(e) => setReleaseNote(e.target.value)}
+            placeholder="Anything dispatch should know (optional)"
+            rows={2}
+            className="mt-3 w-full rounded-xl border border-white/10 bg-ink px-4 py-3 text-sm text-white placeholder-slate-600 focus:border-brand focus:outline-none"
+          />
+          {releaseErr && <p className="mt-2 text-xs font-semibold text-red-400">{releaseErr}</p>}
+          <div className="mt-4 flex gap-3">
+            <button
+              onClick={() => { setReleaseOpen(false); setReleaseReason(""); setReleaseNote(""); }}
+              className="flex-1 rounded-xl border border-white/10 py-3 text-sm font-semibold text-slate-300 hover:border-white/20"
+            >
+              Keep job
+            </button>
+            <button
+              disabled={release.isPending || !releaseReason}
+              onClick={() => release.mutate({ reason: releaseReason, note: releaseNote.trim() })}
+              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-amber-500 py-3 text-sm font-bold text-ink hover:bg-amber-400 disabled:opacity-60"
+            >
+              {release.isPending ? <Loader className="h-4 w-4 border-ink/30 border-t-ink" /> : "Send back"}
             </button>
           </div>
         </DialogPanel>

@@ -20,6 +20,7 @@ export type JobEventKind =
   | "assigned"
   | "accepted"
   | "declined"
+  | "released"
   | "enroute"
   | "arrived"
   | "started"
@@ -45,6 +46,9 @@ const EVENT_POLICY: Record<JobEventKind, { visible: boolean; label: string }> = 
   // internal: the customer should never see that someone turned their job down
   accepted: { visible: false, label: "Technician accepted the job" },
   declined: { visible: false, label: "Technician declined the job" },
+  // internal: the customer must not see that their job lost its tech — the
+  // office re-dispatches, and only a real schedule change is customer news
+  released: { visible: false, label: "Technician released the job back to dispatch" },
   enroute: { visible: true, label: "Technician on the way" },
   arrived: { visible: true, label: "Technician arrived on site" },
   started: { visible: true, label: "Work started" },

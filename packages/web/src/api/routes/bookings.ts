@@ -322,6 +322,49 @@ const SignatureBody = z.object({
 });
 const DeclineBody = z.object({ reason: longText(2_000).optional().default("") });
 
+/**
+ * Why a tech is dropping a job they already ACCEPTED. Fixed list (so the office
+ * can count patterns per tech / per reason) plus an optional free-text note for
+ * the detail a dropdown can never capture.
+ */
+export const RELEASE_REASONS = [
+  "emergency",
+  "vehicle",
+  "running_late",
+  "missing_parts",
+  "unsafe_site",
+  "wrong_skills",
+  "other",
+] as const;
+export const RELEASE_REASON_LABELS: Record<(typeof RELEASE_REASONS)[number], string> = {
+  emergency: "Personal emergency",
+  vehicle: "Vehicle breakdown",
+  running_late: "Running too late to make it",
+  missing_parts: "Missing parts or equipment",
+  unsafe_site: "Unsafe site conditions",
+  wrong_skills: "Wrong skill set for this job",
+  other: "Other",
+};
+const ReleaseBody = z.object({
+  reason: z.enum(RELEASE_REASONS, { error: "Pick a reason for releasing this job" }),
+  note: longText(2_000).optional().default(""),
+});
+
+/**
+ * Job stages a tech may still hand back. "offered" is deliberately excluded —
+ * an un-accepted offer is a Decline, which is a different (routine) event.
+ * Once work is finished or the job is dead there is nothing to release.
+ */
+const RELEASABLE_STATUSES = [
+  "assigned",
+  "confirmed",
+  "enroute",
+  "arrived",
+  "onsite",
+  "in_progress",
+  "paused",
+] as const;
+
 export const bookingsRoutes = new Hono()
   // list for current user (customer sees own, rider sees assigned, admin sees all)
   /**
@@ -865,11 +908,91 @@ export const bookingsRoutes = new Hono()
     if (!b) return c.json({ error: "not found" }, 404);
     return c.json({ booking: await enrich(b) }, 200);
   })
+  /**
+   * Tech hands an ACCEPTED job back to dispatch (van broke down, emergency,
+   * can't make it). The job returns to the queue UNASSIGNED so the office can
+   * re-dispatch it — it is NOT cancelled, and the customer is told nothing here
+   * (office owns that conversation).
+   */
+  .post("/:id/release", requireAuth, async (c) => {
+    const co = tenantId(c);
+    const u = c.get("user") as SessionUser;
+    const id = c.req.param("id");
+    const { reason, note } = await parseBody(c, ReleaseBody);
+    const t = tx(c);
+    const cur = await t.selectOne(schema.bookings, eq(schema.bookings.id, id));
+    if (!cur) return c.json({ message: "Not found" }, 404);
+    // Only the tech actually holding the job (or the office) can release it.
+    // Without this any signed-in user in the tenant could unassign anyone's job.
+    const holder = cur.riderId
+      ? await t.selectOne(schema.riders, eq(schema.riders.id, cur.riderId))
+      : null;
+    const isHolder = !!holder && holder.userId === u.id;
+    if (!isHolder && !isAdminRole(u.role)) return c.json({ message: "Forbidden" }, 403);
+    if (!cur.riderId) throw Err.conflict("This job isn't assigned to anyone.");
+    if (cur.assignStatus === "offered")
+      throw Err.conflict("You haven't accepted this job yet — decline it instead.");
+    if (!RELEASABLE_STATUSES.includes(cur.status as (typeof RELEASABLE_STATUSES)[number]))
+      throw Err.conflict("This job can no longer be released.");
+    const detail = `${RELEASE_REASON_LABELS[reason]}${note ? ` — ${note}` : ""}`;
+    const releasedRider = cur.riderId;
+    // Compare-and-set on (id, riderId, status): if the office reassigned or the
+    // job moved on between the read and the write, 0 rows change and we 409
+    // instead of clobbering newer state. Doing that as the reason-write means
+    // the reason is already on the row when the event fires (notification +
+    // timeline read it from there) while riderId still resolves to the tech who
+    // bailed, so the office sees WHO dropped it and why.
+    const [claimed] = await t.update(
+      schema.bookings,
+      { declineReason: detail },
+      and(
+        eq(schema.bookings.id, id),
+        eq(schema.bookings.riderId, releasedRider),
+        eq(schema.bookings.status, cur.status),
+      ),
+    );
+    if (!claimed) throw Err.conflict("This job just changed — pull it up again.");
+    await fireEvent("released", id);
+    const [b] = await t.update(
+      schema.bookings,
+      {
+        riderId: null,
+        status: "confirmed",
+        assignStatus: "released",
+        declineReason: detail,
+        assignedAt: null,
+        acceptedAt: null,
+        // in-flight progress belongs to the trip that just ended: reset it so
+        // the next tech's drive/clock starts clean. Banked totals
+        // (onSiteMinutes, mileageKm, transitMinutes, accumulatedMs) are kept as
+        // the record of work already done — the office adjusts pay, not us.
+        enrouteAt: null,
+        startedAt: null,
+        clockState: "idle",
+        lastResumeAt: null,
+        insideGeofence: false,
+        etaMins: null,
+        etaDistanceKm: null,
+      },
+      eq(schema.bookings.id, id),
+    );
+    if (!b) throw Err.conflict("This job just changed — pull it up again.");
+    await reconcileRiderStatus(co, releasedRider);
+    return c.json({ booking: await enrich(b) }, 200);
+  })
   .post("/:id/cancel", requireAuth, async (c) => {
     const co = tenantId(c);
+    const u = c.get("user") as SessionUser;
     const id = c.req.param("id");
     const t = tx(c);
     const prev = await t.selectOne(schema.bookings, eq(schema.bookings.id, id));
+    if (!prev) return c.json({ message: "Not found" }, 404);
+    // Cancelling belongs to the office or the customer whose job it is. This
+    // route used to be guarded by requireAuth alone, so ANY signed-in user in
+    // the tenant — including a tech, or a customer poking at another
+    // customer's booking id — could kill someone else's work order.
+    if (!isAdminRole(u.role) && prev.customerId !== u.id)
+      return c.json({ message: "Forbidden" }, 403);
     const [b] = await t.update(schema.bookings, { status: "cancelled" }, eq(schema.bookings.id, id));
     await fireEvent("cancelled", id);
     // free the assigned tech so they don't stay stuck "busy" after a cancel

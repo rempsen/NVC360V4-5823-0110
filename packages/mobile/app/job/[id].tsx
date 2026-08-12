@@ -13,6 +13,7 @@ import {
   Platform,
   ActivityIndicator,
   Image,
+  Modal,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -47,6 +48,7 @@ import {
   Signature,
   Microphone,
   Stop,
+  HandPalm,
 } from "phosphor-react-native";
 import { api } from "../../lib/api";
 import { useCustomerNoun, useJobNoun } from "../../lib/use-brand";
@@ -71,6 +73,23 @@ const FLOW: Record<string, { next: string; label: string; variant: any; hint?: s
   arrived:     { next: "completed", label: "Complete Job",   variant: "success" },
   in_progress: { next: "completed", label: "Complete Job",   variant: "success" },
 };
+
+// A tech can hand a job they ACCEPTED back to dispatch (van breaks down,
+// emergency, running too late). Reasons are a fixed list so the office can see
+// patterns; the note is optional detail. Must stay in sync with
+// RELEASE_REASONS in packages/web/src/api/routes/bookings.ts.
+const RELEASE_REASONS: { key: string; label: string }[] = [
+  { key: "emergency", label: "Personal emergency" },
+  { key: "vehicle", label: "Vehicle breakdown" },
+  { key: "running_late", label: "Running too late to make it" },
+  { key: "missing_parts", label: "Missing parts or equipment" },
+  { key: "unsafe_site", label: "Unsafe site conditions" },
+  { key: "wrong_skills", label: "Wrong skill set for this job" },
+  { key: "other", label: "Other" },
+];
+// Stages where releasing is offered. Not "offered" (that's Decline on the home
+// screen) and not a job that's already finished or dead.
+const RELEASABLE = new Set(["assigned", "confirmed", "enroute", "arrived", "onsite", "in_progress", "paused"]);
 
 // states where we keep pinging GPS (drives mileage + geofence auto-arrive/clock)
 const ACTIVE_PING = new Set(["enroute", "arrived", "in_progress"]);
@@ -106,6 +125,9 @@ export default function JobDetail() {
   const [photoPhase, setPhotoPhase] = useState<"before" | "during" | "after">("before");
   const [sigExpanded, setSigExpanded] = useState(false);
   const [savingSig, setSavingSig] = useState(false);
+  const [releaseOpen, setReleaseOpen] = useState(false);
+  const [releaseReason, setReleaseReason] = useState<string | null>(null);
+  const [releaseNote, setReleaseNote] = useState("");
   const [recording, setRecording] = useState<Recording | null>(null);
   const [voiceBusy, setVoiceBusy] = useState(false);
   const voiceSupported = isVoiceNoteSupported();
@@ -150,6 +172,35 @@ export default function JobDetail() {
       if (!res.ok) throw new Error("Failed");
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["job", id] }),
+  });
+
+  // Hand the job back to dispatch. On success the job is no longer ours, so we
+  // leave the screen instead of showing a job we can't act on any more.
+  const release = useMutation({
+    mutationFn: async ({ reason, note }: { reason: string; note: string }) => {
+      const res = await fetch(`${API}/api/bookings/${id}/release`, {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ reason, note }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as any;
+        throw new Error(body?.error?.message || body?.message || "Couldn't release this job");
+      }
+    },
+    onSuccess: () => {
+      setReleaseOpen(false);
+      setReleaseReason(null);
+      setReleaseNote("");
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+      qc.invalidateQueries({ queryKey: ["today-stats"] });
+      Alert.alert(
+        "Sent back to dispatch",
+        "The office has been notified and will reassign this job. You're free for other work.",
+        [{ text: "OK", onPress: () => router.back() }],
+      );
+    },
+    onError: (e: any) => Alert.alert("Couldn't release this job", e?.message || "Try again"),
   });
 
   const toggleChecklist = useMutation({
@@ -454,6 +505,9 @@ export default function JobDetail() {
   if (!j) return <FullLoader label="Not found" />;
 
   const action = FLOW[j.status];
+  // Releasing is only for a job this tech already committed to. An un-accepted
+  // offer is a Decline (home screen), and a finished job has nothing to give back.
+  const canRelease = RELEASABLE.has(j.status) && j.assignStatus !== "offered" && !!j.riderId;
 
   // friendly ETA: "12 min" or "1h 24m"; arrival clock time
   const etaMins: number | null = j.etaMins ?? null;
@@ -1341,6 +1395,17 @@ export default function JobDetail() {
             {action.hint ? (
               <Text style={s.footerHint}>{action.hint}</Text>
             ) : null}
+            {canRelease && (
+              <Pressable
+                onPress={() => setReleaseOpen(true)}
+                style={s.releaseLink}
+                accessibilityRole="button"
+                accessibilityLabel={`I can't do this ${jobNoun.toLowerCase()} — send it back to dispatch`}
+              >
+                <HandPalm color={C.amber} size={15} weight="bold" />
+                <Text style={s.releaseLinkTxt}>I can't do this {jobNoun.toLowerCase()}</Text>
+              </Pressable>
+            )}
           </View>
         )}
         {j.status === "completed" && (
@@ -1351,6 +1416,73 @@ export default function JobDetail() {
             </View>
           </View>
         )}
+        {/* Hand the job back to dispatch */}
+        <Modal
+          visible={releaseOpen}
+          animationType="slide"
+          transparent
+          onRequestClose={() => setReleaseOpen(false)}
+        >
+          <View style={s.sheetWrap}>
+            <View style={s.sheet}>
+              <Text style={s.sheetTitle}>Send this {jobNoun.toLowerCase()} back to dispatch</Text>
+              <Text style={s.sheetSub}>
+                The office is notified right away and will reassign it. The {customerNoun.toLowerCase()} isn't
+                told anything by the app.
+              </Text>
+              <ScrollView style={{ maxHeight: 320 }} keyboardShouldPersistTaps="handled">
+                {RELEASE_REASONS.map((r) => {
+                  const on = releaseReason === r.key;
+                  return (
+                    <Pressable
+                      key={r.key}
+                      onPress={() => setReleaseReason(r.key)}
+                      style={[s.reasonRow, on && s.reasonRowOn]}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected: on }}
+                      accessibilityLabel={r.label}
+                    >
+                      {on ? (
+                        <CheckCircle color={C.brand} size={20} weight="fill" />
+                      ) : (
+                        <Square color={C.sub} size={20} />
+                      )}
+                      <Text style={[s.reasonTxt, on && { color: C.text }]}>{r.label}</Text>
+                    </Pressable>
+                  );
+                })}
+                <TextInput
+                  value={releaseNote}
+                  onChangeText={setReleaseNote}
+                  placeholder="Anything dispatch should know (optional)"
+                  placeholderTextColor={C.sub}
+                  style={s.reasonNote}
+                  multiline
+                  accessibilityLabel="Note for dispatch, optional"
+                />
+              </ScrollView>
+              <Button
+                title="Send back to dispatch"
+                variant="danger"
+                loading={release.isPending}
+                disabled={!releaseReason || release.isPending}
+                accessibilityLabel="Confirm sending this job back to dispatch"
+                onPress={() => {
+                  if (!releaseReason) return;
+                  release.mutate({ reason: releaseReason, note: releaseNote.trim() });
+                }}
+              />
+              <Pressable
+                onPress={() => setReleaseOpen(false)}
+                style={s.sheetCancel}
+                accessibilityRole="button"
+                accessibilityLabel="Keep this job"
+              >
+                <Text style={s.sheetCancelTxt}>Keep this {jobNoun.toLowerCase()}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -1358,6 +1490,54 @@ export default function JobDetail() {
 
 const s = StyleSheet.create({
   offlineHint: { color: C.amber, fontSize: 11, fontWeight: "700", textAlign: "center", marginBottom: 8 },
+  releaseLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: 10,
+    paddingVertical: 8,
+  },
+  releaseLinkTxt: { color: C.amber, fontSize: 13, fontWeight: "700" },
+  sheetWrap: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "flex-end" },
+  sheet: {
+    backgroundColor: C.bg2,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    borderTopWidth: 1,
+    borderColor: C.border,
+    padding: 20,
+    paddingBottom: 30,
+    gap: 12,
+  },
+  sheetTitle: { color: C.text, fontSize: 18, fontWeight: "900" },
+  sheetSub: { color: C.sub, fontSize: 13, lineHeight: 19 },
+  reasonRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: C.border,
+    marginBottom: 8,
+  },
+  reasonRowOn: { borderColor: C.brand, backgroundColor: "rgba(14,165,233,0.10)" },
+  reasonTxt: { color: C.sub, fontSize: 14, fontWeight: "700", flex: 1 },
+  reasonNote: {
+    color: C.text,
+    backgroundColor: C.bg3,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: C.border,
+    padding: 12,
+    minHeight: 70,
+    textAlignVertical: "top",
+    marginBottom: 4,
+  },
+  sheetCancel: { alignItems: "center", paddingVertical: 10 },
+  sheetCancelTxt: { color: C.sub, fontSize: 14, fontWeight: "700" },
   safe: { flex: 1, backgroundColor: C.bg },
   topbar: {
     flexDirection: "row",
