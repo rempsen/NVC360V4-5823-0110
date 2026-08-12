@@ -4,9 +4,12 @@
  * Uses S3 (creds in env) when configured, else falls back to local disk for
  * dev. Call sites don't care which — they get back a stable URL. Local disk is
  * ephemeral and must NOT be used in production (logged as a warning at boot).
+ *
+ * Backed by Bun's built-in S3 client (`Bun.S3Client`) rather than the AWS SDK:
+ * same S3/R2/MinIO wire protocol, zero extra dependencies. The AWS SDK pulled
+ * ~570 modules / 1.4 MB into the server bundle, which was enough to make the
+ * deploy bundler run out of memory.
  */
-import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { mkdir, writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { log } from "./logger";
@@ -21,32 +24,38 @@ const USE_S3 = Boolean(
 
 const LOCAL_DIR = join(process.cwd(), "uploads");
 
-let s3: S3Client | null = null;
-function client(): S3Client {
+/** Bun's built-in S3 client, referenced off the global so no bundler has to
+ * resolve the virtual "bun" module. */
+type BunS3Client = InstanceType<typeof Bun.S3Client>;
+
+let s3: BunS3Client | null = null;
+function client(): BunS3Client {
   if (!s3) {
-    s3 = new S3Client({
+    s3 = new Bun.S3Client({
+      bucket: S3_BUCKET,
       region: S3_REGION,
       endpoint: S3_ENDPOINT,
-      forcePathStyle: Boolean(S3_ENDPOINT), // needed for R2/MinIO-style endpoints
-      credentials: {
-        accessKeyId: process.env.S3_ACCESS_KEY_ID!,
-        secretAccessKey: process.env.S3_SECRET_ACCESS_KEY!,
-      },
+      // R2/MinIO-style endpoints need path-style URLs (bucket in the path);
+      // plain AWS S3 wants virtual-hosted style. Mirrors the old
+      // `forcePathStyle: Boolean(S3_ENDPOINT)`.
+      virtualHostedStyle: !S3_ENDPOINT,
+      accessKeyId: process.env.S3_ACCESS_KEY_ID,
+      secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
     });
   }
   return s3;
-}
-
-if (!USE_S3) {
-  log.warn("storage: S3 not configured — using EPHEMERAL local disk (dev only)", {
-    hint: "set S3_BUCKET/S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY for production",
-  });
 }
 
 export interface StoredObject {
   key: string;
   /** URL clients use to fetch the object */
   url: string;
+}
+
+if (!USE_S3) {
+  log.warn("storage: S3 not configured — using EPHEMERAL local disk (dev only)", {
+    hint: "set S3_BUCKET/S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY for production",
+  });
 }
 
 /** Persist a buffer. Returns the storage key + a fetch URL. */
@@ -56,14 +65,7 @@ export async function putObject(
   contentType: string,
 ): Promise<StoredObject> {
   if (USE_S3) {
-    await client().send(
-      new PutObjectCommand({
-        Bucket: S3_BUCKET,
-        Key: key,
-        Body: body,
-        ContentType: contentType,
-      }),
-    );
+    await client().write(key, body, { type: contentType });
     const url = S3_PUBLIC_BASE
       ? `${S3_PUBLIC_BASE.replace(/\/$/, "")}/${key}`
       : `/api/public/file/${encodeURIComponent(key)}`; // public proxy route
@@ -79,7 +81,7 @@ export async function putObject(
 export async function deleteObject(key: string): Promise<void> {
   if (USE_S3) {
     await client()
-      .send(new DeleteObjectCommand({ Bucket: S3_BUCKET, Key: key }))
+      .delete(key)
       .catch(() => {});
     return;
   }
@@ -89,11 +91,7 @@ export async function deleteObject(key: string): Promise<void> {
 /** Time-limited signed GET URL (S3 only). Returns null on local fallback. */
 export async function signedGetUrl(key: string, expiresIn = 300): Promise<string | null> {
   if (!USE_S3) return null;
-  return getSignedUrl(
-    client(),
-    new GetObjectCommand({ Bucket: S3_BUCKET, Key: key }),
-    { expiresIn },
-  );
+  return client().presign(key, { expiresIn, method: "GET" });
 }
 
 /**
@@ -108,13 +106,18 @@ export async function getObjectBody(
 ): Promise<{ body: Uint8Array; contentType: string } | null> {
   if (USE_S3) {
     try {
-      const out = await client().send(
-        new GetObjectCommand({ Bucket: S3_BUCKET, Key: key }),
+      const file = client().file(key);
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      // Prefer the content type stored on the object (HEAD), so images sent
+      // through the public proxy render instead of downloading. Bun's
+      // `file.type` only guesses from the key, so it's the fallback.
+      const stored = await file.stat().then(
+        (s) => s.type,
+        () => null,
       );
-      const bytes = await out.Body!.transformToByteArray();
       return {
         body: bytes,
-        contentType: out.ContentType || "application/octet-stream",
+        contentType: stored || file.type || "application/octet-stream",
       };
     } catch {
       return null;

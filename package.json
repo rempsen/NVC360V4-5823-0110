@@ -32,8 +32,6 @@
     "typescript": "^5"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1023.0",
-    "@aws-sdk/s3-request-presigner": "3.1058.0",
     "@libsql/client": "^0.17.2",
     "@stripe/react-stripe-js": "^6.5.0",
     "@stripe/stripe-js": "^9.7.0",
