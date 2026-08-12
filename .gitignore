@@ -87,3 +87,6 @@ packages/web/scripts/
 !packages/mobile/scripts/
 packages/mobile/scripts/*
 !packages/mobile/scripts/generate-ios-certs.py
+
+# local upload fallback (runtime artifacts, not source)
+packages/web/uploads
