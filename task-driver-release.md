@@ -17,3 +17,19 @@ Policy (Dan, confirmed):
 - [ ] gates: oxlint 0, tsc non-TS2769 = 160, bun test src 197+ pass (no root .env), vite build, a11y, crash-sweep
 - [ ] live proof on :4200
 - [ ] delete probe user cancelprobe1@probe.test (a3iLOW7piadlyrN3A5TaAlT5hPUGaDop)
+
+## Status: DONE — commit 8ea0ed2, pushed
+Gates: oxlint 0 · tsc non-TS2769 160 · bun test src 210/0 · vite build ok · crash-sweep clean · a11y PASS
+Backfilled notification_rules 'released' (office, in_app+email) for all 5 companies in Turso.
+Probes deleted + verified (relprobe-0001, cancelprobe-booking-0001, cancelprobe1@probe.test).
+Open: browser walkthrough of the WEB tech portal release sheet blocked — /rider/* is role-gated and
+demotech@nvc360.app / tech1234 returns 401. Needs a working tech login (ask Dan before resetting).
+Leftover foreign probe rows NOT deleted (not mine): bookings titled "ZZ FK Probe" x2,
+"ZZ Assign Probe v2", plus several "ZZ Fix8 FK ok" cancelled rows.
+
+## Next in queue
+1. track-public.tsx review (1008 lines, unauthenticated, highest customer volume)
+2. book.tsx nextSlots() timezone only (slots stay 9/11/13/15/17, must mean tenant-local)
+3. intake-form.tsx, then customer/home|bookings|track|profile; score booking flow into admin-review.report
+4. Backlog: small-phone layouts for work-orders/scheduler; customer email/SMS copy review; alert when
+   rate limiter fails open on Redis outage
