@@ -2,14 +2,16 @@ import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRoute } from "wouter";
 import { api } from "../lib/api";
+import { UserFacingError } from "../lib/api-error";
 import { LiveMap } from "../components/live-map";
 import { Logo } from "../components/brand";
 import { TechAvatar } from "../components/tech-avatar";
 import { STATUS_META } from "../lib/utils";
+import { statusStepIndex } from "../../shared/job-status";
 import {
   isTerminalStatus,
   isDeadLinkError,
-  publicSendErrorMessage,
+  publicSendError,
   trackPollMs,
   messagesPollMs,
   shouldStreamLive,
@@ -292,24 +294,14 @@ const STEPS = [
   { key: "completed",  label: "Complete",   Icon: CheckCircle2 },
 ] as const;
 
-// Order index for each status (higher = further along).
-//
-// Every booking status the API can return has to appear here. "confirmed",
-// "onsite" and "paused" were missing, and an unmapped status falls back to 0 —
-// so the customer watched the progress bar snap all the way back to "Confirmed"
-// the moment their tech clocked in on site or paused the job.
-const STATUS_ORDER: Record<string, number> = {
-  pending: 0, confirmed: 0, assigned: 1, enroute: 2,
-  arrived: 3, onsite: 3, in_progress: 4, paused: 4, completed: 5,
-};
-
 /** Statuses that mean the tech is at the customer's address, not driving to it. */
 const ON_SITE_STATUSES = ["arrived", "onsite", "in_progress", "paused"];
 /** Statuses that mean the tech is on their way. */
 const EN_ROUTE_STATUSES = ["assigned", "enroute"];
 
 function StatusStepper({ status }: { status: string }) {
-  const current = STATUS_ORDER[status] ?? 0;
+  // Stage order is shared with the customer portal — see shared/job-status.ts.
+  const current = statusStepIndex(status);
   // cancelled gets a special display — skip the stepper
   if (status === "cancelled") return null;
 
@@ -541,9 +533,9 @@ export default function TrackPublic() {
           json: { body, senderName: "Client" },
         });
       } catch (err) {
-        throw new Error(publicSendErrorMessage(err));
+        throw publicSendError(err);
       }
-      if (!res.ok) throw new Error(publicSendErrorMessage({ status: res.status }));
+      if (!res.ok) throw publicSendError({ status: res.status });
       return res.json();
     },
     onSuccess: () => {
@@ -564,7 +556,11 @@ export default function TrackPublic() {
           .json()
           .then((j: any) => j?.message as string | undefined)
           .catch(() => undefined);
-        throw new Error(msg || "Couldn't send your review. Please try again.");
+        // Rendered inline under the Submit button, so it carries its status and
+        // the handled flag: a rejected review is not a crash report.
+        throw new UserFacingError(msg || "Couldn't send your review. Please try again.", {
+          status: res.status,
+        });
       }
       return res.json();
     },

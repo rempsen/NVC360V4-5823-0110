@@ -83,3 +83,58 @@ export function messageFromBody(body: unknown, status: number): string {
   if (typeof body === "string" && body.trim()) return body.trim().slice(0, 300);
   return `Request failed (${status})`;
 }
+
+/**
+ * HTTP status of any thrown value, duck-typed.
+ *
+ * `ApiError` carries `status`, but plenty of call sites still hand-roll `fetch`
+ * and throw a plain `Error`, and some throw a bare `{ status }` shape. Reading
+ * the field instead of testing `instanceof ApiError` means the Sentry/toast
+ * filtering below works for all of them.
+ */
+export function errorStatus(err: unknown): number | undefined {
+  const s = (err as { status?: unknown } | null | undefined)?.status;
+  return typeof s === "number" && Number.isFinite(s) ? s : undefined;
+}
+
+/**
+ * True when the failure is the API refusing correctly: 4xx.
+ *
+ * A 400 (bad input), 401 (signed out), 403 (not allowed), 404 (gone), 409
+ * (conflict) or 429 (rate limited) is the system working as designed and is
+ * already shown to the user. It is NOT a crash, and it must never open a Sentry
+ * issue — that is how a rate-limit message ends up paging us at 9pm.
+ */
+export function isExpectedApiError(err: unknown): boolean {
+  const s = errorStatus(err);
+  return s !== undefined && s >= 400 && s < 500;
+}
+
+/**
+ * A failure whose message is already plain language for the end user AND whose
+ * own screen renders it (an inline `role="alert"`, not a toast).
+ *
+ * Two things ride on the flag:
+ *  - no global toast, so the customer doesn't get the same sentence twice, once
+ *    inline under the input and once as a red banner;
+ *  - no Sentry issue, because the screen already handled it.
+ *
+ * `status` is preserved so a genuine 5xx inside one of these surfaces is still
+ * reported.
+ */
+export class UserFacingError extends Error {
+  readonly status?: number;
+  readonly handledLocally = true;
+
+  constructor(message: string, opts?: { status?: number; cause?: unknown }) {
+    super(message);
+    this.name = "UserFacingError";
+    this.status = typeof opts?.status === "number" ? opts.status : undefined;
+    if (opts?.cause !== undefined) (this as { cause?: unknown }).cause = opts.cause;
+  }
+}
+
+/** True for an error the throwing screen already surfaced itself. */
+export function isHandledLocally(err: unknown): boolean {
+  return (err as { handledLocally?: unknown } | null | undefined)?.handledLocally === true;
+}

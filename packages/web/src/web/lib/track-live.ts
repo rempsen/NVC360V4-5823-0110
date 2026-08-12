@@ -8,12 +8,11 @@
 // how hard the page is allowed to talk to the server. Pure functions so the
 // policy is unit-testable instead of buried in effect bodies.
 
-/** Statuses after which nothing about the job will ever change again. */
-export const TERMINAL_STATUSES = ["completed", "cancelled"] as const;
-
-export function isTerminalStatus(status: unknown): boolean {
-  return typeof status === "string" && (TERMINAL_STATUSES as readonly string[]).includes(status);
-}
+// Canonical status vocabulary lives in shared/job-status.ts — re-exported here
+// so the tracking page keeps a single import.
+export { TERMINAL_STATUSES, isTerminalStatus } from "../../shared/job-status";
+import { isTerminalStatus } from "../../shared/job-status";
+import { UserFacingError } from "./api-error";
 
 /**
  * Is this error the link itself being dead (unknown token, or an expired live
@@ -98,6 +97,22 @@ export function publicSendErrorMessage(err: unknown): string {
   const msg = (err as { message?: unknown } | null | undefined)?.message;
   if (typeof msg === "string" && msg.trim() && !/^\s*failed to fetch/i.test(msg)) return msg;
   return "Couldn't send your message. Please try again.";
+}
+
+/**
+ * The error to throw for a failed public send.
+ *
+ * Wrapping instead of `new Error(text)` keeps two things the reporting layer
+ * needs: the HTTP status (so a 429/404 is classified as expected and never opens
+ * a Sentry issue) and the "this screen shows the message itself" flag (so the
+ * customer doesn't get the same sentence inline AND as a toast). Losing the
+ * status here is exactly what turned the rate limiter into a production alert.
+ */
+export function publicSendError(err: unknown): UserFacingError {
+  return new UserFacingError(publicSendErrorMessage(err), {
+    status: (err as { status?: unknown } | null | undefined)?.status as number | undefined,
+    cause: err,
+  });
 }
 
 export const SSE_RETRY_BASE_MS = 2_000;

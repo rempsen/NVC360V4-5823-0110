@@ -12,7 +12,9 @@ import {
   MSGS_POLL_LIVE_MS,
   MSGS_POLL_DONE_MS,
   SSE_RETRY_MAX_MS,
+  publicSendError,
 } from "../track-live";
+import { isExpectedApiError, isHandledLocally } from "../api-error";
 
 describe("isTerminalStatus", () => {
   it("is true only for completed and cancelled", () => {
@@ -127,5 +129,36 @@ describe("publicSendErrorMessage", () => {
       "Couldn't send your message. Please try again.",
     );
     expect(publicSendErrorMessage(undefined)).toBe("Couldn't send your message. Please try again.");
+  });
+});
+
+describe("publicSendError — the wrapper that keeps a refusal out of Sentry", () => {
+  it("carries the customer-facing text", () => {
+    expect(publicSendError({ status: 429 }).message).toBe(
+      "Too many messages just now — please wait a minute and try again.",
+    );
+  });
+
+  it("keeps the HTTP status, so a 429 is classified as expected not as a crash", () => {
+    const e = publicSendError({ status: 429 });
+    expect(e.status).toBe(429);
+    expect(isExpectedApiError(e)).toBe(true);
+  });
+
+  it("is flagged handled — the page shows it inline, no duplicate toast", () => {
+    expect(isHandledLocally(publicSendError({ status: 404 }))).toBe(true);
+  });
+
+  it("a network failure with no status still becomes a friendly handled error", () => {
+    const e = publicSendError(new TypeError("Failed to fetch"));
+    expect(e.status).toBeUndefined();
+    expect(e.message).toBe("Couldn't send your message. Please try again.");
+    expect(isHandledLocally(e)).toBe(true);
+  });
+
+  it("a 5xx keeps its status so it is STILL reported as our fault", () => {
+    const e = publicSendError({ status: 500 });
+    expect(isExpectedApiError(e)).toBe(false);
+    expect(e.status).toBe(500);
   });
 });

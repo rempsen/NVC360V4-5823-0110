@@ -13,6 +13,7 @@ import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRoute } from "wouter";
 import { Logo } from "../components/brand";
+import { UserFacingError } from "../lib/api-error";
 import {
   ShieldCheck,
   MapPin,
@@ -82,22 +83,26 @@ export default function PropertyPublic() {
     queryKey: ["property", token],
     queryFn: async () => {
       const res = await fetch(`/api/property/${token}`);
-      if (!res.ok) throw new Error("not found");
+      // A shared property-hub link that has been revoked is an expected 404 and
+      // the page renders its own explanation — keep the status, stay silent.
+      if (!res.ok) throw new UserFacingError("not found", { status: res.status });
       return res.json();
     },
     enabled: !!token,
     retry: false,
+    meta: { silentError: true },
   });
 
   const intake = useQuery({
     queryKey: ["property-intake", token],
     queryFn: async () => {
       const res = await fetch(`/api/property/${token}/intake`);
-      if (!res.ok) throw new Error("not found");
+      if (!res.ok) throw new UserFacingError("not found", { status: res.status });
       return res.json();
     },
     enabled: !!token,
     retry: false,
+    meta: { silentError: true },
   });
 
   if (hub.isLoading)

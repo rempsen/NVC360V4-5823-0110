@@ -1,4 +1,5 @@
 import { useParams, Link, useLocation } from "wouter";
+import { UserFacingError } from "../../lib/api-error";
 import { DialogPanel } from "../../components/dialog-panel";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
@@ -91,7 +92,11 @@ export default function RiderActive() {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
-        throw new Error((body as any)?.error?.message || (body as any)?.message || "Couldn't release this job");
+        // Shown inline in the release sheet via onError -> setReleaseErr.
+        throw new UserFacingError(
+          (body as any)?.error?.message || (body as any)?.message || "Couldn't release this job",
+          { status: res.status },
+        );
       }
     },
     onSuccess: () => {

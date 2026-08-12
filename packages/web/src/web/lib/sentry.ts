@@ -17,7 +17,7 @@
  *   numbers, and a replay of a dispatch board would capture all of it.
  */
 import * as Sentry from "@sentry/react";
-import { ApiError } from "./api-error";
+import { isExpectedApiError, isHandledLocally } from "./api-error";
 
 const DSN = import.meta.env.VITE_SENTRY_DSN as string | undefined;
 const ENV = (import.meta.env.VITE_SENTRY_ENV as string | undefined) ?? (import.meta.env.DEV ? "development" : "production");
@@ -35,6 +35,10 @@ export function initSentry() {
   Sentry.init({
     dsn: DSN,
     environment: ENV,
+    // The web app and the driver app currently report into the same Sentry
+    // project, so every event has to say which platform it came from —
+    // otherwise a browser error looks like a React Native crash.
+    initialScope: { tags: { platform: "web", app: "nvc360-web" } },
     // Keep the payload lean — this is error monitoring, not analytics.
     tracesSampleRate: 0.1,
     sendDefaultPii: false,
@@ -49,10 +53,12 @@ export function initSentry() {
     ],
     beforeSend(event, hint) {
       const err = hint?.originalException;
-      if (err instanceof ApiError) {
-        // Expected, user-visible, already toasted. Only server faults are ours.
-        if (err.status < 500) return null;
-      }
+      // Expected, user-visible, already surfaced. Only server faults are ours.
+      // Duck-typed on `status` (not `instanceof ApiError`) because mutations
+      // routinely re-throw a friendly Error and lose the class on the way out —
+      // that is how a 429 rate-limit notice became an "error" issue in Sentry.
+      if (isExpectedApiError(err)) return null;
+      if (isHandledLocally(err)) return null;
       return event;
     },
   });

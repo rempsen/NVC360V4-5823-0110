@@ -7,6 +7,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRoute } from "wouter";
 import { Logo } from "../components/brand";
+import { UserFacingError } from "../lib/api-error";
 import { money } from "../lib/utils";
 import { CheckCircle2, ShieldCheck, Star, PenLine } from "lucide-react";
 
@@ -40,11 +41,14 @@ export default function SelectionsPublic() {
     queryKey: ["selections", token],
     queryFn: async (): Promise<Payload> => {
       const res = await fetch(`/api/selections/${token}`);
-      if (!res.ok) throw new Error("not_found");
+      // Status preserved + handled locally: a dead/expired selections link is
+      // rendered as its own "link isn't valid" page below, not a crash report.
+      if (!res.ok) throw new UserFacingError("not_found", { status: res.status });
       return res.json();
     },
     enabled: !!token,
     retry: false,
+    meta: { silentError: true },
   });
 
   const data = query.data;
@@ -75,7 +79,8 @@ export default function SelectionsPublic() {
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        throw new Error(j.message || "Failed to submit");
+        // Shown inline under the Submit button (see submit.isError below).
+        throw new UserFacingError(j.message || "Failed to submit", { status: res.status });
       }
       return res.json();
     },

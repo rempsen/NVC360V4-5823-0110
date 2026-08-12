@@ -1,14 +1,26 @@
 import { QueryClient, MutationCache, QueryCache } from "@tanstack/react-query";
-import { ApiError, errorMessage } from "./api-error";
+import { ApiError, errorMessage, errorStatus, isExpectedApiError, isHandledLocally } from "./api-error";
 import { toast } from "../components/toast";
 import { reportError } from "./sentry";
 
 /**
  * Only server faults and unexpected exceptions go to Sentry. A 400/401/404 is
  * the API working correctly and is already shown to the user as a toast.
+ *
+ * The status test is duck-typed (`isExpectedApiError`) rather than
+ * `instanceof ApiError`: a mutation that catches an ApiError and re-throws a
+ * plain `new Error("nice message for the customer")` used to lose the status on
+ * the way out, so a 429 from the public message rate-limiter arrived here as an
+ * unclassified Error and opened a Sentry issue titled "Too many messages just
+ * now — please wait a minute and try again." That is a rate limiter doing its
+ * job, not a bug, and it buried real crashes.
  */
 function reportIfOurFault(error: unknown, context: Record<string, unknown>) {
-  if (error instanceof ApiError && error.status < 500) return;
+  if (isExpectedApiError(error)) return;
+  // A screen that renders its own explanation has handled the failure — unless
+  // it was a server fault, which is always ours to fix.
+  const status = errorStatus(error);
+  if (isHandledLocally(error) && (status === undefined || status < 500)) return;
   reportError(error, context);
 }
 
@@ -71,8 +83,13 @@ export const queryClient = new QueryClient({
           ? `Reference: ${error.requestId}`
           : undefined;
 
-      // key de-dupes a burst of identical failures into one toast.
-      toast({ kind: "error", message: msg, detail, key: `mut:${msg}` });
+      // Screens that render the failure themselves (inline `role="alert"` under
+      // the input, e.g. the public tracking page's message box) opted out: a
+      // toast on top of that shows the customer the same sentence twice.
+      if (!isHandledLocally(error)) {
+        // key de-dupes a burst of identical failures into one toast.
+        toast({ kind: "error", message: msg, detail, key: `mut:${msg}` });
+      }
 
       reportIfOurFault(error, { kind: "mutation" });
     },
