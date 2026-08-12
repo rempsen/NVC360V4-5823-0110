@@ -34,6 +34,18 @@ export function setupSentry() {
     // Don't spam Sentry with local dev noise.
     enabled: !__DEV__,
     debug: false,
+    // The web app reports into this same Sentry project, so every event has to
+    // say which app it came from — otherwise a browser error looks like a
+    // React Native crash (that is exactly how issue REACT-NATIVE-9, a web
+    // rate-limit notice, turned up here).
+    initialScope: { tags: { platform: "mobile", app: "nvc360-driver" } },
+    beforeSend(event, hint) {
+      // A 4xx is the API refusing correctly (signed out, rate limited, job
+      // already taken) and is shown to the driver on screen. Never a crash.
+      const status = (hint?.originalException as { status?: unknown } | null | undefined)?.status;
+      if (typeof status === "number" && status >= 400 && status < 500) return null;
+      return event;
+    },
   });
 }
 
