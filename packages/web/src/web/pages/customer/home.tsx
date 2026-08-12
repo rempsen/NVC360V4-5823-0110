@@ -10,6 +10,7 @@ import {
   Moon, Hammer, LifeBuoy, Star, Clock, ArrowRight, MapPin, Search,
 } from "lucide-react";
 import { useState } from "react";
+import { isOpenStatus } from "../../../shared/job-status";
 
 const ICON: Record<string, any> = {
   sparkles: Sparkles, wrench: Wrench, zap: Zap, scissors: Scissors, bug: Bug,
@@ -29,9 +30,11 @@ export default function CustomerHome() {
     queryFn: async () => (await api.bookings.$get()).json(),
   });
 
-  const active = bookings.data?.bookings.find((b) =>
-    ["confirmed", "assigned", "enroute", "arrived", "in_progress"].includes(b.status),
-  );
+  // "onsite" and "paused" are real statuses, and this hand-written list left them
+  // out — so the Active booking banner vanished the moment the tech clocked in
+  // at the door, which is when the customer looks at it most. Vocabulary is
+  // shared now: see shared/job-status.ts.
+  const active = bookings.data?.bookings.find((b) => isOpenStatus(b.status));
 
   const filtered = (services.data?.services ?? []).filter(
     (s) =>
@@ -90,6 +93,24 @@ export default function CustomerHome() {
             {Array.from({ length: 6 }).map((_, i) => (
               <div key={i} className="h-56 animate-pulse rounded-2xl bg-ink-2/5" />
             ))}
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-white/10 bg-ink-2 py-14 text-center">
+            <Search className="mx-auto h-8 w-8 text-slate-600" />
+            <p className="mt-3 font-semibold text-slate-300">
+              {q ? `No services match "${q}"` : "No services available yet"}
+            </p>
+            <p className="mt-1 text-sm text-slate-500">
+              {q ? "Try a different word, or clear the search." : "Please check back shortly."}
+            </p>
+            {q && (
+              <button
+                onClick={() => setQ("")}
+                className="mt-4 rounded-full border border-white/10 bg-ink px-5 py-2 text-sm font-semibold text-slate-200 hover:border-white/20"
+              >
+                Clear search
+              </button>
+            )}
           </div>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

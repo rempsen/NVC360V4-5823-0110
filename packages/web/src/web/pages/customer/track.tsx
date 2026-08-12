@@ -8,10 +8,16 @@ import { StripePayModal } from "../../components/stripe-pay";
 import { fmtDate, money } from "../../lib/utils";
 import {
   ArrowLeft, Phone, Star, Truck, CheckCircle2, CreditCard, MapPin, Navigation,
+  PackageOpen,
 } from "lucide-react";
 import { useState } from "react";
+import { JOB_STEPS, statusStepIndex, isActiveStatus, isTerminalStatus } from "../../../shared/job-status";
 
-const STEPS = ["confirmed", "assigned", "enroute", "arrived", "in_progress", "completed"];
+// Stage vocabulary is shared with the public tracking page and the home screen
+// (shared/job-status.ts). The local copy this replaced didn't list "onsite" or
+// "paused", so indexOf returned -1 and the whole progress list showed as not
+// started the moment the tech clocked in — and the tech card with the call
+// button disappeared at the same time.
 const STEP_LABEL: Record<string, string> = {
   confirmed: "Confirmed", assigned: "Pro assigned", enroute: "On the way",
   arrived: "Arrived", in_progress: "In progress", completed: "Completed",
@@ -30,15 +36,22 @@ export default function TrackPage() {
     setPayOpen(false);
   }
 
+  // Both polls used to run forever at 5s / 2.5s, so a customer who left this tab
+  // open on a finished job kept asking the server for a snapshot that can never
+  // change again. They stop at completion / cancellation instead.
   const booking = useQuery({
     queryKey: ["booking", id],
     queryFn: async () => (await api.bookings[":id"].$get({ param: { id } })).json(),
-    refetchInterval: 5000,
+    refetchInterval: (q) =>
+      isTerminalStatus((q.state.data as any)?.booking?.status) ? false : 5000,
   });
   const tracking = useQuery({
     queryKey: ["tracking", id],
     queryFn: async () => (await api.tracking[":bookingId"].$get({ param: { bookingId: id } })).json(),
-    refetchInterval: 2500,
+    refetchInterval: () => {
+      const st = (qc.getQueryData(["booking", id]) as any)?.booking?.status;
+      return isTerminalStatus(st) ? false : 2500;
+    },
   });
   const invoice = useQuery({
     queryKey: ["invoice", id],
@@ -47,11 +60,26 @@ export default function TrackPage() {
 
   if (booking.isLoading) return <FullLoader label="Loading booking…" />;
   const b = (booking.data as any)?.booking;
-  if (!b) return <p>Booking not found.</p>;
+  if (!b)
+    return (
+      <div className="mx-auto max-w-md py-16 text-center">
+        <PackageOpen className="mx-auto h-10 w-10 text-slate-600" />
+        <p className="mt-3 font-semibold text-slate-300">We couldn't find that booking</p>
+        <p className="mt-1 text-sm text-slate-500">
+          It may have been cancelled, or the link is out of date.
+        </p>
+        <Link
+          to="/app/bookings"
+          className="mt-5 inline-block rounded-full bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-deep"
+        >
+          See my bookings
+        </Link>
+      </div>
+    );
   const t = tracking.data as any;
   const inv = (invoice.data as any)?.invoice;
-  const currentStep = STEPS.indexOf(b.status);
-  const isActive = ["assigned", "enroute", "arrived", "in_progress"].includes(b.status);
+  const currentStep = statusStepIndex(b.status);
+  const isActive = isActiveStatus(b.status);
   const isPaid = inv?.status === "paid" || b.paymentStatus === "paid";
 
   return (
@@ -108,7 +136,8 @@ export default function TrackPage() {
           <div className="rounded-2xl border border-white/5 bg-ink-2 p-5 shadow-sm">
             <h3 className="mb-4 font-bold text-white">Progress</h3>
             <div className="space-y-0">
-              {STEPS.map((s, i) => {
+              {JOB_STEPS.map((step, i) => {
+                const s = step.key;
                 const reached = i <= currentStep && b.status !== "cancelled";
                 const isCurrent = i === currentStep;
                 return (
@@ -117,7 +146,7 @@ export default function TrackPage() {
                       <div className={`grid h-7 w-7 place-items-center rounded-full text-xs transition ${reached ? "bg-brand text-white" : "bg-white/5 text-slate-500"}`}>
                         {reached ? <CheckCircle2 className="h-4 w-4" /> : i + 1}
                       </div>
-                      {i < STEPS.length - 1 && (
+                      {i < JOB_STEPS.length - 1 && (
                         <div className={`my-0.5 h-6 w-0.5 ${i < currentStep ? "bg-brand" : "bg-white/5"}`} />
                       )}
                     </div>
@@ -152,7 +181,7 @@ export default function TrackPage() {
                 <RowL label="Total" value={money(inv.total)} bold />
               </div>
               {isPaid ? (
-                <div className="mt-4 flex items-center justify-center gap-2 rounded-xl bg-green-50 py-3 font-semibold text-green-600">
+                <div className="mt-4 flex items-center justify-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/10 py-3 font-semibold text-emerald-400">
                   <CheckCircle2 className="h-5 w-5" /> Paid · {inv.number}
                 </div>
               ) : (
@@ -184,7 +213,7 @@ export default function TrackPage() {
 
 function Detail({ icon: Icon, text }: { icon: any; text: string }) {
   return (
-    <div className="flex items-start gap-2 text-slate-600">
+    <div className="flex items-start gap-2 text-slate-300">
       <Icon className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
       <span>{text}</span>
     </div>

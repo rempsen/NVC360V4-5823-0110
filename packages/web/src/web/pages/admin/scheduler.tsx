@@ -1038,7 +1038,7 @@ export default function SchedulerPage() {
                         <button
                           onClick={() => openJob(b)}
                           title="Click to edit"
-                          className="flex items-center gap-2"
+                          className="flex min-h-8 items-center gap-2"
                         >
                           <span className="font-medium text-slate-200">
                             {b.title || b.service?.name}
@@ -1049,7 +1049,7 @@ export default function SchedulerPage() {
                           onClick={() => removeJob(b)}
                           aria-label="Delete work order"
                           title="Delete work order"
-                          className="rounded p-0.5 text-slate-600 transition hover:bg-rose-500/10 hover:text-rose-400"
+                          className="grid h-8 w-8 place-items-center rounded text-slate-600 transition hover:bg-rose-500/10 hover:text-rose-400"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>

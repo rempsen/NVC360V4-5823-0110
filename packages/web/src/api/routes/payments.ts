@@ -141,14 +141,39 @@ export const paymentsRoutes = new Hono()
     c.json({ enabled: stripeEnabled, publishableKey: STRIPE_PUBLISHABLE_KEY }, 200),
   )
 
-  // get invoice for a booking
+  // Get the invoice for a booking.
+  //
+  // 404 means "you can't see this booking" — a booking outside your tenant, or
+  // one that isn't yours when you're a customer/tech. A booking you CAN see
+  // that simply hasn't been invoiced yet is a normal, healthy state and returns
+  // 200 with `invoice: null`, so the customer tracking page doesn't error out
+  // on every job before its invoice exists.
   .get("/invoice/:bookingId", requireAuth, async (c) => {
-    const inv = await tx(c).selectOne(
-      schema.invoices,
-      eq(schema.invoices.bookingId, c.req.param("bookingId")),
-    );
-    if (!inv) return c.json({ message: "Not found" }, 404);
-    return c.json({ invoice: inv }, 200);
+    const u = c.get("user") as SessionUser & { role?: string };
+    const t = tx(c);
+    const bookingId = c.req.param("bookingId");
+
+    const b = await t.selectOne(schema.bookings, eq(schema.bookings.id, bookingId));
+    if (!b) return c.json({ message: "Not found" }, 404);
+
+    // Tenant scoping alone is not enough: without this, any signed-in customer
+    // could read a co-tenant's invoice by guessing a booking id. Office roles
+    // (admin/superadmin/manager/dispatcher/...) legitimately see every invoice
+    // in their own tenant; the two roles that are scoped to their own work are
+    // the client and the technician.
+    if (u.role === "customer" || u.role === "rider") {
+      let allowed = false;
+      if (u.role === "rider") {
+        const rp = await t.selectOne(schema.riders, eq(schema.riders.userId, u.id));
+        allowed = !!rp && !!b.riderId && rp.id === b.riderId;
+      } else {
+        allowed = b.customerId === u.id;
+      }
+      if (!allowed) return c.json({ message: "Not found" }, 404);
+    }
+
+    const inv = await t.selectOne(schema.invoices, eq(schema.invoices.bookingId, bookingId));
+    return c.json({ invoice: inv ?? null }, 200);
   })
 
   // Create (or reuse) a PaymentIntent for a booking's invoice and return its

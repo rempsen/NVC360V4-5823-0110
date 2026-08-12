@@ -82,12 +82,21 @@ beforeAll(async () => {
   await sql.execute(ddlFor(schema.bookings));
   await sql.execute(ddlFor(schema.invoices));
   await sql.execute(ddlFor(schema.paymentLedger));
+  await sql.execute(ddlFor(schema.riders));
 
   // One booking + one PAID invoice per company. Company A's invoice has a
   // ledger charge entry; both companies' data live side by side so the
   // isolation assertions are meaningful (a leak would surface the other's row).
   await sql.execute({ sql: "INSERT OR IGNORE INTO bookings (id, company_id, customer_id, service_id, title, status, address, price) VALUES (?,?,?,?,?,?,?,?)", args: ["bk-pa", A, "cust-a", "svc-a", "A job", "completed", "", 100] });
   await sql.execute({ sql: "INSERT OR IGNORE INTO bookings (id, company_id, customer_id, service_id, title, status, address, price) VALUES (?,?,?,?,?,?,?,?)", args: ["bk-pb", B, "cust-b", "svc-b", "B job", "completed", "", 250] });
+
+  // Company A also has a booking that has NOT been invoiced yet (the normal
+  // state of every job before billing runs) and one assigned to a technician.
+  await sql.execute({ sql: "INSERT OR IGNORE INTO bookings (id, company_id, customer_id, service_id, title, status, address, price) VALUES (?,?,?,?,?,?,?,?)", args: ["bk-pa-noinv", A, "cust-a", "svc-a", "A uninvoiced job", "confirmed", "", 100] });
+  await sql.execute({ sql: "INSERT OR IGNORE INTO bookings (id, company_id, customer_id, service_id, title, status, address, price, rider_id) VALUES (?,?,?,?,?,?,?,?,?)", args: ["bk-pa-rider", A, "cust-a", "svc-a", "A assigned job", "completed", "", 100, "rider-pa"] });
+  await sql.execute({ sql: "INSERT OR IGNORE INTO riders (id, user_id, company_id) VALUES (?,?,?)", args: ["rider-pa", "u-rider-a", A] });
+  await sql.execute({ sql: "INSERT OR IGNORE INTO riders (id, user_id, company_id) VALUES (?,?,?)", args: ["rider-pa2", "u-rider-a2", A] });
+  await sql.execute({ sql: "INSERT OR IGNORE INTO invoices (id, company_id, booking_id, customer_id, number, amount, tax, total, status, currency) VALUES (?,?,?,?,?,?,?,?,?,?)", args: ["inv-pa-rider", A, "bk-pa-rider", "cust-a", "INV-A-002", 100, 0, 100, "unpaid", "cad"] });
 
   await sql.execute({ sql: "INSERT OR IGNORE INTO invoices (id, company_id, booking_id, customer_id, number, amount, tax, total, status, currency) VALUES (?,?,?,?,?,?,?,?,?,?)", args: ["inv-pa", A, "bk-pa", "cust-a", "INV-A-001", 100, 0, 100, "paid", "cad"] });
   await sql.execute({ sql: "INSERT OR IGNORE INTO invoices (id, company_id, booking_id, customer_id, number, amount, tax, total, status, currency) VALUES (?,?,?,?,?,?,?,?,?,?)", args: ["inv-pb", B, "bk-pb", "cust-b", "INV-B-001", 250, 0, 250, "unpaid", "cad"] });
@@ -145,6 +154,51 @@ describe("payments API — invoice reads are tenant-scoped", () => {
     const json = (await res.json()) as { invoice: { id: string; total: number } };
     expect(json.invoice.id).toBe("inv-pb");
     expect(json.invoice.total).toBe(250);
+  });
+
+  it("a booking that exists but has no invoice yet is 200 with invoice: null (not 404)", async () => {
+    // Regression: this used to 404, so the customer tracking page threw a query
+    // error on every perfectly healthy job before its invoice existed.
+    const res = await call("/payments/invoice/bk-pa-noinv", { company: A, user: "u-a" });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { invoice: unknown };
+    expect(json.invoice).toBeNull();
+  });
+
+  it("a booking id that does not exist at all is still 404", async () => {
+    const res = await call("/payments/invoice/bk-nope", { company: A, user: "u-a" });
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("payments API — invoice reads are ownership-scoped for non-admins", () => {
+  it("a customer reads their OWN booking's invoice", async () => {
+    const res = await call("/payments/invoice/bk-pa", { company: A, user: "cust-a", role: "customer" });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { invoice: { id: string } };
+    expect(json.invoice.id).toBe("inv-pa");
+  });
+
+  it("a customer canNOT read a CO-TENANT's invoice by guessing the booking id (404)", async () => {
+    const res = await call("/payments/invoice/bk-pa", { company: A, user: "cust-other", role: "customer" });
+    expect(res.status).toBe(404);
+  });
+
+  it("the assigned technician can read the invoice for their own job", async () => {
+    const res = await call("/payments/invoice/bk-pa-rider", { company: A, user: "u-rider-a", role: "rider" });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { invoice: { id: string } };
+    expect(json.invoice.id).toBe("inv-pa-rider");
+  });
+
+  it("a technician who is NOT assigned to the job gets 404", async () => {
+    const res = await call("/payments/invoice/bk-pa-rider", { company: A, user: "u-rider-a2", role: "rider" });
+    expect(res.status).toBe(404);
+  });
+
+  it("a signed-in user with no rider profile gets 404 on a rider read", async () => {
+    const res = await call("/payments/invoice/bk-pa-rider", { company: A, user: "u-ghost", role: "rider" });
+    expect(res.status).toBe(404);
   });
 });
 

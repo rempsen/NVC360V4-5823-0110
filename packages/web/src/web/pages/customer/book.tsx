@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { UserFacingError } from "../../lib/api-error";
 import { useParams, useLocation, Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
@@ -69,7 +70,8 @@ export default function BookPage() {
       const res = await api.pricing["tax-preview"].$post({
         json: { address: debouncedAddress, amount: basePrice as number },
       });
-      if (!res.ok) throw new Error("tax preview failed");
+      // Background quote: keep the status so a refusal isn't a crash report.
+      if (!res.ok) throw new UserFacingError("tax preview failed", { status: res.status });
       return res.json();
     },
   });
@@ -88,7 +90,11 @@ export default function BookPage() {
       // of showing the customer why it was refused.
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { message?: string } | null;
-        throw new Error(body?.message || "Couldn't create booking. Please try again.");
+        // Rendered inline under the Book button, with the server's reason
+        // (e.g. "outside our service area"), so it must not also toast.
+        throw new UserFacingError(body?.message || "Couldn't create booking. Please try again.", {
+          status: res.status,
+        });
       }
       return res.json();
     },
