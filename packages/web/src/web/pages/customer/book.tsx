@@ -6,6 +6,8 @@ import { FullLoader, Loader } from "../../components/loader";
 import { StoredImage } from "../../components/stored-image";
 import { money } from "../../lib/utils";
 import { AddressAutocomplete } from "../../components/address-autocomplete";
+import { useBrand } from "../../lib/use-brand";
+import { nextSlots } from "../../../shared/booking-slots";
 import {
   Calendar, Clock, MapPin, MessageSquare, ArrowLeft, CheckCircle2, Star,
 } from "lucide-react";
@@ -18,26 +20,6 @@ function useDebounced<T>(value: T, ms: number): T {
     return () => clearTimeout(t);
   }, [value, ms]);
   return v;
-}
-
-function nextSlots() {
-  const slots: { label: string; value: string }[] = [];
-  const now = new Date();
-  for (let d = 0; d < 5; d++) {
-    for (const h of [9, 11, 13, 15, 17]) {
-      const dt = new Date(now);
-      dt.setDate(now.getDate() + d);
-      dt.setHours(h, 0, 0, 0);
-      if (dt > now)
-        slots.push({
-          label: dt.toLocaleString("en-US", {
-            weekday: "short", month: "short", day: "numeric", hour: "numeric",
-          }),
-          value: dt.toISOString(),
-        });
-    }
-  }
-  return slots;
 }
 
 export default function BookPage() {
@@ -55,6 +37,7 @@ export default function BookPage() {
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [notes, setNotes] = useState("");
   const [done, setDone] = useState<string | null>(null);
+  const brand = useBrand();
 
   const svc = useQuery({
     queryKey: ["service", id],
@@ -119,7 +102,7 @@ export default function BookPage() {
   if (svc.isLoading) return <FullLoader label="Loading service…" />;
   const service = (svc.data as any)?.service;
   if (!service) return <p>Service not found.</p>;
-  const slots = nextSlots();
+  const slots = nextSlots(brand.timezone);
   const q = quote.data as
     | { taxLabel: string; taxAmount: number; total: number; fromAddress: boolean }
     | undefined;

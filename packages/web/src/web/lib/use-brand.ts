@@ -27,6 +27,13 @@ export interface TenantBrand {
   tagline: string;
   industry: string; // Primary Industry (ICP) preset id, e.g. "hvac", or "other"
   industryOther: string; // free-text business description when industry === "other"
+  /**
+   * IANA time zone the company operates in (company_settings.timezone). Empty
+   * when unset — pass it through safeTimeZone() from shared/tz.ts, which lands
+   * on the same DEFAULT_TZ the server uses, so client and server agree on what
+   * "9 AM" means.
+   */
+  timezone: string;
 }
 
 const DEFAULTS: TenantBrand = {
@@ -43,6 +50,7 @@ const DEFAULTS: TenantBrand = {
   tagline: "",
   industry: "",
   industryOther: "",
+  timezone: "",
 };
 
 export function useBrand(): TenantBrand {
@@ -73,6 +81,7 @@ export function useBrand(): TenantBrand {
     tagline: str(s.tagline, DEFAULTS.tagline),
     industry: str(s.industry, DEFAULTS.industry),
     industryOther: str(s.industryOther, DEFAULTS.industryOther),
+    timezone: str(s.timezone, DEFAULTS.timezone),
   };
 }
 
