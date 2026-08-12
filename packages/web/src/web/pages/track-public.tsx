@@ -283,10 +283,21 @@ const STEPS = [
   { key: "completed",  label: "Complete",   Icon: CheckCircle2 },
 ] as const;
 
-// order index for each status (higher = further along)
+// Order index for each status (higher = further along).
+//
+// Every booking status the API can return has to appear here. "confirmed",
+// "onsite" and "paused" were missing, and an unmapped status falls back to 0 —
+// so the customer watched the progress bar snap all the way back to "Confirmed"
+// the moment their tech clocked in on site or paused the job.
 const STATUS_ORDER: Record<string, number> = {
-  pending: 0, assigned: 1, enroute: 2, arrived: 3, in_progress: 4, completed: 5,
+  pending: 0, confirmed: 0, assigned: 1, enroute: 2,
+  arrived: 3, onsite: 3, in_progress: 4, paused: 4, completed: 5,
 };
+
+/** Statuses that mean the tech is at the customer's address, not driving to it. */
+const ON_SITE_STATUSES = ["arrived", "onsite", "in_progress", "paused"];
+/** Statuses that mean the tech is on their way. */
+const EN_ROUTE_STATUSES = ["assigned", "enroute"];
 
 function StatusStepper({ status }: { status: string }) {
   const current = STATUS_ORDER[status] ?? 0;
@@ -480,7 +491,13 @@ export default function TrackPublic() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ rating, comment }),
       });
-      if (!res.ok) throw new Error("Failed");
+      if (!res.ok) {
+        const msg = await res
+          .json()
+          .then((j: any) => j?.message as string | undefined)
+          .catch(() => undefined);
+        throw new Error(msg || "Couldn't send your review. Please try again.");
+      }
       return res.json();
     },
     onSuccess: (res: any) => {
@@ -503,7 +520,7 @@ export default function TrackPublic() {
     const dest = data.destination;
     if (!tl?.lat || !dest?.lat) return;
     const distM = haversineM(tl.lat, tl.lng, dest.lat, dest.lng);
-    if (distM <= 500 && ["enroute", "assigned"].includes(data.status)) {
+    if (distM <= 500 && EN_ROUTE_STATUSES.includes(data.status)) {
       alertedRef.current = true;
       setShowProximityAlert(true);
       // auto-dismiss after 8s
@@ -534,7 +551,11 @@ export default function TrackPublic() {
     );
 
   const meta =
-    STATUS_META[data.status] ?? { label: data.status, color: "#64748b" };
+    STATUS_META[data.status] ?? {
+      // Last-resort label: never show the customer a raw db value like "in_progress".
+      label: String(data.status ?? "").replace(/_/g, " ") || "Scheduled",
+      color: "#64748b",
+    };
   const isDone =
     data.status === "completed" || data.status === "cancelled";
   const company = data.company as {
@@ -543,12 +564,15 @@ export default function TrackPublic() {
     phone?: string;
   } | null;
   const workerNoun: string = data.workerNoun || "Technician";
-  const isEnroute = data.status === "enroute" || data.status === "assigned";
+  const isEnroute = EN_ROUTE_STATUSES.includes(data.status);
   const timeline: any[] = data.timeline ?? [];
   const photos: any[] = data.photos ?? [];
   const materials: any[] = data.materials ?? [];
   const isComplete = data.status === "completed";
-  const isArrived = data.status === "arrived" || data.status === "in_progress";
+  // Once the tech is at the address, the "estimated arrival" countdown is a lie
+  // — it keeps ticking off the last en-route ETA. Show the on-site state instead.
+  const isArrived = ON_SITE_STATUSES.includes(data.status);
+  const isWorking = data.status === "in_progress" || data.status === "paused";
 
   return (
     <div className="nvc-grid-bg min-h-screen bg-ink text-slate-200">
@@ -569,7 +593,7 @@ export default function TrackPublic() {
           <div className="mx-auto flex max-w-5xl items-center gap-3">
             <AlertTriangle className="h-4 w-4 shrink-0 text-amber-warn" />
             <p className="text-sm font-semibold text-amber-warn">
-              Your {workerNoun.toLowerCase()} is less than 5 minutes away — please be ready!
+              Your {workerNoun.toLowerCase()} is less than 500 m away — please be ready!
             </p>
             <button
               onClick={() => setShowProximityAlert(false)}
@@ -726,6 +750,15 @@ export default function TrackPublic() {
                             >
                               {submitReview.isPending ? "Submitting…" : "Submit review"}
                             </button>
+                            {/* A failed submit used to do nothing at all — the
+                                button just stopped spinning and the customer had
+                                no idea their rating never landed. */}
+                            {submitReview.isError && (
+                              <p role="alert" className="mt-2 text-center text-xs text-rose-400">
+                                {(submitReview.error as Error)?.message ||
+                                  "Couldn't send your review. Please try again."}
+                              </p>
+                            )}
                           </>
                         )}
                       </>
@@ -755,10 +788,16 @@ export default function TrackPublic() {
                     </span>
                     <div>
                       <p className="font-display text-lg font-bold text-white">
-                        {data.status === "in_progress" ? "Job in progress" : "Your tech has arrived!"}
+                        {data.status === "paused"
+                          ? "Job paused"
+                          : isWorking
+                          ? "Job in progress"
+                          : `Your ${workerNoun.toLowerCase()} has arrived!`}
                       </p>
                       <p className="text-xs text-slate-400">
-                        {data.status === "in_progress"
+                        {data.status === "paused"
+                          ? "Work is on hold — your " + workerNoun.toLowerCase() + " will resume shortly"
+                          : isWorking
                           ? "Work is underway at your location"
                           : "They are on-site and ready to begin"}
                       </p>

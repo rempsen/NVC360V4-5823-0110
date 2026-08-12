@@ -272,6 +272,20 @@ export const trackLimiter = rateLimit({
   windowMs: 60_000,
   keyFn: keyByToken,
 });
+/**
+ * Per-token limiter for public tracking WRITES (customer messages, review).
+ *
+ * The read limiter is sized for a 2.5s poll (120/min). Writes must not share
+ * that budget: every message posted from the public page forwards a real SMS to
+ * the technician, so 120/min per link is 120 paid texts a minute from anyone
+ * holding the URL. A human types a handful of messages, never dozens.
+ */
+export const trackWriteLimiter = rateLimit({
+  name: "track-write",
+  limit: Number(process.env.RL_TRACK_WRITE_LIMIT ?? 10),
+  windowMs: 60_000,
+  keyFn: keyByToken,
+});
 /** Per-user/IP limiter for high-frequency driver location pings. */
 export const pingLimiter = rateLimit({
   name: "ping",

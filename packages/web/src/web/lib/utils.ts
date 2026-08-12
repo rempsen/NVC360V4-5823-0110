@@ -35,6 +35,12 @@ export const STATUS_META: Record<
   assigned: { label: "Assigned", color: "#c084fc", bg: "rgba(168,85,247,0.16)" },
   enroute: { label: "En route", color: "#22d3ee", bg: "rgba(34,211,238,0.14)" },
   arrived: { label: "On site", color: "#34d399", bg: "rgba(16,185,129,0.14)" },
+  // A tech clocked in on site, and a tech who paused mid-job, are real booking
+  // statuses the API returns. They were missing here, so every surface that
+  // looks a status up (including the public tracking page) fell through to
+  // printing the raw db value at the customer — "onsite", "paused".
+  onsite: { label: "On site", color: "#34d399", bg: "rgba(16,185,129,0.14)" },
+  paused: { label: "Paused", color: "#fbbf24", bg: "rgba(245,158,11,0.14)" },
   in_progress: { label: "In progress", color: "#fb923c", bg: "rgba(249,115,22,0.16)" },
   completed: { label: "Completed", color: "#34d399", bg: "rgba(16,185,129,0.16)" },
   cancelled: { label: "Cancelled", color: "#f87171", bg: "rgba(239,68,68,0.16)" },

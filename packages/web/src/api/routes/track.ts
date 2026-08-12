@@ -5,7 +5,7 @@ import * as schema from "../database/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import { sendSms, trackingUrl } from "../../services/sms";
 import { computeRoute } from "./geo";
-import { trackLimiter } from "../lib/rate-limit";
+import { trackLimiter, trackWriteLimiter } from "../lib/rate-limit";
 import { streamSSE } from "hono/streaming";
 import { subscribeTrack, publishMsg } from "../../services/realtime";
 import { jobTimeline } from "../../services/job-events";
@@ -27,6 +27,58 @@ async function resolveByToken(token: string) {
   if (b.status === "completed") return b;
   if (b.tokenExpiresAt && Number(b.tokenExpiresAt) < Date.now()) return null;
   return b;
+}
+
+// ── Public input handling ────────────────────────────────────────────────────
+// Everything below /api/track is reachable by anyone holding the link: no
+// session, no CSRF, no client we control. So the body is treated as hostile.
+// Bad input must come back as a 400 the page can show, never a 500 (which is
+// what an unguarded `await c.req.json()` produces for an empty or malformed
+// body, and what a NaN rating produces at the insert).
+
+/** Max characters accepted in a customer message / review comment. */
+const MAX_MESSAGE_CHARS = 2000;
+/** Max characters of a customer message we forward into an SMS (cost control). */
+const SMS_PREVIEW_CHARS = 140;
+/** Max characters accepted for the display name on a public message. */
+const MAX_SENDER_NAME_CHARS = 60;
+
+/** Parse a JSON body without throwing. Returns null when absent/malformed. */
+async function safeJson(c: {
+  req: { json: () => Promise<unknown> };
+}): Promise<Record<string, unknown> | null> {
+  try {
+    const v = await c.req.json();
+    return v && typeof v === "object" && !Array.isArray(v)
+      ? (v as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Require a non-empty, length-bounded string. Anything that is not already a
+ * string is rejected rather than coerced — `String({})` is "[object Object]",
+ * which is exactly what used to land in the message thread and in the SMS sent
+ * to the technician.
+ */
+function readText(
+  v: unknown,
+  max: number,
+): { ok: true; value: string } | { ok: false; reason: "type" | "empty" | "long" } {
+  if (typeof v !== "string") return { ok: false, reason: "type" };
+  const s = v.trim();
+  if (!s) return { ok: false, reason: "empty" };
+  if (s.length > max) return { ok: false, reason: "long" };
+  return { ok: true, value: s };
+}
+
+/** A star rating is 1–5 whole stars. Out of range is a bad request, not a clamp. */
+function readRating(v: unknown): number | null {
+  const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+  if (!Number.isInteger(n) || n < 1 || n > 5) return null;
+  return n;
 }
 
 // road-route cache so the 2.5s public poll never hammers Google Directions.
@@ -284,13 +336,27 @@ export const trackRoutes = new Hono()
   })
   // ── Public review (no auth) — customer rates job after completion ───────
   // POST /api/track/:token/review { rating: 1-5, comment?: string }
-  .post("/:token/review", trackLimiter, async (c) => {
+  .post("/:token/review", trackWriteLimiter, async (c) => {
     const token = c.req.param("token");
     const b = await resolveByToken(token);
     if (!b) return c.json({ message: "Not found" }, 404);
     if (b.status !== "completed") return c.json({ message: "Job not yet complete" }, 400);
-    const { rating, comment } = await c.req.json();
-    const r = Math.max(1, Math.min(5, Math.round(Number(rating))));
+    const json = await safeJson(c);
+    if (!json) return c.json({ message: "Invalid request body" }, 400);
+    const r = readRating(json.rating);
+    if (r == null) return c.json({ message: "Rating must be a whole number from 1 to 5" }, 400);
+    // Comment is optional; when present it must be a sane string. A raw
+    // `comment?.trim()` accepted 60 KB of anything and stored it verbatim.
+    let comment = "";
+    if (json.comment != null && json.comment !== "") {
+      const parsed = readText(json.comment, MAX_MESSAGE_CHARS);
+      if (!parsed.ok) {
+        if (parsed.reason === "long")
+          return c.json({ message: `Comment is too long (max ${MAX_MESSAGE_CHARS} characters)` }, 400);
+        if (parsed.reason === "type")
+          return c.json({ message: "Comment must be text" }, 400);
+      } else comment = parsed.value;
+    }
     const t = tdb(b.companyId);
     // idempotent: only one review per booking from the tracking page
     const existing = await t.selectOne(schema.reviews, eq(schema.reviews.bookingId, b.id));
@@ -300,13 +366,19 @@ export const trackRoutes = new Hono()
       customerId: b.customerId || undefined,
       riderId: b.riderId || null,
       rating: r,
-      comment: comment?.trim() ?? "",
+      comment,
     });
-    // bump rider's average rating
+    // Bump the rider's average rating. Only finite stored ratings count, and the
+    // write is skipped if the average somehow isn't a number — a single bad row
+    // must never overwrite a technician's rating with NaN.
     if (b.riderId) {
       const all = await t.select(schema.reviews, eq(schema.reviews.riderId, b.riderId));
-      const avg = all.reduce((s, x) => s + (x.rating || 0), 0) / all.length;
-      await t.update(schema.riders, { rating: Math.round(avg * 10) / 10 }, eq(schema.riders.id, b.riderId));
+      const valid = all.filter((x) => Number.isFinite(Number(x.rating)));
+      if (valid.length) {
+        const avg = valid.reduce((s, x) => s + Number(x.rating), 0) / valid.length;
+        if (Number.isFinite(avg))
+          await t.update(schema.riders, { rating: Math.round(avg * 10) / 10 }, eq(schema.riders.id, b.riderId));
+      }
     }
     // Reputation routing: 4-5 stars get offered the tenant's public review
     // link; 3 or below never do — they raise a private alert to the office so
@@ -321,7 +393,7 @@ export const trackRoutes = new Hono()
           companyId: b.companyId,
           bookingId: b.id,
           rating: r,
-          comment: comment?.trim() ?? "",
+          comment,
           jobTitle: b.title || "Job",
         });
       }
@@ -332,16 +404,33 @@ export const trackRoutes = new Hono()
     return c.json({ review: rev, publicReviewUrl: publicUrl }, 201);
   })
   // client posts a message from the public tracking page
-  .post("/:token/messages", trackLimiter, async (c) => {
+  .post("/:token/messages", trackWriteLimiter, async (c) => {
     const token = c.req.param("token");
-    const { body, senderName } = await c.req.json();
+    const json = await safeJson(c);
+    if (!json) return c.json({ message: "Invalid request body" }, 400);
+    const parsed = readText(json.body, MAX_MESSAGE_CHARS);
+    if (!parsed.ok)
+      return c.json(
+        {
+          message:
+            parsed.reason === "long"
+              ? `Message is too long (max ${MAX_MESSAGE_CHARS} characters)`
+              : parsed.reason === "type"
+                ? "Message must be text"
+                : "Message can't be empty",
+        },
+        400,
+      );
+    const body = parsed.value;
+    const nameParsed = readText(json.senderName, MAX_SENDER_NAME_CHARS);
+    const senderName = nameParsed.ok ? nameParsed.value : "Client";
     const b = await resolveByToken(token);
     if (!b) return c.json({ message: "Not found" }, 404);
     const t = tdb(b.companyId);
     const [m] = await t.insert(schema.messages, {
       bookingId: b.id,
       senderRole: "client",
-      senderName: senderName || "Client",
+      senderName,
       body,
       channel: "app",
     });
@@ -364,9 +453,16 @@ export const trackRoutes = new Hono()
         const techPhone = r.phone || ru?.phone || "";
         if (techPhone && b.publicToken) {
           const who = m.senderName || "Customer";
+          // Only a preview goes into the SMS. The full message is always in the
+          // thread the link opens; billing a 15-segment text for a wall of copy
+          // (or letting anyone with the link do that on purpose) is not worth it.
+          const preview =
+            body.length > SMS_PREVIEW_CHARS
+              ? `${body.slice(0, SMS_PREVIEW_CHARS)}…`
+              : body;
           await sendSms(
             techPhone,
-            `NVC360: Message from ${who}: "${body}" — Reply: ${trackingUrl(b.publicToken)}`,
+            `NVC360: Message from ${who}: "${preview}" — Reply: ${trackingUrl(b.publicToken)}`,
           ).catch(() => {});
         }
       }
