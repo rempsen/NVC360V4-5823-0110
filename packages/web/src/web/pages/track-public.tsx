@@ -7,6 +7,15 @@ import { Logo } from "../components/brand";
 import { TechAvatar } from "../components/tech-avatar";
 import { STATUS_META } from "../lib/utils";
 import {
+  isTerminalStatus,
+  isDeadLinkError,
+  publicSendErrorMessage,
+  trackPollMs,
+  messagesPollMs,
+  shouldStreamLive,
+  sseRetryDelayMs,
+} from "../lib/track-live";
+import {
   Phone,
   MessageCircle,
   Send,
@@ -370,7 +379,11 @@ function useLiveEta(etaMins: number | null | undefined) {
     setSecsLeft(secs);
   }, [etaMins]);
 
+  // No ETA (job finished, or the tech hasn't set off yet) means no ticking timer
+  // — the interval used to run once a second for the entire life of the page,
+  // including on a permanently bookmarked completed job.
   useEffect(() => {
+    if (etaMins == null) return;
     const id = setInterval(() => {
       if (!baseRef.current) return;
       const elapsed = Math.floor((Date.now() - baseRef.current.at) / 1000);
@@ -378,7 +391,7 @@ function useLiveEta(etaMins: number | null | undefined) {
       setSecsLeft(remaining);
     }, 1000);
     return () => clearInterval(id);
-  }, []);
+  }, [etaMins]);
 
   if (secsLeft == null) return null;
   const mins = Math.floor(secsLeft / 60);
@@ -424,26 +437,56 @@ export default function TrackPublic() {
   const [publicReviewUrl, setPublicReviewUrl] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<string | null>(null);
 
+  // This page is opened from an SMS and, once the job is complete, bookmarked
+  // as a permanent service record — so its refresh policy has to read the
+  // snapshot it already has instead of polling blindly forever. Policy (and the
+  // reasoning behind each interval) lives in ../lib/track-live.
+  // A dead token surfaces as a thrown 404 (apiFetch throws on non-2xx), not as
+  // a "Not found" body — both are treated as invalid.
+  const liveState = (q: { state: { data?: unknown; error?: unknown } }) => {
+    const d = q.state.data as any;
+    return {
+      status: d?.status,
+      invalid: isDeadLinkError(q.state.error) || (!!d && d.message === "Not found"),
+    };
+  };
+  const noRetryOnDeadLink = (count: number, err: unknown) =>
+    !isDeadLinkError(err) && count < 1;
+
   const track = useQuery({
     queryKey: ["track", token],
     queryFn: async () =>
       (await api.track[":token"].$get({ param: { token } })).json(),
-    refetchInterval: sseUp ? 20000 : 2500,
+    refetchInterval: (q) => trackPollMs({ ...liveState(q), sseUp }),
+    retry: noRetryOnDeadLink,
+    // The page renders its own "this link is invalid or has expired" screen —
+    // a toast on top of it just confuses the customer.
+    meta: { silentError: true },
     enabled: !!token,
   });
 
-  // SSE — pushes fresh snapshot on every driver ping / status change
+  const trackData = track.data as any;
+  const linkInvalid =
+    isDeadLinkError(track.error) || (!!trackData && trackData.message === "Not found");
+  const jobOver = isTerminalStatus(trackData?.status);
+  const streamLive = shouldStreamLive({ status: trackData?.status, invalid: linkInvalid });
+
+  // SSE — pushes fresh snapshot on every driver ping / status change.
+  // Held open only while the job can still change: a completed job has nothing
+  // left to push, and a dead link would otherwise reconnect forever.
   useEffect(() => {
-    if (!token) return;
+    if (!token || !streamLive) return;
     let es: EventSource | null = null;
     let retry: ReturnType<typeof setTimeout> | null = null;
     let stopped = false;
+    let failures = 0;
     const connect = () => {
       if (stopped) return;
       es = new EventSource(`/api/track/${token}/stream`);
       es.addEventListener("snapshot", (ev) => {
         try {
           const snap = JSON.parse((ev as MessageEvent).data);
+          failures = 0; // a good snapshot resets the backoff
           qc.setQueryData(["track", token], snap);
           setSseUp(true);
         } catch { /* ignore */ }
@@ -451,7 +494,9 @@ export default function TrackPublic() {
       es.onerror = () => {
         setSseUp(false);
         es?.close();
-        if (!stopped) retry = setTimeout(connect, 4000);
+        // Exponential backoff, capped. A flat retry meant a phone that lost
+        // signal (or an expired link) opened a new stream every 4s forever.
+        if (!stopped) retry = setTimeout(connect, sseRetryDelayMs(++failures));
       };
     };
     connect();
@@ -460,24 +505,47 @@ export default function TrackPublic() {
       if (retry) clearTimeout(retry);
       es?.close();
     };
-  }, [token, qc]);
+  }, [token, qc, streamLive]);
 
   const messages = useQuery({
     queryKey: ["track-msgs", token],
     queryFn: async () =>
       (await api.track[":token"].messages.$get({ param: { token } })).json(),
-    refetchInterval: 4000,
+    // Slows down but never stops after completion — the customer can still
+    // write and the office can still reply on a finished job.
+    // Status is read out of the cache, not closed over: a captured `trackData`
+    // is the render-time value, so the interval never picked up completion and
+    // the "slow down when done" branch was dead code in practice.
+    refetchInterval: (q) => {
+      const d = qc.getQueryData(["track", token]) as any;
+      return messagesPollMs({
+        status: d?.status,
+        invalid: isDeadLinkError(q.state.error) || (!!d && d.message === "Not found"),
+      });
+    },
+    retry: noRetryOnDeadLink,
+    meta: { silentError: true },
     enabled: !!token,
   });
 
   const send = useMutation({
-    mutationFn: async (body: string) =>
-      (
-        await api.track[":token"].messages.$post({
+    // A rejected message used to look exactly like a sent one: the response was
+    // never checked and apiFetch's thrown error was never surfaced, so a 429
+    // from the public write limiter (or a 404 on an expired link) still cleared
+    // the input and the customer believed the tech had their note.
+    mutationFn: async (body: string) => {
+      let res: Awaited<ReturnType<typeof api.track[":token"]["messages"]["$post"]>>;
+      try {
+        res = await api.track[":token"].messages.$post({
           param: { token },
           json: { body, senderName: "Client" },
-        })
-      ).json(),
+        });
+      } catch (err) {
+        throw new Error(publicSendErrorMessage(err));
+      }
+      if (!res.ok) throw new Error(publicSendErrorMessage({ status: res.status }));
+      return res.json();
+    },
     onSuccess: () => {
       setDraft("");
       qc.invalidateQueries({ queryKey: ["track-msgs", token] });
@@ -511,7 +579,7 @@ export default function TrackPublic() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [msgs.length]);
 
-  const data = track.data as any;
+  const data = trackData;
 
   // proximity check — fire when driver enters 500m radius, once per session
   useEffect(() => {
@@ -523,8 +591,10 @@ export default function TrackPublic() {
     if (distM <= 500 && EN_ROUTE_STATUSES.includes(data.status)) {
       alertedRef.current = true;
       setShowProximityAlert(true);
-      // auto-dismiss after 8s
-      setTimeout(() => setShowProximityAlert(false), 8000);
+      // auto-dismiss after 8s, cleared on unmount so the timer can't fire into
+      // a torn-down component
+      const id = setTimeout(() => setShowProximityAlert(false), 8000);
+      return () => clearTimeout(id);
     }
   }, [data]);
 
@@ -538,7 +608,7 @@ export default function TrackPublic() {
       </div>
     );
 
-  if (!data || data.message === "Not found")
+  if (linkInvalid || !data || data.message === "Not found")
     return (
       <div className="grid min-h-screen place-items-center bg-ink px-6 text-center">
         <div>
@@ -556,8 +626,8 @@ export default function TrackPublic() {
       label: String(data.status ?? "").replace(/_/g, " ") || "Scheduled",
       color: "#64748b",
     };
-  const isDone =
-    data.status === "completed" || data.status === "cancelled";
+  // Terminal = nothing about this job will change again (see lib/track-live).
+  const isDone = jobOver;
   const company = data.company as {
     name?: string;
     email?: string;
@@ -1015,28 +1085,38 @@ export default function TrackPublic() {
                     })
                   )}
                 </div>
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    if (draft.trim()) send.mutate(draft.trim());
-                  }}
-                  className="flex gap-2 border-t border-white/5 p-3"
-                >
-                  <input
-                    aria-label="Type a message…"
-                    value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
-                    placeholder="Type a message…"
-                    className="flex-1 rounded-lg border border-white/10 bg-ink-3/60 px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:border-brand focus:outline-none"
-                  />
-                  <button
-                    type="submit"
-                    disabled={!draft.trim() || send.isPending}
-                    className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-brand text-white hover:bg-brand-deep disabled:opacity-50"
+                <div className="border-t border-white/5 p-3">
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (draft.trim()) send.mutate(draft.trim());
+                    }}
+                    className="flex gap-2"
                   >
-                    <Send className="h-4 w-4" />
-                  </button>
-                </form>
+                    <input
+                      aria-label="Type a message…"
+                      value={draft}
+                      onChange={(e) => setDraft(e.target.value)}
+                      placeholder="Type a message…"
+                      className="flex-1 rounded-lg border border-white/10 bg-ink-3/60 px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:border-brand focus:outline-none"
+                    />
+                    <button
+                      type="submit"
+                      disabled={!draft.trim() || send.isPending}
+                      className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-brand text-white hover:bg-brand-deep disabled:opacity-50"
+                    >
+                      <Send className="h-4 w-4" />
+                    </button>
+                  </form>
+                  {/* The draft is deliberately left in the box on failure so the
+                      customer can retry without retyping. */}
+                  {send.isError && (
+                    <p role="alert" className="mt-2 text-xs text-rose-400">
+                      {(send.error as Error)?.message ||
+                        "Couldn't send your message. Please try again."}
+                    </p>
+                  )}
+                </div>
               </div>
             </div>
         </div>

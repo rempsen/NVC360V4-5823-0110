@@ -87,6 +87,14 @@ export const queryClient = new QueryClient({
       // otherwise a background refetch blip would toast over a working screen.
       if (query.state.data !== undefined) return;
 
+      // Opt-out for screens that render their own explanation of the failure
+      // (e.g. the public tracking page's "this link is invalid or has expired").
+      // Set `meta: { silentError: true }` on the query.
+      if ((query.meta as { silentError?: boolean } | undefined)?.silentError) {
+        reportIfOurFault(error, { kind: "query", queryHash: String(query.queryHash) });
+        return;
+      }
+
       toast({
         kind: "warning",
         message: `Couldn't load data — ${errorMessage(error)}`,
