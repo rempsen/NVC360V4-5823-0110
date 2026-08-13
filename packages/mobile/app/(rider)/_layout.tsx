@@ -2,7 +2,6 @@ import { Tabs } from "expo-router";
 import { useEffect } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { useQuery } from "@tanstack/react-query";
-import Constants from "expo-constants";
 import {
   Briefcase,
   CurrencyDollar,
@@ -11,12 +10,10 @@ import {
 } from "phosphor-react-native";
 import { C } from "../../lib/theme";
 import { api } from "../../lib/api";
-import { authHeaders } from "../../lib/auth";
 import { useLocationHeartbeat } from "../../lib/use-location-heartbeat";
 import { endAllLiveActivities } from "../../lib/useLiveActivity";
 import { usePushNotifications, setAppBadgeCount } from "../../lib/push";
-
-const API = ((Constants.expoConfig?.extra?.apiUrl as string) ?? "").replace(/\/$/, "");
+import { useNotifySummary } from "../../lib/notify-summary";
 
 export default function RiderLayout() {
   // Rider's own status drives whether native background GPS tracking runs at
@@ -62,28 +59,30 @@ export default function RiderLayout() {
   // register this device for push (job offers, enroute alerts) + handle taps.
   usePushNotifications();
 
-  // unread dispatch messages + new job offers → tab badge
-  const unread = useQuery({
-    queryKey: ["dispatch-unread"],
-    queryFn: async () => {
-      const res = await fetch(`${API}/api/messages/direct/unread`, {
-        headers: authHeaders(),
-      });
-      if (!res.ok) return { count: 0 };
-      return res.json() as Promise<{ count: number }>;
-    },
-    refetchInterval: 8000,
-  });
-  const badge = (unread.data as any)?.count ?? 0;
+  // Everything that needs the tech's attention, at EVERY company they work for.
+  // One query drives all four tab badges and the app-icon count.
+  const notify = useNotifySummary();
+  const msgBadge = notify.active.unreadMessages;
+  const jobBadge = notify.active.pendingOffers;
+  // Another company is waiting on them. Shown on Profile because that's where
+  // the company switcher lives — the badge has to point at the thing that
+  // resolves it.
+  const elsewhereBadge = notify.elsewhere.reduce((s, x) => s + x.total, 0);
 
-  // Mirror the unread count onto the OS app-icon badge while the app is
+  // Mirror the count onto the OS app-icon badge while the app is
   // open/foregrounded. A push notification's own `badge` field already sets
   // this when the app is backgrounded/closed and a message arrives — this
   // covers the case where the count changes while polling in the foreground
   // (e.g. reading on another device) and reliably syncs it back down.
+  //
+  // This is the TOTAL across every company on purpose: the home-screen icon is
+  // one icon for the whole app, so scoping it to the current shift's company
+  // would leave a work order from the tech's other employer completely
+  // invisible until they happened to switch.
+  const iconBadge = notify.data.total;
   useEffect(() => {
-    setAppBadgeCount(badge);
-  }, [badge]);
+    setAppBadgeCount(iconBadge);
+  }, [iconBadge]);
 
   return (
     <Tabs
@@ -107,7 +106,14 @@ export default function RiderLayout() {
         options={{
           title: "Jobs",
           tabBarIcon: ({ color, focused }) => (
-            <Briefcase color={color} size={24} weight={focused ? "fill" : "regular"} />
+            <TabIcon
+              count={jobBadge}
+              label={
+                jobBadge === 1 ? "1 work order to accept or decline" : `${jobBadge} work orders to accept or decline`
+              }
+            >
+              <Briefcase color={color} size={24} weight={focused ? "fill" : "regular"} />
+            </TabIcon>
           ),
         }}
       />
@@ -116,14 +122,12 @@ export default function RiderLayout() {
         options={{
           title: "Messages",
           tabBarIcon: ({ color, focused }) => (
-            <View>
+            <TabIcon
+              count={msgBadge}
+              label={msgBadge === 1 ? "1 unread message" : `${msgBadge} unread messages`}
+            >
               <ChatCircleDots color={color} size={24} weight={focused ? "fill" : "regular"} />
-              {badge > 0 && (
-                <View style={badgeStyles.badge}>
-                  <Text style={badgeStyles.badgeTxt}>{badge > 9 ? "9+" : badge}</Text>
-                </View>
-              )}
-            </View>
+            </TabIcon>
           ),
         }}
       />
@@ -141,11 +145,45 @@ export default function RiderLayout() {
         options={{
           title: "Profile",
           tabBarIcon: ({ color, focused }) => (
-            <UserCircle color={color} size={24} weight={focused ? "fill" : "regular"} />
+            <TabIcon
+              count={elsewhereBadge}
+              label={`${elsewhereBadge} waiting at another company you work for`}
+            >
+              <UserCircle color={color} size={24} weight={focused ? "fill" : "regular"} />
+            </TabIcon>
           ),
         }}
       />
     </Tabs>
+  );
+}
+
+/**
+ * Tab icon with the red count bubble.
+ *
+ * The count is also exposed to VoiceOver — a screen reader announces the tab
+ * label, not a decorative red circle, so without this the number simply does
+ * not exist for a tech using accessibility features.
+ */
+function TabIcon({
+  count,
+  label,
+  children,
+}: {
+  count: number;
+  label: string;
+  children: React.ReactNode;
+}) {
+  if (count <= 0) return <>{children}</>;
+  return (
+    <View accessible accessibilityLabel={label}>
+      {children}
+      <View style={badgeStyles.badge}>
+        <Text style={badgeStyles.badgeTxt} allowFontScaling={false}>
+          {count > 9 ? "9+" : count}
+        </Text>
+      </View>
+    </View>
   );
 }
 

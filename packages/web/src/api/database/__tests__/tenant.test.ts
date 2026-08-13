@@ -205,11 +205,21 @@ describe("B2B tenant registry (companies)", () => {
   });
 
   it("companies is GLOBAL — every tenant context sees the full registry", async () => {
-    const fromA = await tdb(A).select(schema.companies);
-    const fromB = await tdb(B).select(schema.companies);
-    expect(fromA.map((r) => r.id).sort()).toEqual([A, B].sort());
+    const fromA = (await tdb(A).select(schema.companies)).map((r) => r.id).sort();
+    const fromB = (await tdb(B).select(schema.companies)).map((r) => r.id).sort();
+    // The property under test is that `companies` is NOT tenant-scoped: both
+    // tenants must see this suite's rows, and see exactly the same registry as
+    // each other regardless of which tenant is acting.
+    //
+    // Asserted by containment rather than exact equality on purpose. Bun runs
+    // every suite in ONE process against a shared ":memory:" store, so any
+    // sibling test file that provisions a company legitimately adds rows here —
+    // exact equality made this test fail for a reason that has nothing to do
+    // with tenant scoping.
+    expect(fromA).toContain(A);
+    expect(fromA).toContain(B);
     // identical view regardless of acting tenant (allow-list source of truth)
-    expect(fromB.map((r) => r.id).sort()).toEqual([A, B].sort());
+    expect(fromB).toEqual(fromA);
   });
 
   it("company_settings stays tenant-isolated (no cross-tenant leak)", async () => {

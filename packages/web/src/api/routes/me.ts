@@ -12,13 +12,82 @@
  */
 import { Hono } from "hono";
 import { db } from "../database";
+import { tdb } from "../database/tenant";
 import * as schema from "../database/schema";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull, notInArray } from "drizzle-orm";
 import { requireAuth, loadMemberships } from "../middleware/auth";
 import { isSuperadmin } from "../lib/permissions";
 import { detachMembership } from "../lib/memberships";
 
 type SessionUser = { id: string; role?: string; companyId?: string };
+
+/**
+ * Per-company unread/pending counts for ONE company, for one rider identity.
+ *
+ * Split out of the route so the shape is testable and so the two counts can
+ * never drift apart between the badge and the picker — both read this.
+ *
+ * "Needs my attention" for a technician is exactly two things:
+ *   1. Dispatch said something I haven't read (direct thread, and any thread on
+ *      a job that is still mine — a message on a finished job is history, not a
+ *      task).
+ *   2. A work order is sitting on `offered`, waiting for accept/decline.
+ *
+ * Messages the tech sent themselves are never counted (senderRole filter), and
+ * a job the office already pulled back or completed is never counted, otherwise
+ * the badge would show a number the tech cannot clear by doing anything.
+ */
+async function countsForCompany(
+  companyId: string,
+  userId: string,
+): Promise<{ unreadMessages: number; pendingOffers: number }> {
+  const t = tdb(companyId);
+
+  // The rider row is per (user, company) — a tech on two rosters has two. No
+  // rider row means they hold a non-field role here (e.g. office staff at one
+  // company, tech at another), so there is nothing for the driver app to badge.
+  const rider = await t.selectOne(schema.riders, eq(schema.riders.userId, userId));
+  if (!rider) return { unreadMessages: 0, pendingOffers: 0 };
+
+  const offered = await t.select(
+    schema.bookings,
+    and(
+      eq(schema.bookings.riderId, rider.id),
+      eq(schema.bookings.assignStatus, "offered"),
+      notInArray(schema.bookings.status, ["completed", "cancelled"]),
+      isNull(schema.bookings.deletedAt),
+    ),
+  );
+
+  // Direct dispatcher thread — the one the Messages tab opens on.
+  const direct = await t.select(
+    schema.messages,
+    and(
+      eq(schema.messages.riderId, rider.id),
+      isNull(schema.messages.bookingId),
+      eq(schema.messages.read, false),
+    ),
+  );
+
+  // NOTE — job-thread messages are deliberately NOT counted here.
+  //
+  // `messages.read` is a single shared flag, and the only thing that clears it
+  // on a job thread is POST /:bookingId/mark-read, which marks CLIENT messages
+  // read on behalf of the OFFICE (it feeds the dispatcher inbox count). The
+  // driver app has no ack of its own for a job thread, so counting those
+  // messages here would put a red number on the app that the technician has no
+  // way to clear by doing anything — and letting the tech clear it would
+  // silently blank the dispatcher's inbox instead.
+  //
+  // Doing this properly needs a per-audience read flag (`read_by_tech`) so the
+  // office and the field can ack independently. Until then the badge counts
+  // only what the tech can actually action: the dispatcher's direct thread and
+  // work orders awaiting accept/decline.
+  return {
+    unreadMessages: direct.filter((m) => m.senderRole === "dispatch").length,
+    pendingOffers: offered.length,
+  };
+}
 
 export const meRoutes = new Hono()
   /**
@@ -75,6 +144,89 @@ export const meRoutes = new Hono()
           staffType: m.staffType,
         }))
         .sort((a, b) => a.name.localeCompare(b.name)),
+    });
+  })
+
+  /**
+   * "What needs my attention, at every company I work for?"
+   *
+   * Deliberately COMPANY-AGNOSTIC: it ignores X-Company-Id and reports every
+   * roster the caller is on. That is the whole point — a tech working Acme's
+   * shift has no way to discover that Bolt just sent them a work order, because
+   * every other endpoint in the app is tenant-scoped to the company they picked.
+   * This is the one endpoint allowed to look across them, and it does so only
+   * for the caller's OWN memberships (never a userId parameter), so it cannot be
+   * used to read across tenants.
+   *
+   * Backs three things in the driver app:
+   *   - the red count on the app icon / tab bar (`total`)
+   *   - the per-tab counts for the company currently being worked (`active`)
+   *   - the red dot on each company in the picker/switcher (`companies[]`)
+   */
+  .get("/notifications", requireAuth, async (c) => {
+    const me = c.get("user") as unknown as SessionUser;
+    const active = (c.get("companyId") as string) ?? "";
+
+    const memberships = await loadMemberships(me.id);
+    // Superadmins are platform operators, not field techs — they have no rider
+    // identity to badge, and fanning out across every tenant on the platform
+    // would be an expensive query for a screen they never see.
+    if (memberships.length === 0 || isSuperadmin(me.role)) {
+      return c.json({
+        total: 0,
+        unreadMessages: 0,
+        pendingOffers: 0,
+        active: { companyId: active, unreadMessages: 0, pendingOffers: 0, total: 0 },
+        companies: [],
+      });
+    }
+
+    const rows = await db
+      .select()
+      .from(schema.companies)
+      .where(
+        inArray(
+          schema.companies.id,
+          memberships.map((m) => m.companyId),
+        ),
+      );
+    const byId = new Map(rows.map((r) => [r.id, r]));
+
+    // A suspended company must not raise a badge — the tech cannot act on it.
+    const usable = memberships.filter((m) => byId.get(m.companyId)?.status !== "suspended");
+
+    const companies = await Promise.all(
+      usable.map(async (m) => {
+        // One company's failure (a half-migrated tenant, a bad row) must not
+        // blank out the whole badge — report zero for that company and keep the
+        // others accurate.
+        const counts = await countsForCompany(m.companyId, me.id).catch(() => ({
+          unreadMessages: 0,
+          pendingOffers: 0,
+        }));
+        return {
+          companyId: m.companyId,
+          company: byId.get(m.companyId)?.name ?? m.companyId,
+          staffType: m.staffType,
+          unreadMessages: counts.unreadMessages,
+          pendingOffers: counts.pendingOffers,
+          total: counts.unreadMessages + counts.pendingOffers,
+        };
+      }),
+    );
+
+    const activeEntry = companies.find((x) => x.companyId === active);
+    return c.json({
+      total: companies.reduce((s, x) => s + x.total, 0),
+      unreadMessages: companies.reduce((s, x) => s + x.unreadMessages, 0),
+      pendingOffers: companies.reduce((s, x) => s + x.pendingOffers, 0),
+      active: {
+        companyId: active,
+        unreadMessages: activeEntry?.unreadMessages ?? 0,
+        pendingOffers: activeEntry?.pendingOffers ?? 0,
+        total: activeEntry?.total ?? 0,
+      },
+      companies: companies.sort((a, b) => a.company.localeCompare(b.company)),
     });
   })
 

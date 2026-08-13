@@ -16,6 +16,8 @@ import { C } from "../../lib/theme";
 import { Avatar, Card, Button, FullLoader, Row } from "../../components/ui";
 import { isBiometricAvailable, getLockPreference, setLockPreference, clearUnlockStamp } from "../../lib/biometric-lock";
 import { clearActiveCompany, getActiveCompany, setActiveCompany, type CompanyOption } from "../../lib/active-company";
+import { useNotifySummary, companyCount } from "../../lib/notify-summary";
+import { CompanyBadge, CompanyAlertLine, companyAlertText } from "../../components/company-alert";
 
 const API = ((Constants.expoConfig?.extra?.apiUrl as string) ?? "").replace(/\/$/, "");
 
@@ -55,6 +57,10 @@ export default function Profile() {
     },
     staleTime: 5 * 60_000,
   });
+
+  // Per-company pending work, so the switcher shows WHICH employer is waiting
+  // instead of making the tech switch into each one to find out.
+  const notify = useNotifySummary();
 
   const switching = useMutation({
     mutationFn: async (companyId: string) => {
@@ -287,6 +293,13 @@ export default function Profile() {
             <View style={{ gap: 8, marginTop: 12 }}>
               {companies.data!.map((co) => {
                 const isActive = co.id === activeCompany;
+                const n = companyCount(notify.data, co.id);
+                // Only badge the OTHER companies here. Work waiting at the
+                // company you're already on shift for is already badged on the
+                // Jobs and Messages tabs — repeating it in the switcher would
+                // imply you need to switch to something you're standing in.
+                const waiting = !isActive && (n?.total ?? 0) > 0;
+                const alert = waiting ? companyAlertText(n) : null;
                 return (
                   <Pressable
                     key={co.id}
@@ -295,7 +308,9 @@ export default function Profile() {
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
                       Alert.alert(
                         `Switch to ${co.name}?`,
-                        "Your job list will reload to show only this company's work.",
+                        alert
+                          ? `${alert} waiting at ${co.name}. Your job list will reload to show only their work.`
+                          : "Your job list will reload to show only this company's work.",
                         [
                           { text: "Cancel", style: "cancel" },
                           { text: "Switch", onPress: () => switching.mutate(co.id) },
@@ -303,21 +318,31 @@ export default function Profile() {
                       );
                     }}
                     accessibilityRole="button"
-                    accessibilityLabel={`Switch to ${co.name}`}
+                    accessibilityLabel={
+                      alert ? `Switch to ${co.name}. ${alert} waiting.` : `Switch to ${co.name}`
+                    }
                     accessibilityState={{ selected: isActive }}
-                    style={[s.coRow, isActive && s.coRowActive]}
+                    style={[s.coRow, isActive && s.coRowActive, waiting && s.coRowWaiting]}
                   >
-                    <View style={s.coAvatar}>
-                      <Text style={s.coAvatarTxt}>{co.name?.[0]?.toUpperCase() ?? "?"}</Text>
+                    <View style={[s.coAvatar, waiting && s.coAvatarWaiting]}>
+                      <Text style={[s.coAvatarTxt, waiting && { color: C.red }]}>
+                        {co.name?.[0]?.toUpperCase() ?? "?"}
+                      </Text>
                     </View>
                     <View style={{ flex: 1, minWidth: 0 }}>
                       <Text style={s.coName} numberOfLines={1}>{co.name}</Text>
-                      <Text style={s.coRole}>
-                        {isActive ? "Current shift" : "Tap to switch"}
-                      </Text>
+                      {waiting ? (
+                        <CompanyAlertLine n={n} />
+                      ) : (
+                        <Text style={s.coRole}>
+                          {isActive ? "Current shift" : "Tap to switch"}
+                        </Text>
+                      )}
                     </View>
                     {switching.isPending && switching.variables === co.id ? (
                       <ActivityIndicator color={C.brand} size="small" />
+                    ) : waiting ? (
+                      <CompanyBadge count={n!.total} />
                     ) : isActive ? (
                       <View style={s.coDot} />
                     ) : null}
@@ -356,6 +381,8 @@ const s = StyleSheet.create({
     padding: 12,
   },
   coRowActive: { borderColor: C.brand, backgroundColor: "rgba(14,165,233,0.10)" },
+  coRowWaiting: { borderColor: C.red, backgroundColor: "rgba(239,68,68,0.08)" },
+  coAvatarWaiting: { backgroundColor: "rgba(239,68,68,0.16)" },
   coAvatar: {
     width: 38,
     height: 38,

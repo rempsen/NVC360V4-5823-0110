@@ -12,7 +12,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import Constants from "expo-constants";
 import { Buildings, CheckCircle, ArrowClockwise, EnvelopeSimple } from "phosphor-react-native";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getToken, authHeaders } from "../lib/auth";
 import {
   setActiveCompany,
@@ -20,8 +20,15 @@ import {
   type CompanyOption,
 } from "../lib/active-company";
 import { hasSeenOnboarding } from "../lib/onboarding";
+import {
+  fetchNotifySummary,
+  NOTIFY_SUMMARY_KEY,
+  companyCount,
+  type NotifySummary,
+} from "../lib/notify-summary";
 import { C } from "../lib/theme";
 import { Button } from "../components/ui";
+import { CompanyBadge, CompanyAlertLine, companyAlertText } from "../components/company-alert";
 
 const API = ((Constants.expoConfig?.extra?.apiUrl as string) ?? "").replace(/\/$/, "");
 
@@ -57,6 +64,16 @@ export default function PickCompany() {
   const [error, setError] = useState<string | null>(null);
   const [choosing, setChoosing] = useState<string | null>(null);
   const [acting, setActing] = useState<string | null>(null);
+
+  // Which of these companies is actually waiting on this tech? This is the
+  // whole reason the picker is more than a list of names: a tech opening the
+  // app needs to see that Bolt has sent a work order, not pick a company and
+  // hope. Company-agnostic, so it is safe to call before a company is chosen.
+  const notify = useQuery<NotifySummary>({
+    queryKey: NOTIFY_SUMMARY_KEY,
+    queryFn: fetchNotifySummary,
+    refetchInterval: 15_000,
+  });
 
   const proceed = useCallback(
     async (companyId: string) => {
@@ -314,27 +331,50 @@ export default function PickCompany() {
           {invites.length > 0 && <Text style={s.sectionLabel}>Your companies</Text>}
           {companies.map((co) => {
             const isCurrent = co.id === current;
+            const n = companyCount(notify.data, co.id);
+            const waiting = (n?.total ?? 0) > 0;
+            const alert = companyAlertText(n);
             return (
               <Pressable
                 key={co.id}
                 onPress={() => proceed(co.id)}
                 accessibilityRole="button"
-                accessibilityLabel={`Work for ${co.name} today`}
-                style={({ pressed }) => [s.card, pressed && s.cardPressed]}
+                accessibilityLabel={
+                  alert
+                    ? `Work for ${co.name} today. ${alert} waiting.`
+                    : `Work for ${co.name} today`
+                }
+                style={({ pressed }) => [
+                  s.card,
+                  // A red border, not just a bubble: the row itself has to read
+                  // as "this one needs you" at a glance across a list.
+                  waiting && s.cardWaiting,
+                  pressed && s.cardPressed,
+                ]}
               >
-                <View style={s.avatar}>
-                  <Text style={s.avatarTxt}>{co.name?.[0]?.toUpperCase() ?? "?"}</Text>
+                <View style={[s.avatar, waiting && s.avatarWaiting]}>
+                  <Text style={[s.avatarTxt, waiting && { color: C.red }]}>
+                    {co.name?.[0]?.toUpperCase() ?? "?"}
+                  </Text>
                 </View>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={s.cardName} numberOfLines={1}>
                     {co.name}
                   </Text>
-                  <Text style={s.cardRole}>
-                    {co.staffType === "driver" ? "Driver" : "Technician"}
-                    {isCurrent ? " · last used" : ""}
-                  </Text>
+                  {waiting ? (
+                    <CompanyAlertLine n={n} />
+                  ) : (
+                    <Text style={s.cardRole}>
+                      {co.staffType === "driver" ? "Driver" : "Technician"}
+                      {isCurrent ? " · last used" : ""}
+                    </Text>
+                  )}
                 </View>
-                {isCurrent && <CheckCircle color={C.brand} size={22} weight="fill" />}
+                {waiting ? (
+                  <CompanyBadge count={n!.total} />
+                ) : isCurrent ? (
+                  <CheckCircle color={C.brand} size={22} weight="fill" />
+                ) : null}
               </Pressable>
             );
           })}
@@ -371,6 +411,8 @@ const s = StyleSheet.create({
     padding: 16,
   },
   cardPressed: { opacity: 0.7, borderColor: C.brand },
+  cardWaiting: { borderColor: C.red, backgroundColor: "rgba(239,68,68,0.07)" },
+  avatarWaiting: { backgroundColor: "rgba(239,68,68,0.16)" },
   avatar: {
     width: 46,
     height: 46,

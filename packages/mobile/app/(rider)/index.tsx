@@ -5,11 +5,12 @@ import {
   StyleSheet,
   ScrollView,
   RefreshControl,
+  Pressable,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { MapPin, CaretRight, Clock, CurrencyDollar, CheckCircle } from "phosphor-react-native";
+import { MapPin, CaretRight, Clock, CurrencyDollar, CheckCircle, Buildings } from "phosphor-react-native";
 import { api } from "../../lib/api";
 import { authClient } from "../../lib/auth";
 import { C, fmtDate, money } from "../../lib/theme";
@@ -17,6 +18,8 @@ import { StatusBadge, Card, Button, FullLoader, Empty } from "../../components/u
 import Constants from "expo-constants";
 import { authHeaders } from "../../lib/auth";
 import { useCustomerNoun } from "../../lib/use-brand";
+import { useNotifySummary, NOTIFY_SUMMARY_KEY } from "../../lib/notify-summary";
+import { companyAlertText } from "../../components/company-alert";
 
 const API = ((Constants.expoConfig?.extra?.apiUrl as string) ?? "").replace(/\/$/, "");
 
@@ -53,12 +56,20 @@ export default function Jobs() {
     refetchInterval: 30000,
   });
 
+  // Accepting or declining is the action that CLEARS a pending-work-order
+  // badge, so both refresh the notification summary immediately instead of
+  // leaving a red number on a job the tech just dealt with for up to one poll.
+  const clearBadges = () => {
+    qc.invalidateQueries({ queryKey: ["bookings"] });
+    qc.invalidateQueries({ queryKey: NOTIFY_SUMMARY_KEY });
+  };
+
   const accept = useMutation({
     mutationFn: async (id: string) => {
       const res = await api.bookings[":id"].accept.$post({ param: { id } });
       if (!res.ok) throw new Error("Failed");
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["bookings"] }),
+    onSuccess: clearBadges,
   });
   const decline = useMutation({
     mutationFn: async (id: string) => {
@@ -68,12 +79,18 @@ export default function Jobs() {
       } as any);
       if (!res.ok) throw new Error("Failed");
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["bookings"] }),
+    onSuccess: clearBadges,
   });
+
+  // Work waiting at the tech's OTHER employer(s). The job list itself is
+  // tenant-scoped, so without this the only hint would be a number on the
+  // Profile tab with no explanation of what it means.
+  const notify = useNotifySummary();
 
   const onRefresh = useCallback(() => {
     refetch();
     qc.invalidateQueries({ queryKey: ["today-stats"] });
+    qc.invalidateQueries({ queryKey: NOTIFY_SUMMARY_KEY });
   }, [refetch, qc]);
 
   if (isLoading) return <FullLoader label="Loading your jobs…" />;
@@ -126,6 +143,34 @@ export default function Jobs() {
             </>
           )}
         </View>
+      )}
+
+      {notify.elsewhere.length > 0 && (
+        <Pressable
+          onPress={() => router.push("/(rider)/profile")}
+          accessibilityRole="button"
+          accessibilityLabel={`${notify.elsewhere
+            .map((x) => `${companyAlertText(x)} at ${x.company}`)
+            .join(", ")}. Opens your companies to switch.`}
+          style={({ pressed }) => [s.elsewhere, pressed && { opacity: 0.75 }]}
+        >
+          <View style={s.elsewhereIcon}>
+            <Buildings color={C.red} size={18} weight="fill" />
+          </View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={s.elsewhereTitle} numberOfLines={1}>
+              {notify.elsewhere.length === 1
+                ? `${notify.elsewhere[0]!.company} is waiting on you`
+                : `${notify.elsewhere.length} other companies are waiting on you`}
+            </Text>
+            <Text style={s.elsewhereSub} numberOfLines={1}>
+              {notify.elsewhere.length === 1
+                ? `${companyAlertText(notify.elsewhere[0]!)} · tap to switch`
+                : "Tap to see which and switch"}
+            </Text>
+          </View>
+          <CaretRight color={C.red} size={16} weight="bold" />
+        </Pressable>
       )}
 
       <ScrollView
@@ -280,6 +325,29 @@ const s = StyleSheet.create({
   statVal: { color: C.green, fontSize: 14, fontWeight: "800" },
   statLbl: { color: C.muted, fontSize: 11 },
   statDivider: { width: 1, height: 24, backgroundColor: C.border },
+  elsewhere: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: C.red,
+    backgroundColor: "rgba(239,68,68,0.10)",
+  },
+  elsewhereIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(239,68,68,0.16)",
+  },
+  elsewhereTitle: { color: C.text, fontSize: 14, fontWeight: "800" },
+  elsewhereSub: { color: C.red, fontSize: 12, fontWeight: "600", marginTop: 2 },
   scroll: { padding: 16, gap: 22, paddingBottom: 40 },
   section: { color: C.sub, fontSize: 13, fontWeight: "800", textTransform: "uppercase", letterSpacing: 1 },
   jobTop: { flexDirection: "row", alignItems: "flex-start", gap: 12 },

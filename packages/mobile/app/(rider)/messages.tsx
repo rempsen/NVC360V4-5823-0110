@@ -25,7 +25,7 @@ import {
 import { authHeaders } from "../../lib/auth";
 import { C } from "../../lib/theme";
 import { FullLoader } from "../../components/ui";
-import { setAppBadgeCount } from "../../lib/push";
+import { NOTIFY_SUMMARY_KEY } from "../../lib/notify-summary";
 import { useLiveMessageSignal } from "../../lib/live-messages";
 
 const API = ((Constants.expoConfig?.extra?.apiUrl as string) ?? "").replace(/\/$/, "");
@@ -97,9 +97,13 @@ export default function Messages() {
   // 5s poll. The GET no longer marks-as-read as a side effect (it used to,
   // which meant the app icon's unread badge and the poll were racing each
   // other, and reading a message on a backgrounded/foregrounded app could
-  // leave the badge stuck). Clearing the OS badge right here, right after a
-  // successful ack, makes it deterministic instead of waiting on the next
-  // poll cycle in the tab layout to notice the count dropped.
+  // leave the badge stuck).
+  //
+  // We refetch the notification summary rather than zeroing the OS badge
+  // directly: the icon badge now also counts work orders awaiting accept/
+  // decline and anything waiting at the tech's OTHER companies, so slamming it
+  // to 0 on reading a message would hide a live work order until the next poll.
+  // The tab layout sets the badge from the refreshed count.
   useFocusEffect(
     useCallback(() => {
       fetch(`${API}/api/messages/direct/mark-read`, {
@@ -107,8 +111,7 @@ export default function Messages() {
         headers: authHeaders(),
       })
         .then(() => {
-          qc.invalidateQueries({ queryKey: ["dispatch-unread"] });
-          setAppBadgeCount(0);
+          qc.invalidateQueries({ queryKey: NOTIFY_SUMMARY_KEY });
         })
         .catch(() => {});
       // eslint-disable-next-line react-hooks/exhaustive-deps
