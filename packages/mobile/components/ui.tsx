@@ -1,4 +1,7 @@
+import { useEffect, useRef, useState } from "react";
 import {
+  AccessibilityInfo,
+  Animated,
   View,
   Text,
   ActivityIndicator,
@@ -8,7 +11,7 @@ import {
   PressableProps,
 } from "react-native";
 import * as Haptics from "expo-haptics";
-import { C, STATUS, initials, assetUrl } from "../lib/theme";
+import { C, R, STATUS, initials, assetUrl } from "../lib/theme";
 
 export function StatusBadge({ status }: { status: string }) {
   const m = STATUS[status] ?? { label: status, color: C.sub, bg: C.bg3 };
@@ -172,6 +175,68 @@ export function FullLoader({ label }: { label?: string }) {
   );
 }
 
+/**
+ * Card skeletons for list screens.
+ *
+ * A centred spinner on a black screen tells a technician nothing except "wait",
+ * and on a slow LTE connection outside a customer's house it reads as a hung
+ * app. Skeleton cards in the real shape of the list keep the screen looking
+ * like the screen, and the content lands into a layout that is already there
+ * instead of replacing a spinner and jumping.
+ *
+ * Pulses via Animated (not reanimated) to stay dependency-free, and respects
+ * reduced-motion by simply sitting still at partial opacity.
+ */
+export function ListSkeleton({ rows = 3, height = 96 }: { rows?: number; height?: number }) {
+  const pulse = useRef(new Animated.Value(0.5)).current;
+  const [reduce, setReduce] = useState(false);
+
+  useEffect(() => {
+    AccessibilityInfo.isReduceMotionEnabled().then(setReduce).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (reduce) return;
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 720, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0.45, duration: 720, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse, reduce]);
+
+  return (
+    <View
+      accessible
+      accessibilityLabel="Loading"
+      accessibilityRole="progressbar"
+      style={{ gap: 12 }}
+    >
+      {Array.from({ length: rows }).map((_, i) => (
+        <Animated.View
+          key={i}
+          style={{
+            height,
+            borderRadius: R.card,
+            backgroundColor: C.card,
+            borderWidth: 1,
+            borderColor: C.border,
+            opacity: reduce ? 0.6 : pulse,
+            padding: 14,
+            gap: 10,
+          }}
+        >
+          <View style={{ height: 12, width: "55%", borderRadius: 6, backgroundColor: C.bg3 }} />
+          <View style={{ height: 10, width: "78%", borderRadius: 6, backgroundColor: C.bg3 }} />
+          <View style={{ height: 10, width: "38%", borderRadius: 6, backgroundColor: C.bg3 }} />
+        </Animated.View>
+      ))}
+    </View>
+  );
+}
+
 export function Empty({ icon, text, sub }: { icon?: React.ReactNode; text: string; sub?: string }) {
   return (
     <View style={s.empty}>
@@ -205,7 +270,7 @@ const s = StyleSheet.create({
   badgeText: { fontSize: 12, fontWeight: "700" },
   card: {
     backgroundColor: C.card,
-    borderRadius: 18,
+    borderRadius: R.card,
     borderWidth: 1,
     borderColor: C.border,
     padding: 16,
@@ -215,11 +280,11 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-    borderRadius: 14,
+    borderRadius: R.card,
     paddingVertical: 14,
     paddingHorizontal: 18,
   },
-  btnSmall: { paddingVertical: 9, paddingHorizontal: 14, borderRadius: 11 },
+  btnSmall: { paddingVertical: 9, paddingHorizontal: 14, borderRadius: R.control },
   btnText: { fontSize: 15, fontWeight: "700" },
   loader: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12, paddingVertical: 60 },
   loaderText: { color: C.sub, fontSize: 14 },

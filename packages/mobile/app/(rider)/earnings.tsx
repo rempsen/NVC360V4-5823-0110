@@ -4,7 +4,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
 import { TrendUp, CheckCircle, Receipt } from "phosphor-react-native";
 import { api } from "../../lib/api";
-import { C, money, fmtDate } from "../../lib/theme";
+import { C, R, money, fmtDate } from "../../lib/theme";
 import { Card, FullLoader, Empty, StatusBadge } from "../../components/ui";
 import { useJobNoun } from "../../lib/use-brand";
 
@@ -168,7 +168,7 @@ const s = StyleSheet.create({
   scroll: { padding: 16, paddingBottom: 40 },
   heroCard: {
     backgroundColor: C.brandDeep,
-    borderRadius: 22,
+    borderRadius: R.sheet,
     padding: 22,
     gap: 6,
   },
@@ -181,7 +181,7 @@ const s = StyleSheet.create({
     flexBasis: "47.5%",
     flexGrow: 1,
     backgroundColor: C.card,
-    borderRadius: 16,
+    borderRadius: R.card,
     borderWidth: 1,
     borderColor: C.border,
     padding: 16,

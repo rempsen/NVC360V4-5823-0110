@@ -9,6 +9,7 @@ import {
   StyleSheet,
 } from "react-native";
 import { Sentry } from "../lib/sentry";
+import { R } from "../lib/theme";
 
 interface Props {
   children: ReactNode;
@@ -288,7 +289,7 @@ const s = StyleSheet.create({
   // Collapsible error cards
   errorCard: {
     backgroundColor: "#111113",
-    borderRadius: 10,
+    borderRadius: R.control,
     marginBottom: 8,
     overflow: "hidden",
   },

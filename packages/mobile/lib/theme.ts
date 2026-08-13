@@ -23,6 +23,39 @@ export const C = {
   redBg: "rgba(239,68,68,0.14)",
 };
 
+/**
+ * Radius + spacing scale.
+ *
+ * The app had grown NINETEEN distinct borderRadius literals (3,4,5,8..22,999):
+ * a card was 13 on one screen and 15 on the next, buttons ranged 11-14. Nobody
+ * chose that -- it accumulated -- and it is exactly what makes an interface
+ * read as machine-assembled rather than designed. Same rule as the web console
+ * now uses, so the two halves of the product agree:
+ *
+ *   R.control   buttons, inputs, chips, small tiles
+ *   R.card      cards, panels, sheets
+ *   R.sheet     bottom sheets / modals (one step softer)
+ *   R.pill      pills, avatars, dots (anything fully round)
+ *
+ * S is an 8px-based spacing scale; use it instead of typing raw numbers so
+ * gutters stay consistent between screens.
+ */
+export const R = {
+  control: 12,
+  card: 16,
+  sheet: 22,
+  pill: 999,
+} as const;
+
+export const S = {
+  xs: 4,
+  sm: 8,
+  md: 12,
+  lg: 16,
+  xl: 24,
+  xxl: 32,
+} as const;
+
 export const STATUS: Record<string, { label: string; color: string; bg: string }> = {
   pending: { label: "Pending", color: "#f59e0b", bg: "rgba(245,158,11,0.14)" },
   confirmed: { label: "Confirmed", color: "#38bdf8", bg: "rgba(56,189,248,0.14)" },

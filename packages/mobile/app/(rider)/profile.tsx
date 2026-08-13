@@ -12,7 +12,7 @@ import { unregisterPushToken } from "../../lib/push";
 import { stopLocationSharing } from "../../lib/use-location-heartbeat";
 import { endAllLiveActivities } from "../../lib/useLiveActivity";
 import Constants from "expo-constants";
-import { C } from "../../lib/theme";
+import { C, R } from "../../lib/theme";
 import { Avatar, Card, Button, FullLoader, Row } from "../../components/ui";
 import { isBiometricAvailable, getLockPreference, setLockPreference, clearUnlockStamp } from "../../lib/biometric-lock";
 import { clearActiveCompany, getActiveCompany, setActiveCompany, type CompanyOption } from "../../lib/active-company";
@@ -375,7 +375,7 @@ const s = StyleSheet.create({
     alignItems: "center",
     gap: 12,
     backgroundColor: C.bg3,
-    borderRadius: 12,
+    borderRadius: R.control,
     borderWidth: 1,
     borderColor: C.border,
     padding: 12,
@@ -386,7 +386,7 @@ const s = StyleSheet.create({
   coAvatar: {
     width: 38,
     height: 38,
-    borderRadius: 11,
+    borderRadius: R.control,
     backgroundColor: C.bg2,
     alignItems: "center",
     justifyContent: "center",
@@ -403,7 +403,7 @@ const s = StyleSheet.create({
     alignItems: "center",
     gap: 8,
     backgroundColor: C.card,
-    borderRadius: 22,
+    borderRadius: R.sheet,
     borderWidth: 1,
     borderColor: C.border,
     paddingVertical: 26,
@@ -417,7 +417,7 @@ const s = StyleSheet.create({
     backgroundColor: C.brand,
     width: 30,
     height: 30,
-    borderRadius: 15,
+    borderRadius: R.card,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 3,

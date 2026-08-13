@@ -1,6 +1,7 @@
 import { Stack } from "expo-router";
 import { useEffect } from "react";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { StatusBar } from "expo-status-bar";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { OfflineBanner } from "../components/OfflineBanner";
@@ -45,6 +46,12 @@ function RootLayout() {
       >
         <SafeAreaProvider>
           <QueryClientProvider client={queryClient}>
+            {/* Every screen in this app is dark, so the clock/battery/signal
+                row must be light. app.json's userInterfaceStyle only sets the
+                default -- declaring it here means the bar is correct even on a
+                device whose system theme is light, which is what made the
+                status row unreadable on some testers' phones. */}
+            <StatusBar style="light" backgroundColor={C.bg} />
             <OfflineBanner />
             <Stack
               screenOptions={{

@@ -1,5 +1,5 @@
 import { View, Text, StyleSheet } from "react-native";
-import { C } from "../lib/theme";
+import { C, R } from "../lib/theme";
 import type { CompanyNotifications } from "../lib/notify-summary";
 
 /**
@@ -55,7 +55,7 @@ const s = StyleSheet.create({
   badge: {
     minWidth: 24,
     height: 24,
-    borderRadius: 12,
+    borderRadius: R.control,
     backgroundColor: C.red,
     alignItems: "center",
     justifyContent: "center",

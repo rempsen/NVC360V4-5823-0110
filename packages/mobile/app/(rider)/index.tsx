@@ -13,8 +13,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { MapPin, CaretRight, Clock, CurrencyDollar, CheckCircle, Buildings } from "phosphor-react-native";
 import { api } from "../../lib/api";
 import { authClient } from "../../lib/auth";
-import { C, fmtDate, money } from "../../lib/theme";
-import { StatusBadge, Card, Button, FullLoader, Empty } from "../../components/ui";
+import { C, R, fmtDate, money } from "../../lib/theme";
+import { StatusBadge, Card, Button, ListSkeleton, Empty } from "../../components/ui";
 import Constants from "expo-constants";
 import { authHeaders } from "../../lib/auth";
 import { useCustomerNoun } from "../../lib/use-brand";
@@ -93,7 +93,20 @@ export default function Jobs() {
     qc.invalidateQueries({ queryKey: NOTIFY_SUMMARY_KEY });
   }, [refetch, qc]);
 
-  if (isLoading) return <FullLoader label="Loading your jobs…" />;
+  // Skeletons rather than a spinner: this is the first screen of the shift and
+  // the one most often opened on bad signal, so it should look like the job
+  // list arriving, not like the app hanging.
+  if (isLoading)
+    return (
+      <SafeAreaView style={s.safe} edges={["top", "left", "right"]}>
+        <View style={s.header}>
+          <Text style={s.hi}>Loading…</Text>
+        </View>
+        <View style={{ padding: 16, gap: 12 }}>
+          <ListSkeleton rows={3} />
+        </View>
+      </SafeAreaView>
+    );
 
   const bookings = data ?? [];
   const offered = bookings.filter((b) => b.assignStatus === "offered" && b.status !== "completed");
@@ -298,7 +311,7 @@ const s = StyleSheet.create({
   date: { color: C.sub, fontSize: 13, marginTop: 2 },
   countPill: {
     backgroundColor: C.bg3,
-    borderRadius: 14,
+    borderRadius: R.card,
     paddingHorizontal: 16,
     paddingVertical: 8,
     alignItems: "center",
@@ -314,7 +327,7 @@ const s = StyleSheet.create({
     marginHorizontal: 16,
     marginBottom: 8,
     backgroundColor: C.card,
-    borderRadius: 14,
+    borderRadius: R.card,
     borderWidth: 1,
     borderColor: C.border,
     paddingVertical: 10,
@@ -333,7 +346,7 @@ const s = StyleSheet.create({
     marginBottom: 8,
     paddingVertical: 12,
     paddingHorizontal: 14,
-    borderRadius: 14,
+    borderRadius: R.card,
     borderWidth: 1,
     borderColor: C.red,
     backgroundColor: "rgba(239,68,68,0.10)",
@@ -341,7 +354,7 @@ const s = StyleSheet.create({
   elsewhereIcon: {
     width: 34,
     height: 34,
-    borderRadius: 10,
+    borderRadius: R.control,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(239,68,68,0.16)",

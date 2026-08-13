@@ -22,6 +22,7 @@ import {
   ActivityIndicator,
   LayoutChangeEvent,
 } from "react-native";
+import { R } from "../lib/theme";
 
 type Point = [number, number];
 
@@ -161,7 +162,7 @@ export function SignaturePad({
 const st = StyleSheet.create({
   pad: {
     height: PAD_HEIGHT,
-    borderRadius: 12,
+    borderRadius: R.control,
     borderWidth: 1,
     backgroundColor: "#ffffff",
     overflow: "hidden",
@@ -171,7 +172,7 @@ const st = StyleSheet.create({
   hint: { color: "#94a3b8", fontSize: 13, fontWeight: "600" },
   input: {
     borderWidth: 1,
-    borderRadius: 10,
+    borderRadius: R.control,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 14,
@@ -179,7 +180,7 @@ const st = StyleSheet.create({
   btn: {
     paddingVertical: 12,
     paddingHorizontal: 16,
-    borderRadius: 10,
+    borderRadius: R.control,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",

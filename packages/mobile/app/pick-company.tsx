@@ -26,7 +26,7 @@ import {
   companyCount,
   type NotifySummary,
 } from "../lib/notify-summary";
-import { C } from "../lib/theme";
+import { C, R } from "../lib/theme";
 import { Button } from "../components/ui";
 import { CompanyBadge, CompanyAlertLine, companyAlertText } from "../components/company-alert";
 
@@ -392,7 +392,7 @@ const s = StyleSheet.create({
   iconWrap: {
     width: 68,
     height: 68,
-    borderRadius: 20,
+    borderRadius: R.sheet,
     backgroundColor: C.bg3,
     alignItems: "center",
     justifyContent: "center",
@@ -405,7 +405,7 @@ const s = StyleSheet.create({
     alignItems: "center",
     gap: 14,
     backgroundColor: C.bg2,
-    borderRadius: 16,
+    borderRadius: R.card,
     borderWidth: 1,
     borderColor: C.border,
     padding: 16,
@@ -416,7 +416,7 @@ const s = StyleSheet.create({
   avatar: {
     width: 46,
     height: 46,
-    borderRadius: 14,
+    borderRadius: R.card,
     backgroundColor: C.bg3,
     alignItems: "center",
     justifyContent: "center",
@@ -431,7 +431,7 @@ const s = StyleSheet.create({
     marginTop: 14,
     paddingVertical: 10,
     paddingHorizontal: 16,
-    borderRadius: 12,
+    borderRadius: R.control,
     borderWidth: 1,
     borderColor: C.border,
   },
@@ -449,7 +449,7 @@ const s = StyleSheet.create({
   declineBtn: {
     flex: 1,
     paddingVertical: 11,
-    borderRadius: 12,
+    borderRadius: R.control,
     borderWidth: 1,
     borderColor: C.border,
     alignItems: "center",
@@ -458,7 +458,7 @@ const s = StyleSheet.create({
   acceptBtn: {
     flex: 1,
     paddingVertical: 11,
-    borderRadius: 12,
+    borderRadius: R.control,
     backgroundColor: C.brand,
     alignItems: "center",
   },

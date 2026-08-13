@@ -23,7 +23,7 @@ import {
   Wrench,
 } from "phosphor-react-native";
 import { authHeaders } from "../../lib/auth";
-import { C } from "../../lib/theme";
+import { C, R } from "../../lib/theme";
 import { FullLoader } from "../../components/ui";
 import { NOTIFY_SUMMARY_KEY } from "../../lib/notify-summary";
 import { useLiveMessageSignal } from "../../lib/live-messages";
@@ -286,7 +286,7 @@ const s = StyleSheet.create({
   headIcon: {
     width: 44,
     height: 44,
-    borderRadius: 14,
+    borderRadius: R.card,
     backgroundColor: "rgba(34,211,238,0.12)",
     alignItems: "center",
     justifyContent: "center",
@@ -298,7 +298,7 @@ const s = StyleSheet.create({
     backgroundColor: "rgba(14,165,233,0.06)",
     borderWidth: 1,
     borderColor: "rgba(14,165,233,0.25)",
-    borderRadius: 16,
+    borderRadius: R.card,
     padding: 12,
     gap: 10,
   },
@@ -314,7 +314,7 @@ const s = StyleSheet.create({
     alignItems: "center",
     gap: 12,
     backgroundColor: C.card,
-    borderRadius: 12,
+    borderRadius: R.control,
     borderWidth: 1,
     borderColor: C.border,
     padding: 12,
@@ -322,7 +322,7 @@ const s = StyleSheet.create({
   offerIcon: {
     width: 38,
     height: 38,
-    borderRadius: 19,
+    borderRadius: R.sheet,
     backgroundColor: C.bg3,
     alignItems: "center",
     justifyContent: "center",
@@ -336,7 +336,7 @@ const s = StyleSheet.create({
     backgroundColor: "rgba(34,211,238,0.08)",
     borderWidth: 1,
     borderColor: "rgba(34,211,238,0.25)",
-    borderRadius: 12,
+    borderRadius: R.control,
     paddingHorizontal: 12,
     paddingVertical: 11,
   },
@@ -344,7 +344,7 @@ const s = StyleSheet.create({
   empty: { alignItems: "center", gap: 8, paddingVertical: 60 },
   emptyTxt: { color: C.text, fontSize: 16, fontWeight: "700" },
   emptySub: { color: C.muted, fontSize: 13, textAlign: "center", paddingHorizontal: 30 },
-  bubble: { maxWidth: "82%", borderRadius: 16, paddingHorizontal: 14, paddingVertical: 10 },
+  bubble: { maxWidth: "82%", borderRadius: R.card, paddingHorizontal: 14, paddingVertical: 10 },
   bubbleMine: { backgroundColor: C.brand, alignSelf: "flex-end" },
   bubbleThem: {
     backgroundColor: C.bg3,
@@ -371,7 +371,7 @@ const s = StyleSheet.create({
     backgroundColor: C.bg3,
     borderWidth: 1,
     borderColor: C.border,
-    borderRadius: 14,
+    borderRadius: R.card,
     paddingHorizontal: 16,
     paddingVertical: 12,
     color: C.text,
@@ -381,7 +381,7 @@ const s = StyleSheet.create({
   sendBtn: {
     width: 48,
     height: 48,
-    borderRadius: 14,
+    borderRadius: R.card,
     backgroundColor: C.brand,
     alignItems: "center",
     justifyContent: "center",

@@ -15,7 +15,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import Constants from "expo-constants";
 import { authClient, captureToken } from "../lib/auth";
-import { C } from "../lib/theme";
+import { C, R } from "../lib/theme";
 import { Button } from "../components/ui";
 
 const API = ((Constants.expoConfig?.extra?.apiUrl as string) ?? "").replace(/\/$/, "");
@@ -137,7 +137,7 @@ const s = StyleSheet.create({
   sub: { color: C.sub, fontSize: 14, textAlign: "center", maxWidth: 280 },
   form: {
     backgroundColor: C.card,
-    borderRadius: 22,
+    borderRadius: R.sheet,
     borderWidth: 1,
     borderColor: C.border,
     padding: 22,
@@ -147,7 +147,7 @@ const s = StyleSheet.create({
     backgroundColor: C.bg3,
     borderWidth: 1,
     borderColor: C.border,
-    borderRadius: 13,
+    borderRadius: R.control,
     paddingHorizontal: 15,
     paddingVertical: 14,
     color: C.text,

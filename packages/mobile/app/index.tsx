@@ -3,7 +3,7 @@ import { View, Text, ActivityIndicator, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import { Fingerprint } from "phosphor-react-native";
 import { authClient } from "../lib/auth";
-import { C } from "../lib/theme";
+import { C, R } from "../lib/theme";
 import { Button } from "../components/ui";
 import { shouldPromptBiometric, markUnlockedNow, LocalAuthentication } from "../lib/biometric-lock";
 import { endAllLiveActivities } from "../lib/useLiveActivity";
@@ -104,7 +104,7 @@ const s = StyleSheet.create({
   iconWrap: {
     width: 76,
     height: 76,
-    borderRadius: 22,
+    borderRadius: R.sheet,
     backgroundColor: C.bg3,
     alignItems: "center",
     justifyContent: "center",

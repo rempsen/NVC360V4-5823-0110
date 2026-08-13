@@ -2,7 +2,7 @@ import { View, Text, StyleSheet, ScrollView } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { MapPinLine, BellRinging, Camera } from "phosphor-react-native";
-import { C } from "../lib/theme";
+import { C, R } from "../lib/theme";
 import { Button } from "../components/ui";
 import { markOnboardingSeen } from "../lib/onboarding";
 
@@ -90,7 +90,7 @@ const s = StyleSheet.create({
   iconWrap: {
     width: 48,
     height: 48,
-    borderRadius: 14,
+    borderRadius: R.card,
     backgroundColor: C.bg3,
     alignItems: "center",
     justifyContent: "center",
