@@ -414,9 +414,13 @@ export const bookingsRoutes = new Hono()
           200,
         );
       }
-      where = eq(schema.bookings.riderId, rp.id);
+      // isNull(deletedAt) matters as much here as it does for admins: without
+      // it a soft-deleted work order stayed in the tech's list forever and was
+      // counted in their Earnings history (found live — one deleted job was
+      // padding a driver's completed-jobs list).
+      where = and(eq(schema.bookings.riderId, rp.id), isNull(schema.bookings.deletedAt));
     } else {
-      where = eq(schema.bookings.customerId, u.id);
+      where = and(eq(schema.bookings.customerId, u.id), isNull(schema.bookings.deletedAt));
     }
 
     const scoped = t.scope(schema.bookings, where);

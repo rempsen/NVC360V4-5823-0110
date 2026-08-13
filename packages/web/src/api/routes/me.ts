@@ -256,6 +256,224 @@ export const meRoutes = new Hono()
   })
 
   /**
+   * "What have I earned, everywhere I work?"
+   *
+   * Company-agnostic on purpose, like `/me/notifications`. Every OTHER endpoint
+   * in the app is tenant-scoped to the company in `X-Company-Id`, which meant a
+   * contract tech on two rosters saw only the current shift's completed jobs on
+   * the Earnings screen — and with no company shown anywhere on the screen, the
+   * jobs that WERE listed looked like they belonged to whichever company the
+   * Profile screen happened to be showing. A driver's own work history is theirs
+   * regardless of who dispatched it, so this returns all of it, with each job,
+   * payout and rating attributed to the company it came from.
+   *
+   * Safety: exactly the same shape of guarantee as `/me/notifications` — it
+   * fans out over the CALLER'S OWN memberships only, never takes a userId or a
+   * company from the request, and ignores `X-Company-Id` entirely. So it cannot
+   * be used to read across tenants; it can only read the caller's own rows in
+   * the tenants they already belong to. Rider rows are per (user, company), so
+   * each company's bookings are matched to that company's OWN rider id.
+   *
+   * Ratings and payouts are set/issued by each employer separately, so there is
+   * no meaningful blended number: both are returned per company and the app
+   * shows them that way.
+   */
+  .get("/earnings", requireAuth, async (c) => {
+    const me = c.get("user") as unknown as SessionUser;
+
+    /** Ceiling on the returned history. A long-tenured tech across several
+     *  rosters could otherwise pull thousands of rows onto a phone. Newest
+     *  first, so the cap trims the oldest history, and `truncated` lets the
+     *  client say so rather than silently under-reporting. */
+    const MAX_JOBS = 500;
+
+    const memberships = await loadMemberships(me.id);
+    // Superadmins are platform operators with no rider identity to pay.
+    if (memberships.length === 0 || isSuperadmin(me.role)) {
+      return c.json({
+        companies: [],
+        jobs: [],
+        payouts: [],
+        totals: { gross: 0, weekGross: 0, weekJobs: 0, jobsCount: 0, paidNet: 0 },
+        truncated: false,
+      });
+    }
+
+    const coRows = await db
+      .select()
+      .from(schema.companies)
+      .where(
+        inArray(
+          schema.companies.id,
+          memberships.map((m) => m.companyId),
+        ),
+      );
+    const byId = new Map(coRows.map((r) => [r.id, r]));
+    // A suspended tenant's history is not something the tech can act on, and
+    // its rows may be mid-teardown — same exclusion as the badge endpoint.
+    const usable = memberships.filter((m) => byId.get(m.companyId)?.status !== "suspended");
+
+    type JobRow = {
+      id: string;
+      companyId: string;
+      company: string;
+      title: string;
+      service: string;
+      customerName: string;
+      scheduledAt: number | null;
+      finishedAt: number | null;
+      price: number;
+    };
+    type PayoutRow = {
+      id: string;
+      companyId: string;
+      company: string;
+      periodStart: number | null;
+      periodEnd: number | null;
+      jobsCount: number;
+      gross: number;
+      net: number;
+      status: string;
+    };
+
+    const perCompany = await Promise.all(
+      usable.map(async (m) => {
+        const companyName = byId.get(m.companyId)?.name ?? m.companyId;
+        const empty = {
+          companyId: m.companyId,
+          company: companyName,
+          rating: null as number | null,
+          jobsCount: 0,
+          gross: 0,
+          jobs: [] as JobRow[],
+          payouts: [] as PayoutRow[],
+        };
+        try {
+          const t = tdb(m.companyId);
+          // Per (user, company) rider row. No rider row = they hold a
+          // non-field role here (office staff at one company, tech at
+          // another), so there is nothing to pay them for.
+          const rider = await t.selectOne(schema.riders, eq(schema.riders.userId, me.id));
+          if (!rider) return empty;
+
+          const completed = await t.select(
+            schema.bookings,
+            and(
+              eq(schema.bookings.riderId, rider.id),
+              eq(schema.bookings.status, "completed"),
+              isNull(schema.bookings.deletedAt),
+            ),
+          );
+          const svcIds = [...new Set(completed.map((b) => b.serviceId).filter((v): v is string => !!v))];
+          const svcMap = new Map<string, string>();
+          if (svcIds.length) {
+            const svcs = await t
+              .select(schema.services, inArray(schema.services.id, svcIds))
+              .catch(() => []);
+            svcs.forEach((s) => svcMap.set(s.id, s.name));
+          }
+          // `bookings` has no customer name column — it lives on the GLOBAL
+          // `user` table. One batched query by explicit id list (same pattern
+          // as bookings.ts enrichMany), never a per-row lookup.
+          const custIds = [...new Set(completed.map((b) => b.customerId).filter((v): v is string => !!v))];
+          const custMap = new Map<string, string>();
+          if (custIds.length) {
+            const us = await db
+              .select()
+              .from(schema.user)
+              .where(inArray(schema.user.id, custIds))
+              .catch(() => []);
+            us.forEach((u) => custMap.set(u.id, u.name ?? ""));
+          }
+
+          const jobs: JobRow[] = completed.map((b) => ({
+            id: b.id,
+            companyId: m.companyId,
+            company: companyName,
+            title: b.title ?? "",
+            service: (b.serviceId ? svcMap.get(b.serviceId) : "") ?? "",
+            customerName: (b.customerId ? custMap.get(b.customerId) : "") ?? "",
+            scheduledAt: b.scheduledAt ? Number(b.scheduledAt) : null,
+            finishedAt: b.finishedAt ? Number(b.finishedAt) : null,
+            price: Number(b.price ?? 0),
+          }));
+
+          const payoutRows = await t
+            .select(schema.payouts, eq(schema.payouts.riderId, rider.id))
+            .catch(() => []);
+          const payouts: PayoutRow[] = payoutRows.map((p) => ({
+            id: p.id,
+            companyId: m.companyId,
+            company: companyName,
+            periodStart: p.periodStart ? Number(p.periodStart) : null,
+            periodEnd: p.periodEnd ? Number(p.periodEnd) : null,
+            jobsCount: Number(p.jobsCount ?? 0),
+            gross: Number(p.gross ?? 0),
+            net: Number(p.net ?? 0),
+            status: p.status,
+          }));
+
+          return {
+            companyId: m.companyId,
+            company: companyName,
+            // Each employer rates independently — never blend these.
+            rating: rider.rating == null ? null : Number(rider.rating),
+            jobsCount: jobs.length,
+            gross: jobs.reduce((s, j) => s + j.price, 0),
+            jobs,
+            payouts,
+          };
+        } catch (err) {
+          // One broken tenant must not blank out the whole screen — report it
+          // as empty and keep the other companies accurate.
+          console.error(`[me/earnings] company ${m.companyId} failed`, err);
+          return empty;
+        }
+      }),
+    );
+
+    const allJobs = perCompany.flatMap((x) => x.jobs);
+    allJobs.sort(
+      (a, b) => (b.finishedAt ?? b.scheduledAt ?? 0) - (a.finishedAt ?? a.scheduledAt ?? 0),
+    );
+    const truncated = allJobs.length > MAX_JOBS;
+    const jobs = truncated ? allJobs.slice(0, MAX_JOBS) : allJobs;
+
+    const allPayouts = perCompany.flatMap((x) => x.payouts);
+    allPayouts.sort((a, b) => (b.periodEnd ?? 0) - (a.periodEnd ?? 0));
+
+    // Totals are computed over the FULL history, not the capped page, so the
+    // headline numbers stay correct even when the list is trimmed.
+    const weekAgo = Date.now() - 7 * 86_400_000;
+    const inWeek = allJobs.filter((j) => (j.finishedAt ?? j.scheduledAt ?? 0) >= weekAgo);
+
+    return c.json({
+      companies: perCompany
+        .map(({ companyId, company, rating, jobsCount, gross }) => ({
+          companyId,
+          company,
+          rating,
+          jobsCount,
+          gross: +gross.toFixed(2),
+        }))
+        .sort((a, b) => a.company.localeCompare(b.company)),
+      jobs,
+      payouts: allPayouts,
+      totals: {
+        gross: +allJobs.reduce((s, j) => s + j.price, 0).toFixed(2),
+        weekGross: +inWeek.reduce((s, j) => s + j.price, 0).toFixed(2),
+        weekJobs: inWeek.length,
+        jobsCount: allJobs.length,
+        paidNet: +allPayouts
+          .filter((p) => p.status === "paid")
+          .reduce((s, p) => s + p.net, 0)
+          .toFixed(2),
+      },
+      truncated,
+    });
+  })
+
+  /**
    * Set the person's DEFAULT company — the one they land on next time they sign
    * in. Per-request switching happens via the X-Company-Id header; this just
    * makes the choice sticky.

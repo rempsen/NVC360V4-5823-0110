@@ -48,17 +48,34 @@ export function getActiveCompany(): string {
   }
 }
 
+/**
+ * Write the active company — and VERIFY it landed, throwing if it didn't.
+ *
+ * This used to swallow every failure. Because the caller (the company switcher
+ * in app/(rider)/profile.tsx) sets its local UI state on success, a Keychain
+ * write that silently failed left the app *claiming* to be on company B while
+ * every request still carried company A's id — the exact "Profile says NVC 360
+ * but I'm seeing BMD Materials data" mismatch Dan hit. A switch that can't be
+ * persisted has to surface, so the mutation's onError Alert fires and the tech
+ * knows to retry instead of trusting a lie.
+ */
 export async function setActiveCompany(companyId: string): Promise<void> {
   try {
     await SecureStore.setItemAsync(KEY, companyId);
-  } catch {
+  } catch (err) {
     if (isWeb) {
-      try {
-        localStorage.setItem(KEY, companyId);
-      } catch {
-        /* best-effort */
-      }
+      // On web the Keychain shim can be unavailable; localStorage is the real
+      // store there, so a successful fallback write is not a failure.
+      localStorage.setItem(KEY, companyId);
+    } else {
+      throw err instanceof Error ? err : new Error("Could not save active company");
     }
+  }
+  // Read back through the same sync path the request headers use. If the store
+  // accepted the write but headers would still send the old id, that is still
+  // a failed switch as far as the driver is concerned.
+  if (getActiveCompany() !== companyId) {
+    throw new Error("Active company did not persist");
   }
 }
 
