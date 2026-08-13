@@ -155,7 +155,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
       <>
         {groups.map((g) => (
           <div key={g.heading} className="mb-3">
-            <p className="px-3 pb-1.5 pt-3 text-[9px] font-bold uppercase tracking-[0.12em] text-slate-600/80">
+            <p className="px-3 pb-1.5 pt-3 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-600/80">
               {g.heading}
             </p>
             <div className="space-y-px">
@@ -225,7 +225,10 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
           <Logo to="/admin" />
         </div>
         <TenantSwitcher />
-        <nav className="flex-1 overflow-y-auto p-3">
+        {/* nvc-fade-b: the nav list is taller than the viewport on a laptop, so
+            without a fade the last visible row is sliced clean in half and the
+            list reads as broken rather than scrollable. */}
+        <nav className="nvc-fade-b flex-1 overflow-y-auto p-3 pb-6">
           <NavLinks />
         </nav>
         <UserFooter />
@@ -265,7 +268,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
               </button>
             </div>
             <TenantSwitcher />
-            <nav className="flex-1 overflow-y-auto p-3">
+            <nav className="nvc-fade-b flex-1 overflow-y-auto p-3 pb-6">
               <NavLinks />
             </nav>
             <UserFooter />

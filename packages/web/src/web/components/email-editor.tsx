@@ -296,7 +296,7 @@ function HeaderLogoPanel({ onChange }: { onChange: () => void }) {
       </p>
       <div className="flex items-center gap-2 rounded-lg border border-white/5 bg-ink p-2">
         <div className="grid h-11 w-16 shrink-0 place-items-center rounded-md bg-white/90 p-1">
-          {logo ? <img src={logo} alt="header logo" className="max-h-9 max-w-full object-contain" /> : <span className="text-[9px] text-slate-400">None</span>}
+          {logo ? <img src={logo} alt="header logo" className="max-h-9 max-w-full object-contain" /> : <span className="text-[10px] text-slate-400">None</span>}
         </div>
         <div className="flex-1 space-y-1">
           <button onClick={() => fileRef.current?.click()} disabled={uploading} className="w-full rounded-md bg-brand px-2 py-1.5 text-[11px] font-bold text-white hover:bg-brand-deep disabled:opacity-50">

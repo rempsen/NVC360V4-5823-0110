@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import { apiHeaders } from "../../lib/api";
 import { useWorkerNoun, useCustomerNoun, useJobNoun } from "../../lib/use-brand";
+import { EmptyState } from "../../components/empty-state";
 
 type Thread = {
   key: string;
@@ -283,10 +284,19 @@ export default function InboxPage() {
                 <Loader2 className="h-5 w-5 animate-spin text-slate-600" />
               </div>
             ) : visible.length === 0 ? (
-              <div className="px-4 py-16 text-center text-sm text-slate-600">
-                <MessageSquare className="mx-auto mb-2 h-6 w-6 opacity-40" />
-                {search || filter !== "all" ? "No conversations match." : "No conversations yet."}
-              </div>
+              search || filter !== "all" ? (
+                <EmptyState
+                  icon={MessageSquare}
+                  title="No conversations match"
+                  hint="Try a different search term, or switch the filter back to All."
+                />
+              ) : (
+                <EmptyState
+                  icon={MessageSquare}
+                  title="No conversations yet"
+                  hint="Client replies and technician messages land here as soon as someone writes in."
+                />
+              )
             ) : (
               visible.map((t) => {
                 const Meta = KIND_META[t.kind];

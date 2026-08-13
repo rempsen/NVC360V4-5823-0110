@@ -18,10 +18,24 @@
 }
 
 @theme inline {
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
+  /* Radius scale, deliberately only TWO values plus pills.
+     The console had grown five (10/12/14/18/pill): the same visual object -- a
+     card -- was rounded-xl in one module and rounded-2xl in the next, which is
+     the fastest way to make a UI read as machine-assembled. Collapsed to a
+     rule anyone can follow without looking it up:
+
+       controls (buttons, inputs, chips, cells) -> 10px  (sm, md)
+       containers (cards, panels, modals)       -> 14px  (lg, xl, 2xl)
+       pills / avatars                          -> full
+
+     Mapping the tokens rather than rewriting 700+ class names keeps this a
+     one-file change and means the next `rounded-2xl` someone types is already
+     correct. */
+  --radius-sm: 0.625rem;
+  --radius-md: 0.625rem;
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --radius-xl: var(--radius);
+  --radius-2xl: var(--radius);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -281,5 +295,108 @@
     width: 44px;
     height: 44px;
     line-height: 44px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Scrollbars.
+   The console is a two-pane app: the sidebar nav scrolls and the main column
+   scrolls. Both were rendering the OS default bar -- a 15px light-grey track
+   sitting directly on a #070b12 surface -- which was the single loudest
+   "unfinished" tell on every page. Thin, dark, brand-tinted, and only visible
+   on hover of the scrolling element.
+
+   `scrollbar-gutter: stable` matters more than it looks: without it the main
+   column's content shifts horizontally the moment a list grows past one
+   viewport, so navigating between a short and a long page nudged the whole
+   layout sideways.
+--------------------------------------------------------------------------- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.22) transparent;
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.18);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*:hover::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.32); background-clip: content-box; }
+*::-webkit-scrollbar-thumb:hover { background: rgba(14, 165, 233, 0.55); background-clip: content-box; }
+*::-webkit-scrollbar-corner { background: transparent; }
+/* .no-scrollbar (declared above) must still win over the global rule. */
+.no-scrollbar::-webkit-scrollbar { display: none; width: 0; height: 0; }
+.no-scrollbar { scrollbar-width: none; }
+
+main, .nvc-scroll-y { scrollbar-gutter: stable; }
+
+/* ---------------------------------------------------------------------------
+   Focus.
+   Keyboard focus was falling back to the browser's default outline, which on a
+   dark surface is a faint 1px ring that effectively disappears -- so tabbing
+   through the console was invisible. One branded ring, everywhere, and only for
+   keyboard users (:focus-visible) so mouse clicks stay quiet.
+--------------------------------------------------------------------------- */
+:focus-visible {
+  outline: 2px solid rgba(14, 165, 233, 0.9);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible,
+[role="tab"]:focus-visible,
+summary:focus-visible {
+  outline: 2px solid rgba(14, 165, 233, 0.9);
+  outline-offset: 2px;
+}
+/* Inputs read better with a filled ring than an offset outline, since they
+   already have a visible border to anchor against. */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  border-color: rgba(14, 165, 233, 0.75);
+  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.18);
+}
+
+/* ---------------------------------------------------------------------------
+   Scroll affordances + interaction feel.
+--------------------------------------------------------------------------- */
+/* A scrollable list that ends flush against a container edge looks truncated,
+   not scrollable -- the sidebar nav was clipping "Maintenance Plans" mid-row
+   with no hint there was more below. Fade the last 24px out instead. */
+.nvc-fade-b {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent 100%);
+}
+
+/* Sticky table headers: long operational lists (work orders, clients, techs)
+   lose their column meaning the moment you scroll. */
+/* Only sticks where the table is actually a capped scroll container (lg+);
+   below that the header is just a normal row. */
+@media (min-width: 1024px) {
+.nvc-thead-sticky th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: color-mix(in srgb, var(--card) 92%, transparent);
+  backdrop-filter: blur(8px);
+}
+}
+
+/* Rows are clickable across the operations modules; give them the same hover
+   everywhere instead of per-page one-offs. */
+.nvc-row-hover tbody tr { transition: background-color 120ms ease; }
+.nvc-row-hover tbody tr:hover { background: rgba(255, 255, 255, 0.028); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

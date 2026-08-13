@@ -8,10 +8,12 @@ import { PageWrap, StatusBadge } from "../../components/brand";
 import { PageHead } from "./shell";
 import { PRIORITY_META } from "../../lib/utils";
 import { WorkOrderModal } from "../../components/work-order-modal";
+import { EmptyState } from "../../components/empty-state";
 import {
   Sparkles,
   MapPin,
   GripVertical,
+  CheckCircle2,
   Inbox,
   Pencil,
   Trash2,
@@ -392,7 +394,7 @@ export default function SchedulerPage() {
                       <div className="mt-1 flex flex-wrap items-center gap-1">
                         {b.priority && (
                           <span
-                            className="inline-block rounded-full px-1.5 py-0.5 text-[9px] font-bold"
+                            className="inline-block rounded-full px-1.5 py-0.5 text-[10px] font-bold"
                             style={{
                               color: PRIORITY_META[b.priority]?.color,
                               background: `${PRIORITY_META[b.priority]?.color}22`,
@@ -402,12 +404,12 @@ export default function SchedulerPage() {
                           </span>
                         )}
                         {!b.scheduledAt && (
-                          <span className="inline-block rounded-full bg-amber-warn/15 px-1.5 py-0.5 text-[9px] font-bold text-amber-warn">
+                          <span className="inline-block rounded-full bg-amber-warn/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-warn">
                             No date
                           </span>
                         )}
                         {!b.riderId && (
-                          <span className="inline-block rounded-full bg-brand/15 px-1.5 py-0.5 text-[9px] font-bold text-brand">
+                          <span className="inline-block rounded-full bg-brand/15 px-1.5 py-0.5 text-[10px] font-bold text-brand">
                             Unassigned
                           </span>
                         )}
@@ -728,9 +730,15 @@ export default function SchedulerPage() {
           </div>
           <div className="space-y-2 p-3">
             {unassigned.length === 0 ? (
-              <p className="py-8 text-center text-sm text-slate-500">
-                All work orders dispatched
-              </p>
+              // tone="good": an empty dispatch queue is the goal, not missing
+              // data, and it should feel like it.
+              <EmptyState
+                compact
+                tone="good"
+                icon={CheckCircle2}
+                title="All dispatched"
+                hint="Nothing is waiting for a technician right now."
+              />
             ) : (
               unassigned.map((b) => (
                 <div
@@ -767,7 +775,7 @@ export default function SchedulerPage() {
                         </p>
                         {b.priority && (
                           <span
-                            className="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold"
+                            className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold"
                             style={{
                               color: PRIORITY_META[b.priority]?.color,
                               background: `${PRIORITY_META[b.priority]?.color}22`,
@@ -777,7 +785,7 @@ export default function SchedulerPage() {
                           </span>
                         )}
                         {(b as any).requiredSkillClass && (
-                          <span className="shrink-0 rounded-full bg-brand/20 px-1.5 py-0.5 text-[9px] font-bold text-brand">
+                          <span className="shrink-0 rounded-full bg-brand/20 px-1.5 py-0.5 text-[10px] font-bold text-brand">
                             {(b as any).requiredSkillClass}
                           </span>
                         )}
@@ -789,7 +797,7 @@ export default function SchedulerPage() {
                       {(b as any).requiredSkills && (
                         <div className="mt-1 flex flex-wrap gap-1">
                           {((b as any).requiredSkills as string).split(",").filter(Boolean).map((sk: string) => (
-                            <span key={sk} className="rounded-full bg-cyan-glow/10 px-1.5 py-0.5 text-[9px] font-semibold text-cyan-glow">{sk}</span>
+                            <span key={sk} className="rounded-full bg-cyan-glow/10 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-glow">{sk}</span>
                           ))}
                         </div>
                       )}
@@ -860,10 +868,10 @@ export default function SchedulerPage() {
                                     photoUrl={(t as any).photoUrl}
                                     color={t.color}
                                     className="h-5 w-5"
-                                    textClassName="text-[9px]"
+                                    textClassName="text-[10px]"
                                   />
                                   <span className="font-medium text-slate-200">{t.name}</span>
-                                  {t.skillClass && <span className={`rounded-full px-1 py-0.5 text-[9px] font-semibold ${!dimmed ? "bg-brand/20 text-brand" : "bg-white/10 text-slate-500"}`}>{t.skillClass}</span>}
+                                  {t.skillClass && <span className={`rounded-full px-1 py-0.5 text-[10px] font-semibold ${!dimmed ? "bg-brand/20 text-brand" : "bg-white/10 text-slate-500"}`}>{t.skillClass}</span>}
                                   <span className="ml-auto capitalize text-[10px] text-slate-500">{t.status}</span>
                                 </button>
                               );
@@ -1026,9 +1034,13 @@ export default function SchedulerPage() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {jobs.length === 0 ? (
-                    <p className="px-1 py-3 text-xs text-slate-600">
-                      Drop a work order here to dispatch
-                    </p>
+                    // A drop target has to look like one even when idle,
+                    // otherwise the board reads as "this tech's row is broken"
+                    // rather than "this tech is free".
+                    <div className="flex w-full items-center gap-2 rounded-md border border-dashed border-white/10 px-3 py-2.5 text-[11px] text-slate-500">
+                      <Plus className="h-3.5 w-3.5 shrink-0 text-slate-600" aria-hidden="true" />
+                      Free — drag a work order here to dispatch
+                    </div>
                   ) : (
                     jobs.map((b) => (
                       <div

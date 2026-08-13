@@ -578,7 +578,7 @@ export function DispatchMessenger() {
                               {t.tags.slice(0, 3).map((tg) => (
                                 <span
                                   key={tg.id}
-                                  className="rounded-full px-1.5 py-px text-[9px] font-bold"
+                                  className="rounded-full px-1.5 py-px text-[10px] font-bold"
                                   style={{
                                     background: tg.color + "33",
                                     color: tg.color,

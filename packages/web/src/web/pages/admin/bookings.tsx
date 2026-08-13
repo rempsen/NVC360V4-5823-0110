@@ -16,6 +16,7 @@ import {
 import { useWorkerNoun, useCustomerNoun, useJobNoun } from "../../lib/use-brand";
 import { TechAvatar } from "../../components/tech-avatar";
 import { WorkOrderModal } from "../../components/work-order-modal";
+import { EmptyState } from "../../components/empty-state";
 
 const QUICK = [
   { key: "", label: "All" },
@@ -196,6 +197,12 @@ export default function AdminWorkOrders() {
     return n;
   }, [filters, quick, includeDeleted]);
 
+  // Distinguishes "you filtered everything out" from "there is genuinely
+  // nothing here" -- the two need completely different empty states, and
+  // showing "create your first work order" to someone who just typed a bad
+  // search term is the classic version of getting this wrong.
+  const hasAnyFilter = activeFilterCount > 0 || !!quick || !!qInput.trim();
+
   function clearAll() {
     setFilters(EMPTY);
     setQuick("");
@@ -319,8 +326,13 @@ export default function AdminWorkOrders() {
           </span>
           <SortControl sort={sort} dir={dir} onSort={toggleSort} />
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+        {/* The capped, self-scrolling table (which is what makes the sticky
+            header work) is desktop-only on purpose. On a phone a nested
+            vertical scroller fights the page scroll -- you flick to move the
+            page and instead move the table -- so below lg it stays a plain
+            horizontally-scrolling table inside normal page flow. */}
+        <div className="nvc-scroll-y overflow-x-auto lg:max-h-[calc(100vh-19rem)] lg:overflow-auto">
+          <table className="nvc-thead-sticky w-full text-sm">
             <thead>
               <tr className="border-b border-white/5 text-left text-xs uppercase tracking-wide text-slate-500">
                 <th className="px-3 py-3 font-semibold lg:px-4">{jobNoun}</th>
@@ -335,14 +347,46 @@ export default function AdminWorkOrders() {
             <tbody className="divide-y divide-white/5">
               {search.isLoading ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-slate-500">
-                    Loading work orders…
+                  <td colSpan={7} className="py-12">
+                    {/* Skeleton rows rather than a "Loading…" string: the table
+                        keeps its shape, so the list does not jump when data
+                        lands. */}
+                    <div className="mx-4 space-y-2.5" aria-live="polite" aria-busy="true">
+                      <span className="sr-only">Loading work orders…</span>
+                      {[0, 1, 2, 3, 4].map((i) => (
+                        <div
+                          key={i}
+                          className="h-9 animate-pulse rounded-md bg-white/[0.04]"
+                          style={{ animationDelay: `${i * 90}ms` }}
+                        />
+                      ))}
+                    </div>
                   </td>
                 </tr>
               ) : list.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-slate-500">
-                    No work orders match your filters
+                  <td colSpan={7}>
+                    {hasAnyFilter ? (
+                      <EmptyState
+                        icon={Search}
+                        title="No matches"
+                        hint="Nothing here fits the current filters and search. Widen the date range or clear the filters to see everything."
+                        action={
+                          <button
+                            onClick={clearAll}
+                            className="rounded-md border border-white/10 bg-ink-2 px-3 py-1.5 text-xs font-semibold text-slate-200 transition-colors hover:bg-white/5"
+                          >
+                            Clear filters
+                          </button>
+                        }
+                      />
+                    ) : (
+                      <EmptyState
+                        icon={ClipboardList}
+                        title={`No ${jobPlural.toLowerCase()} yet`}
+                        hint={`Create one from the button above, or let ${customerNoun.toLowerCase()}s book themselves through an intake form.`}
+                      />
+                    )}
                   </td>
                 </tr>
               ) : (
@@ -370,7 +414,7 @@ export default function AdminWorkOrders() {
                             </p>
                             {b.priority && PRIORITY_META[b.priority] && (
                               <span
-                                className="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold"
+                                className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold"
                                 style={{
                                   color: PRIORITY_META[b.priority].color,
                                   background: `${PRIORITY_META[b.priority].color}22`,
@@ -380,7 +424,7 @@ export default function AdminWorkOrders() {
                               </span>
                             )}
                             {archived && (
-                              <span className="shrink-0 rounded-full bg-rose-500/15 px-1.5 py-0.5 text-[9px] font-bold text-rose-400">
+                              <span className="shrink-0 rounded-full bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-bold text-rose-400">
                                 ARCHIVED
                               </span>
                             )}
@@ -532,29 +576,38 @@ function SortControl({
   dir: string;
   onSort: (k: string) => void;
 }) {
+  const dirLabel = dir === "asc" ? "ascending" : "descending";
+  // One control, not two. The field picker and the direction toggle are a
+  // single decision ("sort by X, this way round"), so they share one bordered
+  // group -- previously the chevron button floated beside the select looking
+  // like an unrelated action.
   return (
     <div className="flex items-center gap-1.5">
       <span className="hidden sm:inline">Sort:</span>
-      <select
-        value={sort}
-        onChange={(e) => onSort(e.target.value)}
-        className="rounded-lg border border-white/10 bg-ink-2 px-2 py-1 text-xs text-slate-300 outline-none focus:border-brand"
-      >
-        {SORTS.map((s) => (
-          <option key={s.key} value={s.key}>
-            {s.label}
-          </option>
-        ))}
-      </select>
-      <button
-        onClick={() => onSort(sort)}
-        title={dir === "asc" ? "Ascending" : "Descending"}
-        className="grid h-7 w-7 place-items-center rounded-lg border border-white/10 text-slate-300 hover:bg-white/5"
-      >
-        <ChevronDown
-          className={`h-3.5 w-3.5 transition-transform ${dir === "asc" ? "rotate-180" : ""}`}
-        />
-      </button>
+      <div className="flex items-center overflow-hidden rounded-md border border-white/10 bg-ink-2 focus-within:border-brand/60">
+        <select
+          aria-label="Sort work orders by"
+          value={sort}
+          onChange={(e) => onSort(e.target.value)}
+          className="appearance-none bg-transparent py-1 pl-2 pr-1 text-xs text-slate-300 outline-none focus-visible:shadow-none"
+        >
+          {SORTS.map((s) => (
+            <option key={s.key} value={s.key}>
+              {s.label}
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={() => onSort(sort)}
+          title={`Sorted ${dirLabel} — click to reverse`}
+          aria-label={`Sorted ${dirLabel}. Reverse sort order`}
+          className="grid h-7 w-7 place-items-center border-l border-white/10 text-slate-400 transition-colors hover:bg-white/5 hover:text-white"
+        >
+          <ChevronDown
+            className={`h-3.5 w-3.5 transition-transform duration-150 ${dir === "asc" ? "rotate-180" : ""}`}
+          />
+        </button>
+      </div>
     </div>
   );
 }
@@ -1093,7 +1146,7 @@ function AssignModal({ booking, onClose, onDone }: any) {
                   <div className="flex items-center gap-1.5">
                     <p className="font-semibold text-slate-100">{r.name}</p>
                     {r.id === bestId && (
-                      <span className="rounded-full bg-cyan-glow/15 px-1.5 py-0.5 text-[9px] font-bold text-cyan-glow">
+                      <span className="rounded-full bg-cyan-glow/15 px-1.5 py-0.5 text-[10px] font-bold text-cyan-glow">
                         AI PICK
                       </span>
                     )}

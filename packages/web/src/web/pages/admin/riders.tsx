@@ -694,7 +694,7 @@ function PhotoUploader({ rider }: { rider: any }) {
         />
         <span className="absolute inset-0 grid place-items-center rounded-full bg-black/55 opacity-0 transition group-hover:opacity-100">
           {upload.isPending ? (
-            <span className="text-[9px] font-semibold text-white">…</span>
+            <span className="text-[10px] font-semibold text-white">…</span>
           ) : (
             <Camera className="h-4 w-4 text-white" />
           )}

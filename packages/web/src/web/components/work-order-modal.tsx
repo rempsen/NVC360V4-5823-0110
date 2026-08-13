@@ -1610,7 +1610,7 @@ function JobPhotosPanel({ bookingId }: { bookingId: string }) {
                         </span>
                       )}
                       {p.caption && (
-                        <div className="absolute bottom-0 left-0 right-0 bg-black/60 px-1 py-0.5 text-[9px] text-white truncate">
+                        <div className="absolute bottom-0 left-0 right-0 bg-black/60 px-1 py-0.5 text-[10px] text-white truncate">
                           {p.caption}
                         </div>
                       )}
