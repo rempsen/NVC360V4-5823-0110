@@ -8,6 +8,7 @@ import { putObject } from "../lib/storage";
 import { rateLimit, keyByIp } from "../lib/rate-limit";
 import { fireEvent } from "../../services/dispatch";
 import { checkServiceZone } from "../../services/zones";
+import { forwardGeocode } from "../../services/geocode";
 import { attachMembership, findCompanyUserByEmail } from "../lib/memberships";
 import { recomputeBooking } from "../../services/billing";
 import { reconcileRiderStatus } from "../../services/presence";
@@ -543,13 +544,29 @@ export const publicFormsRoutes = new Hono()
     // had already pushed an object into storage that nothing referenced.
     // Shared with both booking-create paths (services/zones.ts). Number.isFinite,
     // not truthiness: lat/lng 0 are real coordinates.
+    // The browser only sends lat/lng when the visitor PICKS a suggestion from
+    // the address autocomplete. Hand-typed or pasted addresses arrived with no
+    // coordinates, which meant (a) the zone check was skipped entirely, so an
+    // out-of-area lead was accepted, dispatched and emailed, and (b) the
+    // NOT NULL lat/lng columns fell back to their downtown-Toronto default, so
+    // the job pinned on the wrong spot of the fleet map and fed bogus ETAs.
+    // Resolve the address server-side with the same geocoder the other two
+    // booking-create paths use. If it can't resolve, we do NOT invent a
+    // location and we do NOT enforce on a guess — the lead lands flagged.
     const subLat = typeof body.lat === "number" ? body.lat : parseFloat(body.lat);
     const subLng = typeof body.lng === "number" ? body.lng : parseFloat(body.lng);
-    if (Number.isFinite(subLat) && Number.isFinite(subLng)) {
-      const zone = await checkServiceZone(t.companyId, subLat, subLng);
+    const geo = Number.isFinite(subLat) && Number.isFinite(subLng)
+      ? { lat: subLat, lng: subLng }
+      : address
+        ? await forwardGeocode(address)
+        : null;
+    if (geo) {
+      const zone = await checkServiceZone(t.companyId, geo.lat, geo.lng);
       if (!zone.ok) {
         return c.json({ message: "Sorry, your address is outside our service area. Please contact us directly for availability." }, 422);
       }
+    } else {
+      incr("intake_address_unresolved");
     }
 
     // ---- resolve a service (picked, form default, or first active) ----
@@ -651,11 +668,19 @@ export const publicFormsRoutes = new Hono()
       status: "pending", // lands in the pipeline as a new lead
       scheduledAt,
       address: address || "(no address provided)",
+      // Only set coordinates we actually resolved; leaving them out falls back
+      // to the column default, which is why `zoneStatus` below tells the office
+      // the pin is not real.
+      ...(geo ? { lat: geo.lat, lng: geo.lng } : {}),
       notes: composedNotes,
       customerPhone: phone || "",
       fieldData: JSON.stringify({
         source: "intake_form",
         formSlug: slug,
+        // "verified" = a real point was checked against the tenant's zones.
+        // "unverified" = the address could not be geocoded, so the job's
+        // coordinates are the column default and no zone check happened.
+        zoneStatus: geo ? "verified" : "unverified",
         preferredAt: preferredAt ? preferredAt.toISOString() : null,
         photoUrl: photoUrl || null,
         custom: customAnswers.reduce<Record<string, string>>((acc, a) => { acc[a.key] = a.value; return acc; }, {}),

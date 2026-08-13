@@ -15,16 +15,21 @@
  *
  * Harness: ephemeral in-memory libsql, DDL derived from drizzle, ids prefixed
  * "intakezone-" (Bun shares one ":memory:" store across test files in one
- * process). No network: every case supplies coordinates, so the geocoder is
- * never hit, and there are no provider credentials under `bun test`, so a
- * created lead cannot actually notify anyone.
+ * process). No network: the geocoder is stubbed to "no match" (the route now
+ * geocodes a coordinate-less address — see intake-form-geocode-zone.test.ts),
+ * and there are no provider credentials under `bun test`, so a created lead
+ * cannot actually notify anyone.
  */
-import { describe, it, expect, beforeAll } from "bun:test";
+import { describe, it, expect, beforeAll, mock } from "bun:test";
 import { Hono } from "hono";
 import { getTableConfig, type SQLiteColumn } from "drizzle-orm/sqlite-core";
 
 process.env.DATABASE_URL = ":memory:";
 process.env.DATABASE_AUTH_TOKEN = "";
+
+// Stubbed before public-forms is imported: these cases are about coordinates
+// that were supplied, so no case here should reach a live geocoder.
+mock.module("../../../services/geocode", () => ({ forwardGeocode: async () => null }));
 
 const { db } = await import("../../database/index");
 const schema = await import("../../database/schema");
