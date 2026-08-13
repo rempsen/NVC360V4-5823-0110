@@ -51,3 +51,16 @@ Suspected findings (verify with tests before fixing):
      `aria-busy`; server errors render at the bottom with no scroll/focus move
 Never curl the real /submit — it calls fireEvent() (real SMS/email). Verify in the
 in-memory harness (see intake-form-service-zone.test.ts).
+
+### Item 1 result (commit 6a28ba2, pushed)
+All 4 suspected findings CONFIRMED by failing tests first, then fixed:
+- zone check moved before every write (was leaking a client user + membership +
+  orphan storage object on a 422)
+- email shape-checked (400) — was going raw into user.email and Reply-To
+- photo > 15 MB now 413 with the limit in the copy (was silently dropped)
+- client: up-front "link is incomplete" notice, role=alert error region that is
+  scrolled to + focused, aria-busy on submit, client-side photo cap
+New test file: src/api/routes/__tests__/intake-form-hygiene.test.ts (7 tests)
+Sabotage-checked all three server fixes. Gates: 330/0, oxlint 0, tsc 159,
+crash ALL CLEAN, a11y PASS. TestFlight build 15 submitted to Apple.
+Next: item 2 (score booking/customer flow) then item 4 (≤390px card layouts).

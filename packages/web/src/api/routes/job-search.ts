@@ -6,7 +6,7 @@ import {
 } from "drizzle-orm";
 import { requireAuth, tenantId } from "../middleware/auth";
 import { isAdminRole } from "../lib/permissions";
-import { toCsv, toPdf, buildJobPdf, fileResponse, type JobUnitLine, type JobPhoto } from "./export";
+import { toCsv, toPdf, buildJobPdf, fileResponse, tenantFilePrefix, type JobUnitLine, type JobPhoto } from "./export";
 
 type SessionUser = { id: string; role?: string; email: string; name: string };
 
@@ -328,12 +328,14 @@ export const jobSearchRoutes = new Hono()
 
     await logExport(cid, u, format, enriched.length, f, pickedKeys);
     const stamp = Date.now();
+    // filenames carry the tenant name, not the product name — see tenantFilePrefix
+    const pre = await tenantFilePrefix(cid);
     const title = "Work Orders";
     const subtitle = `${enriched.length} jobs · exported ${new Date().toLocaleString("en-CA")}`;
 
     if (format === "json") {
       const slim = enriched.map((r: any) => Object.fromEntries(pickedKeys.map((k) => [k, r[k]])));
-      return fileResponse(JSON.stringify(slim, null, 2), `nvc360-jobs-${stamp}.json`, "application/json");
+      return fileResponse(JSON.stringify(slim, null, 2), `${pre}-jobs-${stamp}.json`, "application/json");
     }
     if (format === "pdf") {
       const fmtRows = enriched.map((r: any) => {
@@ -346,7 +348,7 @@ export const jobSearchRoutes = new Hono()
         return o;
       });
       const buf = await toPdf(fmtRows, cols, title, subtitle);
-      return fileResponse(buf, `nvc360-jobs-${stamp}.pdf`, "application/pdf");
+      return fileResponse(buf, `${pre}-jobs-${stamp}.pdf`, "application/pdf");
     }
     // csv (default)
     const csvRows = enriched.map((r: any) => {
@@ -359,7 +361,7 @@ export const jobSearchRoutes = new Hono()
       return o;
     });
     const csv = toCsv(csvRows, cols.map((c) => c.label));
-    return fileResponse(csv, `nvc360-jobs-${stamp}.csv`, "text/csv; charset=utf-8");
+    return fileResponse(csv, `${pre}-jobs-${stamp}.csv`, "text/csv; charset=utf-8");
   })
 
   // single-job full detail export (all fields) — for the per-job detail option
@@ -373,9 +375,10 @@ export const jobSearchRoutes = new Hono()
     const [enriched] = await enrichRows([b]);
     await logExport(tenantId(c), u, format, 1, { jobId: id }, JOB_COLUMNS.map((c) => c.key));
     const stamp = Date.now();
+    const pre = await tenantFilePrefix(tenantId(c));
 
     if (format === "json") {
-      return fileResponse(JSON.stringify({ ...enriched, raw: b }, null, 2), `nvc360-job-${jobNumber(b.id)}-${stamp}.json`, "application/json");
+      return fileResponse(JSON.stringify({ ...enriched, raw: b }, null, 2), `${pre}-job-${jobNumber(b.id)}-${stamp}.json`, "application/json");
     }
     // PDF: vertical label/value sheet (one column = label, one = value)
     const rows = JOB_COLUMNS.map((col) => {
@@ -423,7 +426,7 @@ export const jobSearchRoutes = new Hono()
 
     const baseUrl = new URL(c.req.url).origin;
     const buf = await buildJobPdf(rows, unitLines, `Job ${jobNumber(b.id)} — ${enriched.customerName}`, enriched.address, jobPhotos, brand, route, baseUrl);
-    return fileResponse(buf, `nvc360-job-${jobNumber(b.id)}-${stamp}.pdf`, "application/pdf");
+    return fileResponse(buf, `${pre}-job-${jobNumber(b.id)}-${stamp}.pdf`, "application/pdf");
   })
 
   // Consolidated read-only report for the completed-job report page: every

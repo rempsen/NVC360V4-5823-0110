@@ -15,6 +15,14 @@ import {
 } from "lucide-react";
 import { useWorkerNoun, useCustomerNoun, useJobNoun } from "../../lib/use-brand";
 
+/** Pull the filename the server chose out of Content-Disposition. Exports are
+ *  named after the tenant (e.g. "bmd-materials-payroll-…"), so the browser must
+ *  use the server's name instead of a hardcoded product-name fallback. */
+function filenameFrom(res: Response): string {
+  const cd = res.headers.get("content-disposition") || "";
+  return /filename="?([^"]+)"?/.exec(cd)?.[1] || "";
+}
+
 /* ------------------------------ config ------------------------------ */
 type ReportId =
   | "revenue" | "tech-performance" | "job-status" | "payroll"
@@ -112,7 +120,8 @@ export default function ReportsPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `nvc360-${report}.${format}`;
+      // server names the file with the TENANT (e.g. bmd-materials-…) — honour it
+      a.download = filenameFrom(res) || `${report}.${format}`;
       a.click();
       URL.revokeObjectURL(url);
     } finally {
@@ -367,7 +376,7 @@ function RawExports() {
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = url; a.download = `nvc360-${ds}.${format}`; a.click();
+      a.href = url; a.download = filenameFrom(res) || `${ds}.${format}`; a.click();
       URL.revokeObjectURL(url);
     } finally { setBusy(""); }
   }

@@ -7,6 +7,10 @@ import { requireAuth, tenantId } from "../middleware/auth";
 import { tdb, type TenantDb } from "../database/tenant";
 import ExcelJS from "exceljs";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { slugifyName, fetchRouteBasemap, fetchSiteBasemap, type JobRoutePoint } from "../lib/export-map";
+
+export { slugifyName, fetchRouteBasemap, fetchSiteBasemap };
+export type { JobRoutePoint };
 
 /* ------------------------------- CSV -------------------------------- */
 export function toCsv(rows: Record<string, any>[], columns?: string[]): string {
@@ -152,7 +156,6 @@ export type JobUnitLine = {
 };
 export type JobPhoto = { url: string; caption?: string };
 export type JobBrand = { name?: string; logo?: string; brandColor?: string };
-export type JobRoutePoint = { lat: number; lng: number; phase: string };
 
 /** "#0ea5e9" -> pdf-lib rgb(). Falls back to the app's default brand cyan on
  *  anything unparsable so a bad/missing tenant color never breaks the PDF. */
@@ -178,6 +181,24 @@ function absoluteUrl(url: string, baseUrl: string): string {
   if (/^https?:\/\//i.test(url)) return url;
   const base = baseUrl.replace(/\/$/, "");
   return `${base}${url.startsWith("/") ? "" : "/"}${url}`;
+}
+
+/* --------------------- tenant-aware export filenames ---------------------- */
+
+/** Filename prefix for every export: the TENANT's name, not "nvc360".
+ *  Downloads land in one folder across companies, so the company has to be in
+ *  the name or a BMD Materials report is indistinguishable from any other
+ *  tenant's. Falls back to "nvc360" only when the tenant has no name set. */
+export async function tenantFilePrefix(companyId: string): Promise<string> {
+  try {
+    const [row] = await db
+      .select({ name: schema.companySettings.name })
+      .from(schema.companySettings)
+      .where(eq(schema.companySettings.companyId, companyId));
+    return slugifyName(row?.name) || "nvc360";
+  } catch {
+    return "nvc360";
+  }
 }
 
 export async function buildJobPdf(
@@ -282,11 +303,55 @@ export async function buildJobPdf(
   });
   y -= 18;
 
-  // --- route diagram: a simple vector sketch of the driven GPS path, colored
-  // by phase (en route / on site / return) — not a real basemap (no tile
-  // rendering server-side), but a genuine graphical read on the trip shape
-  // instead of just raw mileage numbers. ---
+  // --- route section ---
+  // Primary: a REAL street-level basemap (Google Static Maps, scale=2) with the
+  // driven GPS track drawn on it per phase — street names, scale bar, context,
+  // i.e. actually usable as proof of where the tech drove.
+  // Fallback (no API key / fetch failed): the old vector sketch of the path,
+  // which has no streets but still shows the trip shape. Never fail the export
+  // over a map.
+  let drewRouteMap = false;
   if (route && route.length > 1) {
+    const mapPng = await fetchRouteBasemap(route, subtitle).catch(() => null);
+    if (mapPng) {
+      let mapImg: any = null;
+      try { mapImg = await doc.embedPng(mapPng); } catch { mapImg = null; }
+      if (mapImg) {
+        const w = usableW;
+        const h = (mapImg.height / mapImg.width) * w;
+        ensure(h + 46);
+        sectionHeader("Route Driven");
+        const top = y;
+        page.drawImage(mapImg, { x: margin, y: top - h, width: w, height: h });
+        page.drawRectangle({ x: margin, y: top - h, width: w, height: h, borderColor: rgb(0.82, 0.85, 0.88), borderWidth: 0.75 });
+        y = top - h - 12;
+        dt("A = start   B = finish   Blue = en route   Amber = on site   Green = return", { x: margin, y, size: 7.5, font, color: muted });
+        y -= 20;
+        drewRouteMap = true;
+      }
+    }
+    // close-in view of the stop itself (street-level detail the overview can't show)
+    if (drewRouteMap) {
+      const sitePng = await fetchSiteBasemap(route).catch(() => null);
+      if (sitePng) {
+        let siteImg: any = null;
+        try { siteImg = await doc.embedPng(sitePng); } catch { siteImg = null; }
+        if (siteImg) {
+          const w = usableW;
+          const h = (siteImg.height / siteImg.width) * w;
+          ensure(h + 46);
+          sectionHeader("Job Site — Street Detail");
+          const top = y;
+          page.drawImage(siteImg, { x: margin, y: top - h, width: w, height: h });
+          page.drawRectangle({ x: margin, y: top - h, width: w, height: h, borderColor: rgb(0.82, 0.85, 0.88), borderWidth: 0.75 });
+          y = top - h - 12;
+          dt("Zoomed to the on-site GPS position (red pin = stop, amber = movement while on site).", { x: margin, y, size: 7.5, font, color: muted });
+          y -= 20;
+        }
+      }
+    }
+  }
+  if (route && route.length > 1 && !drewRouteMap) {
     ensure(190);
     sectionHeader("Route Driven");
     const boxH = 150;
@@ -501,16 +566,17 @@ export const exportRoutes = new Hono()
     const { title, subtitle, rows, columns } = body;
     const slug = (title || "report").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
     const stamp = Date.now();
+    const pre = await tenantFilePrefix(tenantId(c));
     if (format === "xlsx") {
       const buf = await toXlsx(rows, columns, title || "Report", title);
-      return fileResponse(buf, `nvc360-${slug}-${stamp}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      return fileResponse(buf, `${pre}-${slug}-${stamp}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     }
     if (format === "pdf") {
       const buf = await toPdf(rows, columns, title || "Report", subtitle);
-      return fileResponse(buf, `nvc360-${slug}-${stamp}.pdf`, "application/pdf");
+      return fileResponse(buf, `${pre}-${slug}-${stamp}.pdf`, "application/pdf");
     }
     const csv = toCsv(rows, columns.map((c: any) => c.key));
-    return fileResponse(csv, `nvc360-${slug}-${stamp}.csv`, "text/csv; charset=utf-8");
+    return fileResponse(csv, `${pre}-${slug}-${stamp}.csv`, "text/csv; charset=utf-8");
   })
   // GET /api/export/:dataset?columns=a,b,c&format=csv|xlsx|pdf
   .get("/:dataset", requireAuth, async (c) => {
@@ -524,18 +590,19 @@ export const exportRoutes = new Hono()
     const cols = picked ? allCols.filter((c) => picked.includes(c.key)) : allCols;
     const rows = await loadDataset(dataset, tdb(tenantId(c)));
     const stamp = Date.now();
+    const pre = await tenantFilePrefix(tenantId(c));
     const title = dataset.replace(/-/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
 
     if (format === "xlsx") {
       const buf = await toXlsx(rows, cols, title, title);
-      return fileResponse(buf, `nvc360-${dataset}-${stamp}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      return fileResponse(buf, `${pre}-${dataset}-${stamp}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     }
     if (format === "pdf") {
       const buf = await toPdf(rows, cols, title);
-      return fileResponse(buf, `nvc360-${dataset}-${stamp}.pdf`, "application/pdf");
+      return fileResponse(buf, `${pre}-${dataset}-${stamp}.pdf`, "application/pdf");
     }
     const csv = toCsv(rows, cols.map((c) => c.key));
-    return fileResponse(csv, `nvc360-${dataset}-${stamp}.csv`, "text/csv; charset=utf-8");
+    return fileResponse(csv, `${pre}-${dataset}-${stamp}.csv`, "text/csv; charset=utf-8");
   })
   // schema preview so the UI can let users pick columns
   .get("/:dataset/columns", requireAuth, async (c) => {
