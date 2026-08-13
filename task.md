@@ -1,34 +1,28 @@
-# Small-screen (≤390px) pass — admin
+# NVC360 — hardening pass scratchpad
 
-Gate baselines: `bun test src` (no .env) ≥352/0 · oxlint 0 · tsc non-TS2769 = 159 ·
-`bunx vite build` (NEVER `bun run build`) · crash-sweep ALL CLEAN · a11y-gate PASS.
-Dev server serves prebuilt dist → re-run `bunx vite build` after every web source change.
+## Gate baselines (run from packages/web unless noted)
+- `bun test src` (do NOT source root .env) → **357 pass / 0 fail**
+- `bunx tsc --noEmit -p tsconfig.app.json` → non-TS2769 errors == **159** (TS2769 Hono chain = known false positive)
+- `bunx oxlint packages/web packages/mobile --deny-warnings --no-error-on-unmatched-pattern` (repo root) → **0**
+- `bunx vite build` (NEVER `bun run build`) → ok
+- `python3 crash-sweep.py` → ALL CLEAN (25 real admin routes)
+- `python3 a11y-gate.py` → PASS 25 pages × 2 widths
+- mobile: `bunx tsc --noEmit` filtered `^(app|lib|components)/` → empty; `npx expo export --platform ios` succeeds
 
 ## Done
-- work-orders (bookings.tsx): stacked card list below lg; table only ≥lg.
-  Job cell max-w so truncate works; Assign/Edit labels moved to 2xl; customer
-  column moved lg→xl; pill row + search stack until lg. No overflow at 390/768/1024/1280.
-- scheduler.tsx: "drag here" copy → "tap Assign" below lg; grab handle hidden below lg.
-- dead `n-2` class (never defined in any CSS) → `line-clamp-2` in notifications.tsx, services.tsx.
-- FOUND: both gates listed phantom routes (/admin/bookings, /admin/team, /admin/users,
-  /admin/customers) that render AdminNotFound → they were auditing a 404 and passing.
-  Fixed both PAGES lists to the 25 real routes + added a hard phantom-route guard.
-- a11y-gate: new `hscroll` check (inner overflow-x-auto scrollers at 390px) — the
-  document-level check could never see the work-orders table.
+- `774a0f1` cross-company driver earnings, every row labelled with its company
+- `2feceda` phone layouts for work orders + directory; both gates were auditing 404 phantom routes — fixed, added hscroll check
+- rate limiter no longer fails open when Redis is down → falls back to bounded in-process MemoryStore + debounced infra alert
 
-## Fixed after the gate correction (all 16 findings it surfaced)
-- work-orders sort-direction button 28x28 -> 32x32.
-- builder: 5 icon-only delete buttons got aria-label + title (page had never been audited).
-- clients/Directory: dropped the 720px table floor below lg (the columns already
-  hide there), named the delete button, role pill no longer wraps inside itself.
-- reports detail table: px-2/text-xs at phone width — dynamic report columns
-  cannot be carded, so they had to cost less padding.
-- notifications matrix, techs tab strip, fleet overlay: deliberate scrollers,
-  allowlisted in a11y-gate ALLOWED with reasons.
-- Sabotage-checked: phantom path -> exit 2; reverting the work-orders cards ->
-  hscroll finding; restoring -> clean.
-- Gates green: 352/0 · oxlint 0 · tsc 159 · vite build · crash-sweep ALL CLEAN ·
-  a11y PASS 25 pages x 2 widths.
+## Batched for the next EAS iOS build
+- cross-company Earnings screen (`774a0f1`)
 
-## Batched for the next EAS build (not yet built)
-- cross-company Earnings screen (commit 774a0f1)
+## Backlog (next)
+1. Public intake hardening leftovers: no honeypot/CAPTCHA on `POST /api/public-forms/:companyId/:slug/submit` (IP-keyed rate limit only); hand-typed addresses can bypass zone enforcement.
+2. Score the booking/customer flow, append to `admin-review.report/content.md`.
+3. Customer-facing email/SMS copy review + per-tenant send-from domain test.
+
+## Dan's manual items
+- separate `nvc360-web` Sentry project + `VITE_SENTRY_DSN` in Runable publish settings
+- resolve/ignore Sentry `REACT-NATIVE-9`; revoke old key ending …744457c
+- test Accept and Decline on a TestFlight build (untested since build 13)

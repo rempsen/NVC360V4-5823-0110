@@ -221,6 +221,72 @@ export function recordError(ctx: AlertContext): void {
   })();
 }
 
+/**
+ * Alert that a piece of infrastructure has failed in a way that silently
+ * WEAKENS a guarantee rather than breaking a request.
+ *
+ * This exists because those failures are invisible by construction: when the
+ * rate limiter loses Redis, every request still succeeds, no 5xx is recorded,
+ * and `recordError` above never fires — the only observable change is that
+ * enforcement got weaker. Nobody finds out until it is abused.
+ *
+ * Debounced through the same per-key cooldown as error bursts (keyed by
+ * component, since this is a fleet-level condition and not a tenant one), so a
+ * limiter degrading under load pages once instead of once per request.
+ * Fire-and-forget and exception-safe, exactly like recordError.
+ */
+export function recordInfraDegraded(component: string, detail: string): void {
+  if (!alertsEnabled()) return;
+  void (async () => {
+    try {
+      if (!(await claimCooldown(`infra:${component}`))) return;
+      const subject = `[NVC360 ${ENV}] Degraded — ${component}`;
+      const text =
+        `:warning: *${subject}*\n` +
+        `• ${detail}\n` +
+        `• service: ${SERVICE} / ${ENV}`;
+      const jobs: Promise<unknown>[] = [];
+      if (EMAIL_TO.length) {
+        jobs.push(
+          (async () => {
+            const { sendEmail } = await import("../../services/email");
+            await sendEmail({
+              to: EMAIL_TO,
+              subject,
+              html: `<div style="background:#0b1220;padding:24px;border-radius:12px;max-width:560px">
+    <div style="color:#fbbf24;font:600 16px system-ui;margin-bottom:8px">⚠ Degraded — ${escapeHtml(component)}</div>
+    <p style="color:#e2e8f0;font:13px system-ui">${escapeHtml(detail)}</p>
+    <p style="color:#94a3b8;font:12px system-ui">${escapeHtml(`${SERVICE} / ${ENV}`)}</p>
+  </div>`,
+            });
+          })(),
+        );
+      }
+      if (WEBHOOK_URL) {
+        jobs.push(
+          fetch(WEBHOOK_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text, component, detail, degraded: true }),
+            signal: AbortSignal.timeout(5_000),
+          }).then((r) => {
+            if (!r.ok) throw new Error(`webhook ${r.status}`);
+          }),
+        );
+      }
+      const results = await Promise.allSettled(jobs);
+      for (const res of results) {
+        if (res.status === "rejected") {
+          log.error("alerts: degraded delivery failed", { err: String(res.reason), component });
+        }
+      }
+      log.warn("alerts: degraded alert sent", { component, detail });
+    } catch (e) {
+      log.error("alerts: recordInfraDegraded failed", { err: (e as Error).message });
+    }
+  })();
+}
+
 /** Test/util: clear in-memory state. */
 export function _resetAlerts(): void {
   mem.clear();

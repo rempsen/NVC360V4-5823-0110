@@ -9,6 +9,8 @@ import { createMiddleware } from "hono/factory";
 import { Err } from "./errors";
 import { getRedis, redisEnabled } from "./redis";
 import { log } from "./logger";
+import { recordInfraDegraded } from "./alerts";
+import { incr } from "./metrics";
 
 export interface RateLimitStore {
   /** increment the counter for `key`, return current count + ms until reset */
@@ -43,8 +45,20 @@ class MemoryStore implements RateLimitStore {
  * Shared rate-limit window across all nodes. Uses an atomic INCR; on the first
  * hit in a window it sets PEXPIRE so the key self-clears. Done in a single Lua
  * script so the INCR + expiry can't race (which would otherwise leak a key
- * that never resets). Falls back to allowing the request if Redis is briefly
- * unreachable — availability over strictness for the limiter.
+ * that never resets).
+ *
+ * When Redis is unreachable it DEGRADES to the in-process counter — it does not
+ * fail open. This used to return `{count: 1}` on any failure, which reads to
+ * the middleware as "first request in the window", so every limiter in the app
+ * became unlimited for the duration of a Redis outage: sign-in brute-force
+ * protection, the public intake form, the paid-SMS tracking writes, all of it.
+ * And because those requests still succeeded, no 5xx was recorded and nothing
+ * alerted — the guarantee disappeared silently, at the exact moment
+ * infrastructure was already unhealthy.
+ *
+ * Per-node counting is imperfect across a fleet (each node allows the budget
+ * independently, so the effective ceiling is limit × nodes) but it is BOUNDED,
+ * which unlimited is not. The degradation raises one debounced ops alert.
  */
 const FIXED_WINDOW_LUA = `
 local current = redis.call("INCR", KEYS[1])
@@ -55,10 +69,31 @@ local ttl = redis.call("PTTL", KEYS[1])
 return { current, ttl }
 `;
 
-class RedisStore implements RateLimitStore {
+export class RedisStore implements RateLimitStore {
+  /** Local counter used only while Redis is unavailable. */
+  private fallback = new MemoryStore();
+
+  /** Log + page once per outage, not once per request. */
+  private degrade(reason: string) {
+    if (!degraded) {
+      degraded = true;
+      log.error("rate-limit: Redis unavailable — counting per-node instead", { reason });
+      recordInfraDegraded(
+        "rate limit store",
+        `Redis is unreachable (${reason}). Rate limiting has degraded to per-node ` +
+          `in-process counters: limits still apply but the effective ceiling is ` +
+          `limit x node count. Restore Redis to regain a shared window.`,
+      );
+    }
+    incr("rate_limit_degraded_hits");
+  }
+
   async hit(key: string, windowMs: number) {
     const r = getRedis();
-    if (!r) return { count: 1, resetMs: windowMs };
+    if (!r) {
+      this.degrade("no client");
+      return this.fallback.hit(key, windowMs);
+    }
     try {
       const res = (await r.eval(FIXED_WINDOW_LUA, 1, key, String(windowMs))) as [
         number,
@@ -68,15 +103,24 @@ class RedisStore implements RateLimitStore {
       let ttl = Number(res[1]);
       // PTTL returns -1 (no expire) / -2 (no key) defensively → reset full window
       if (!Number.isFinite(ttl) || ttl < 0) ttl = windowMs;
+      if (degraded) {
+        degraded = false;
+        log.info("rate-limit: Redis recovered — shared window restored");
+      }
       return { count, resetMs: ttl };
     } catch (e) {
-      log.error("rate-limit: redis hit failed (allowing request)", {
-        err: (e as Error).message,
-      });
-      // Fail open: don't lock everyone out if Redis hiccups.
-      return { count: 1, resetMs: windowMs };
+      this.degrade((e as Error).message);
+      return this.fallback.hit(key, windowMs);
     }
   }
+}
+
+/** True while Redis is known-unreachable; gates the alert to once per outage. */
+let degraded = false;
+
+/** Test/util: forget that an outage was already reported. */
+export function _resetRateLimitDegradeState(): void {
+  degraded = false;
 }
 
 let store: RateLimitStore = new MemoryStore();
