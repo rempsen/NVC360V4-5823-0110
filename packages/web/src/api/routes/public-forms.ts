@@ -128,6 +128,21 @@ function normalizePublicFields(raw: any[]): any[] {
  * through tdb(companyId) so nothing can leak across tenants.
  */
 
+/**
+ * Photo cap for public submissions. Shared by the size refusal (before any
+ * write) and the upload itself so the two can't drift apart. Phone cameras
+ * routinely produce 8-15 MB HEIC/JPEG, so 15 MB is a real limit, not a token.
+ */
+const PHOTO_MAX_MB = 15;
+const PHOTO_MAX_BYTES = PHOTO_MAX_MB * 1024 * 1024;
+
+/**
+ * Deliberately permissive shape check, not RFC 5322. Its jobs: keep obvious
+ * garbage out of the tenant's client roster, and keep CR/LF out of the value
+ * that becomes the notification email's Reply-To header.
+ */
+const EMAIL_RE = /^[^\s@,;:<>"'()[\]\\]+@[^\s@,;:<>"'()[\]\\]+\.[A-Za-z]{2,}$/;
+
 const submitLimiter = rateLimit({
   name: "intake",
   limit: Number(process.env.RL_INTAKE_LIMIT ?? 30),
@@ -414,6 +429,17 @@ export const publicFormsRoutes = new Hono()
       body = await c.req.json().catch(() => ({}));
     }
 
+    // ---- photo size: refuse loudly, before anything is written ----
+    // The upload below is guarded by `size <= PHOTO_MAX`. With no else branch a
+    // 40 MB phone photo was silently dropped: the visitor saw the success screen
+    // and the tenant got a lead with no photo and no idea one was attached.
+    if (photoFile && photoFile.size > PHOTO_MAX_BYTES) {
+      return c.json(
+        { message: `That photo is too large (max ${PHOTO_MAX_MB} MB). Please upload a smaller image.` },
+        413,
+      );
+    }
+
     // This handler can't take a fixed zod schema: the body carries arbitrary
     // per-form custom-field keys and may arrive as multipart. So the core
     // fields are capped explicitly instead. Uncapped, a public form could push
@@ -462,8 +488,30 @@ export const publicFormsRoutes = new Hono()
       }
     }
     if (!name) return c.json({ message: "Name is required" }, 400);
+    // An unchecked email is written to user.email (the tenant's client record)
+    // and set as the notification email's Reply-To, so a malformed value both
+    // poisons the roster and lets a submitter inject header content.
+    if (email && !EMAIL_RE.test(email)) {
+      return c.json({ message: "Please enter a valid email address." }, 400);
+    }
 
     const t = tdb(companyId);
+
+    // ---- zone enforcement runs BEFORE any write ----
+    // It used to sit after find-or-create-customer and after the photo upload,
+    // so an out-of-area visitor who was then shown "outside our service area"
+    // had already been added to the tenant's client list (with a membership) and
+    // had already pushed an object into storage that nothing referenced.
+    // Shared with both booking-create paths (services/zones.ts). Number.isFinite,
+    // not truthiness: lat/lng 0 are real coordinates.
+    const subLat = typeof body.lat === "number" ? body.lat : parseFloat(body.lat);
+    const subLng = typeof body.lng === "number" ? body.lng : parseFloat(body.lng);
+    if (Number.isFinite(subLat) && Number.isFinite(subLng)) {
+      const zone = await checkServiceZone(t.companyId, subLat, subLng);
+      if (!zone.ok) {
+        return c.json({ message: "Sorry, your address is outside our service area. Please contact us directly for availability." }, 422);
+      }
+    }
 
     // ---- resolve a service (picked, form default, or first active) ----
     let svcId = serviceId || form.defaultServiceId || "";
@@ -542,7 +590,7 @@ export const publicFormsRoutes = new Hono()
 
     // ---- optional photo upload ----
     let photoUrl = "";
-    if (photoFile && photoFile.size > 0 && photoFile.size <= 15 * 1024 * 1024) {
+    if (photoFile && photoFile.size > 0 && photoFile.size <= PHOTO_MAX_BYTES) {
       const ext = (photoFile.name.split(".").pop() || "jpg").toLowerCase().slice(0, 8);
       const key = `intake/${companyId}/${crypto.randomUUID()}.${ext}`;
       const buf = Buffer.from(await photoFile.arrayBuffer());
@@ -550,18 +598,7 @@ export const publicFormsRoutes = new Hono()
       photoUrl = stored.url;
     }
 
-    // ---- zone enforcement (if client submitted geocoded lat/lng with the form) ----
-    // Shared with both booking-create paths (services/zones.ts) — this used to
-    // be a third inline copy. `Number.isFinite`, not truthiness: lat/lng 0 are
-    // real coordinates and used to skip enforcement entirely.
-    const subLat = typeof body.lat === "number" ? body.lat : parseFloat(body.lat);
-    const subLng = typeof body.lng === "number" ? body.lng : parseFloat(body.lng);
-    if (Number.isFinite(subLat) && Number.isFinite(subLng)) {
-      const zone = await checkServiceZone(t.companyId, subLat, subLng);
-      if (!zone.ok) {
-        return c.json({ message: "Sorry, your address is outside our service area. Please contact us directly for availability." }, 422);
-      }
-    }
+    // (zone enforcement already ran above, before any write)
 
     // ---- create the pending lead booking ----
     const scheduledAt = preferredAt && !isNaN(preferredAt.getTime()) ? preferredAt : new Date(Date.now() + 86400_000);

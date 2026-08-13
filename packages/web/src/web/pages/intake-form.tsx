@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRoute } from "wouter";
 import { AddressAutocomplete } from "../components/address-autocomplete";
 import WorkOrderForm from "./work-order-form";
@@ -45,6 +45,11 @@ type Service = { id: string; name: string; category: string };
 
 const CORE_KEYS = new Set(["name", "email", "phone", "address", "serviceType", "preferredAt", "notes", "photo"]);
 
+// Mirrors the server cap in api/routes/public-forms.ts. Checked here too so a
+// visitor on a phone isn't made to upload 40 MB before being told no.
+const PHOTO_MAX_MB = 15;
+const PHOTO_MAX_BYTES = PHOTO_MAX_MB * 1024 * 1024;
+
 // Fallback types for core keys — defensive against legacy rows saved without type
 const CORE_KEY_TYPES: Record<string, string> = {
   name: "text", email: "email", phone: "phone", address: "address",
@@ -74,6 +79,18 @@ export default function IntakeForm() {
   const [done, setDone] = useState<string | null>(null);
   const [err, setErr] = useState("");
   const [logoErr, setLogoErr] = useState(false);
+  // A server-side rejection (missing field, out of service area, photo too big)
+  // renders below a form that can be a screen and a half tall on a phone, so the
+  // message has to be brought to the visitor rather than waiting to be found.
+  const errRef = useRef<HTMLParagraphElement | null>(null);
+
+  const fail = (msg: string) => {
+    setErr(msg);
+    requestAnimationFrame(() => {
+      errRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+      errRef.current?.focus();
+    });
+  };
 
   useEffect(() => {
     if (!companyId || !slug) return;
@@ -92,7 +109,11 @@ export default function IntakeForm() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr("");
-    if (!publicKey) { setErr("This form link is missing its access key. Contact the company that sent it."); return; }
+    if (!publicKey) { fail("This form link is missing its access key. Contact the company that sent it."); return; }
+    if (photo && photo.size > PHOTO_MAX_BYTES) {
+      fail(`That photo is too large (max ${PHOTO_MAX_MB} MB). Please choose a smaller image.`);
+      return;
+    }
     setSubmitting(true);
     try {
       const fd = new FormData();
@@ -118,7 +139,7 @@ export default function IntakeForm() {
       if (!r.ok) throw new Error(d?.message || "Submission failed");
       setDone(d.message || cfg?.successMessage || "Thanks! We've received your request.");
     } catch (e: any) {
-      setErr(e.message || "Something went wrong. Please try again.");
+      fail(e.message || "Something went wrong. Please try again.");
     } finally {
       setSubmitting(false);
     }
@@ -290,6 +311,15 @@ export default function IntakeForm() {
           {cfg.intro && <p className="mt-2 text-sm text-slate-500">{cfg.intro}</p>}
         </div>
 
+        {/* A lead form cannot submit without its publishable key, so say so
+            before the visitor types a page of answers — not after. */}
+        {!publicKey && (
+          <div role="alert" className="mb-4 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-200">
+            <span className="font-semibold">This form link is incomplete.</span>{" "}
+            It's missing its access key, so it can't be submitted. Please use the full link the company sent you, or contact them directly.
+          </div>
+        )}
+
         <form onSubmit={submit} className="space-y-6 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
           {sectionsOrder.map((sec) => {
             const inSec = enabled.filter((f) => (f.sectionId || "") === sec.id);
@@ -313,11 +343,22 @@ export default function IntakeForm() {
             );
           })}
 
-          {err && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-600">{err}</p>}
+          {/* Always mounted so assistive tech announces the message when it
+              appears, and so the scroll target exists before the error is set. */}
+          <p
+            ref={errRef}
+            tabIndex={-1}
+            role="alert"
+            aria-live="assertive"
+            className={err ? "rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-600 outline-none" : "sr-only"}
+          >
+            {err}
+          </p>
 
           <button
             type="submit"
             disabled={submitting}
+            aria-busy={submitting}
             className="w-full rounded-lg px-4 py-3 text-sm font-bold text-white transition disabled:opacity-60"
             style={{ background: brand }}
           >

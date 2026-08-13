@@ -37,3 +37,17 @@ Weight polish toward the **operations modules** (work orders, scheduler, fleet, 
   rows + 1 orphan service), verified 0 remaining
 - TestFlight build 14 (v1.0.1) built + submitted; Dan confirmed it opens clean
 - Dan confirmed web Publish now succeeds (AWS SDK cut fixed the builder OOM)
+
+## Item 1 — public intake form audit (in progress, Aug 13 late)
+Live: /f/default/request-service?k=nvcpub_3767…f1e6 renders clean at 1024 + 390
+(/tmp/intake/01-1024.png, 02-390.png). Layout is NOT the problem.
+Suspected findings (verify with tests before fixing):
+- A. out-of-zone submit returns 422 but the customer `user` row + membership are
+     created BEFORE the zone check → junk client records + orphan photo upload
+- B. `email` is never format-validated; it lands in `user.email` and in the
+     recipient email's `Reply-To`
+- C. photo > 15 MB is silently dropped (no else branch) — customer thinks it sent
+- D. client-side: `?k=` missing only errors after filling+submitting; no
+     `aria-busy`; server errors render at the bottom with no scroll/focus move
+Never curl the real /submit — it calls fireEvent() (real SMS/email). Verify in the
+in-memory harness (see intake-form-service-zone.test.ts).
