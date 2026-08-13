@@ -11,6 +11,7 @@ import { subscribeTrack, publishMsg } from "../../services/realtime";
 import { jobTimeline } from "../../services/job-events";
 import { reviewRouting, alertLowRating } from "../../services/reviews";
 import { propertyUrl } from "../../services/properties";
+import { safeTimeZone } from "../../shared/tz";
 
 // Resolve a booking by its public token, enforcing expiry. Returns null when
 // the token is unknown OR has expired (PII link safety).
@@ -244,6 +245,11 @@ async function buildSnapshot(b: typeof schema.bookings.$inferSelect) {
       : null,
     propertyLink,
     scheduledAt: b.scheduledAt,
+    // The company's clock. The page used to format every time on the DEVICE's
+    // clock with no zone label, so an out-of-town property owner opening the
+    // SMS link saw an appointment time that was hours off what the office told
+    // them, with nothing on screen to explain it.
+    timezone: safeTimeZone(cs?.timezone),
     startedAt: b.startedAt,
     finishedAt: b.finishedAt,
     onSiteMinutes: b.onSiteMinutes,

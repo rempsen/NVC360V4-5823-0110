@@ -143,7 +143,7 @@ export default function BookPage() {
 
   return (
     <div className="mx-auto max-w-3xl">
-      <Link to="/app" className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-cyan-glow">
+      <Link to="/app" className="mb-4 inline-flex min-h-[32px] items-center gap-1.5 px-1 text-sm font-medium text-slate-500 hover:text-cyan-glow">
         <ArrowLeft className="h-4 w-4" /> Back
       </Link>
 

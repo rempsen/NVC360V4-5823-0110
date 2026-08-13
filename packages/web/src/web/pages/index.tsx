@@ -44,7 +44,7 @@ function Nav() {
             </Link>
           ) : (
             <>
-              <Link to="/sign-in" className="text-sm font-medium text-slate-300 hover:text-brand">
+              <Link to="/sign-in" className="inline-flex min-h-[32px] items-center px-1 text-sm font-medium text-slate-300 hover:text-brand">
                 Sign in
               </Link>
               <Link

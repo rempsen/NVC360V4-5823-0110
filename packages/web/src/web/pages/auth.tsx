@@ -169,7 +169,7 @@ export default function AuthPage({ mode }: { mode: "sign-in" | "sign-up" }) {
               <div className="flex justify-end -mt-1">
                 <Link
                   to="/forgot-password"
-                  className="text-sm font-medium text-slate-400 transition hover:text-cyan-glow"
+                  className="inline-flex min-h-[32px] items-center px-1 text-sm font-medium text-slate-400 transition hover:text-cyan-glow"
                 >
                   Forgot password?
                 </Link>
@@ -202,7 +202,7 @@ export default function AuthPage({ mode }: { mode: "sign-in" | "sign-up" }) {
             {isSignUp ? "Already have an account? " : "New to NVC360? "}
             <Link
               to={isSignUp ? "/sign-in" : "/sign-up"}
-              className="font-semibold text-cyan-glow hover:underline"
+              className="inline-flex min-h-[32px] items-center px-1 font-semibold text-cyan-glow hover:underline"
             >
               {isSignUp ? "Sign in" : "Create one"}
             </Link>

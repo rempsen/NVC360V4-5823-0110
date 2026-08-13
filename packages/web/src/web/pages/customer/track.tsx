@@ -5,7 +5,9 @@ import { LiveMap } from "../../components/live-map";
 import { StatusBadge } from "../../components/brand";
 import { FullLoader } from "../../components/loader";
 import { StripePayModal } from "../../components/stripe-pay";
-import { fmtDate, money } from "../../lib/utils";
+import { money } from "../../lib/utils";
+import { fmtAppointment } from "../../../shared/fmt-appointment";
+import { useBrand } from "../../lib/use-brand";
 import {
   ArrowLeft, Phone, Star, Truck, CheckCircle2, CreditCard, MapPin, Navigation,
   PackageOpen,
@@ -25,6 +27,8 @@ const STEP_LABEL: Record<string, string> = {
 
 export default function TrackPage() {
   const { id } = useParams<{ id: string }>();
+  // Appointment times render on the COMPANY's clock, not the device's.
+  const brand = useBrand();
   const qc = useQueryClient();
   const [payOpen, setPayOpen] = useState(false);
 
@@ -167,7 +171,7 @@ export default function TrackPage() {
             <h3 className="font-bold text-white">{b.service?.name}</h3>
             <div className="mt-3 space-y-2.5 text-sm">
               <Detail icon={MapPin} text={b.address} />
-              <Detail icon={CheckCircle2} text={fmtDate(b.scheduledAt)} />
+              <Detail icon={CheckCircle2} text={fmtAppointment(b.scheduledAt, brand.timezone)} />
             </div>
           </div>
 

@@ -4,10 +4,14 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { StatusBadge } from "../../components/brand";
 import { FullLoader } from "../../components/loader";
-import { fmtDate, money } from "../../lib/utils";
+import { money } from "../../lib/utils";
+import { fmtAppointment } from "../../../shared/fmt-appointment";
+import { useBrand } from "../../lib/use-brand";
 import { ArrowRight, Calendar, MapPin, PackageOpen } from "lucide-react";
 
 export default function CustomerBookings() {
+  // Appointment times render on the COMPANY's clock, not the device's.
+  const brand = useBrand();
   const bookings = useQuery({
     queryKey: ["bookings"],
     queryFn: async () => (await api.bookings.$get()).json(),
@@ -42,7 +46,7 @@ export default function CustomerBookings() {
                     <StatusBadge status={b.status} />
                   </div>
                   <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
-                    <span className="flex items-center gap-1"><Calendar className="h-3.5 w-3.5" />{fmtDate(b.scheduledAt)}</span>
+                    <span className="flex items-center gap-1"><Calendar className="h-3.5 w-3.5" />{fmtAppointment(b.scheduledAt, brand.timezone)}</span>
                     <span className="flex items-center gap-1 truncate"><MapPin className="h-3.5 w-3.5" />{b.address}</span>
                   </div>
                 </div>

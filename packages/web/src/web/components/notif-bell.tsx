@@ -26,6 +26,9 @@ export function NotifBell() {
     <div className="relative">
       <button
         onClick={() => setOpen((o) => !o)}
+        aria-label={unread > 0 ? `Notifications, ${unread} unread` : "Notifications"}
+        title="Notifications"
+        aria-expanded={open}
         className="relative grid h-10 w-10 place-items-center rounded-full text-slate-400 transition hover:bg-white/5 hover:text-slate-200"
       >
         <Bell className="h-5 w-5" />

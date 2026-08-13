@@ -72,7 +72,7 @@ export default function ForgotPasswordPage() {
               </p>
               <Link
                 to="/sign-in"
-                className="mt-6 inline-flex items-center gap-2 font-semibold text-cyan-glow hover:underline"
+                className="mt-6 inline-flex min-h-[32px] items-center gap-2 px-1 font-semibold text-cyan-glow hover:underline"
               >
                 <ArrowLeft className="h-4 w-4" /> Back to sign in
               </Link>
@@ -124,7 +124,7 @@ export default function ForgotPasswordPage() {
               <p className="mt-5 text-center text-sm text-slate-500">
                 <Link
                   to="/sign-in"
-                  className="inline-flex items-center gap-1.5 font-semibold text-cyan-glow hover:underline"
+                  className="inline-flex min-h-[32px] items-center gap-1.5 px-1 font-semibold text-cyan-glow hover:underline"
                 >
                   <ArrowLeft className="h-3.5 w-3.5" /> Back to sign in
                 </Link>

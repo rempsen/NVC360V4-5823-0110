@@ -8,6 +8,7 @@ import { Logo } from "../components/brand";
 import { TechAvatar } from "../components/tech-avatar";
 import { STATUS_META } from "../lib/utils";
 import { statusStepIndex } from "../../shared/job-status";
+import { safeTimeZone } from "../../shared/tz";
 import {
   isTerminalStatus,
   isDeadLinkError,
@@ -45,21 +46,30 @@ import {
 } from "lucide-react";
 
 // ─── Formatting helpers ───────────────────────────────────────────────────────
-function fmtTime(v: string | number | null | undefined) {
+// All of these take the COMPANY's time zone (payload `timezone`). They used to
+// format on the device's clock with no zone name, so the same job read one time
+// in the office and another on a customer's phone in a different zone — on the
+// single page every customer opens from an SMS link.
+function fmtTime(v: string | number | null | undefined, tz?: string, withZone = false) {
   if (!v) return "";
   const d = new Date(v);
   if (isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return d.toLocaleTimeString("en-US", {
+    hour: "numeric", minute: "2-digit", timeZone: safeTimeZone(tz),
+    ...(withZone ? { timeZoneName: "short" as const } : {}),
+  });
 }
-function fmtDate(v: string | number | null | undefined) {
+function fmtDate(v: string | number | null | undefined, tz?: string) {
   if (!v) return "";
   const d = new Date(v);
   if (isNaN(d.getTime())) return "";
-  return d.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+  return d.toLocaleDateString("en-US", {
+    month: "short", day: "numeric", year: "numeric", timeZone: safeTimeZone(tz),
+  });
 }
-function fmtDateTime(v: string | number | null | undefined) {
+function fmtDateTime(v: string | number | null | undefined, tz?: string) {
   if (!v) return "—";
-  const s = `${fmtDate(v)} · ${fmtTime(v)}`;
+  const s = `${fmtDate(v, tz)} · ${fmtTime(v, tz, true)}`;
   return s === " · " ? "—" : s;
 }
 
@@ -84,9 +94,12 @@ const EVENT_ICON: Record<string, typeof CheckCircle2> = {
 function JobTimeline({
   events,
   onPhoto,
+  tz,
 }: {
   events: any[];
   onPhoto: (url: string) => void;
+  /** Company time zone — timeline times must not shift with the reader's device. */
+  tz?: string;
 }) {
   if (!events?.length) return null;
   return (
@@ -113,7 +126,7 @@ function JobTimeline({
                   {e.label || e.kind}
                 </p>
                 <p className="mt-0.5 text-[11px] text-slate-500">
-                  {fmtTime(e.at)}
+                  {fmtTime(e.at, tz)}
                   {e.actorName ? ` · ${e.actorName}` : ""}
                   {e.detail ? ` · ${e.detail}` : ""}
                 </p>
@@ -694,7 +707,12 @@ export default function TrackPublic() {
 
         <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
           {/* ── Left column ── */}
-          <div className="space-y-4">
+          {/* min-w-0: a grid item defaults to min-width:auto, so the widest
+              intrinsic child (the status stepper) pushed this column to 395px
+              inside a 358px track and scrolled the whole tracking page
+              sideways on a 390px phone — the one page every customer opens
+              from an SMS link. */}
+          <div className="min-w-0 space-y-4">
             {isDone ? (
               /* Completion summary + review */
               <div className="space-y-4">
@@ -935,11 +953,11 @@ export default function TrackPublic() {
                   </div>
                   <div>
                     <dt className="text-[11px] uppercase tracking-wide text-slate-500">Scheduled</dt>
-                    <dd className="text-sm text-slate-200">{fmtDateTime(data.scheduledAt)}</dd>
+                    <dd className="text-sm text-slate-200">{fmtDateTime(data.scheduledAt, data.timezone)}</dd>
                   </div>
                   <div>
                     <dt className="text-[11px] uppercase tracking-wide text-slate-500">Completed</dt>
-                    <dd className="text-sm text-slate-200">{fmtDateTime(data.finishedAt)}</dd>
+                    <dd className="text-sm text-slate-200">{fmtDateTime(data.finishedAt, data.timezone)}</dd>
                   </div>
                   {data.onSiteMinutes > 0 && (
                     <div>
@@ -966,7 +984,7 @@ export default function TrackPublic() {
             )}
 
             {/* ── Shared: narrative, photos, materials ── */}
-            <JobTimeline events={timeline} onPhoto={setLightbox} />
+            <JobTimeline events={timeline} onPhoto={setLightbox} tz={data.timezone} />
             <PhotoGallery photos={photos} onPhoto={setLightbox} />
             <MaterialsUsed materials={materials} />
             <SignOff signature={data.signature} />
@@ -1099,6 +1117,8 @@ export default function TrackPublic() {
                     <button
                       type="submit"
                       disabled={!draft.trim() || send.isPending}
+                      aria-label="Send message"
+                      title="Send message"
                       className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-brand text-white hover:bg-brand-deep disabled:opacity-50"
                     >
                       <Send className="h-4 w-4" />

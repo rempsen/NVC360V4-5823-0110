@@ -4,7 +4,9 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { useAuth } from "../../hooks/use-auth";
 import { StatusBadge } from "../../components/brand";
-import { fmtDate, money } from "../../lib/utils";
+import { money } from "../../lib/utils";
+import { fmtAppointment } from "../../../shared/fmt-appointment";
+import { useBrand } from "../../lib/use-brand";
 import {
   Sparkles, Wrench, Zap, Scissors, Bug, HeartPulse, Truck, Siren,
   Moon, Hammer, LifeBuoy, Star, Clock, ArrowRight, MapPin, Search,
@@ -20,6 +22,8 @@ const ICON: Record<string, any> = {
 
 export default function CustomerHome() {
   const { user } = useAuth();
+  // Appointment times render on the COMPANY's clock, not the device's.
+  const brand = useBrand();
   const [q, setQ] = useState("");
   const services = useQuery({
     queryKey: ["services"],
@@ -66,7 +70,7 @@ export default function CustomerHome() {
                   <StatusBadge status={active.status} />
                 </div>
                 <div className="text-lg font-bold">{active.service?.name}</div>
-                <div className="text-sm text-white/70">{fmtDate(active.scheduledAt)}</div>
+                <div className="text-sm text-white/70">{fmtAppointment(active.scheduledAt, brand.timezone)}</div>
               </div>
             </div>
             <ArrowRight className="h-6 w-6" />
