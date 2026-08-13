@@ -167,3 +167,126 @@ Sentry is wired on both client (`web/lib/sentry.ts`, `main.tsx`, `provider.tsx`,
 | Stripe at first paint (real Chrome) | 0 requests (was 3); loads on demand when called |
 
 **Method note.** Every finding above was produced by driving the real application against the real Turso database — not by reading code. Two caveats carried from earlier work: `tsc` alone is not a reliable check in this repo (project references plus a long-standing Hono method-chain false positive), and `bun test src` must be run **without** sourcing the root `.env` or four payments tests fail because they assert the unconfigured-Stripe path.
+
+---
+
+# Part 2 — Customer & Booking Flow — Expert Review
+
+**Scope:** everything a paying customer touches — the public marketing/auth pages, the public intake form (`/f/:tenant/:slug`), the self-serve booking flow (`/app/book/:id`), the customer portal (`/app`, `/app/bookings`, `/app/track/:id`), the SMS tracking page (`/t/:token`) and the public property record (`/p/:token`).
+**Method:** same as Part 1 — real Chrome, 390px and 1440px, a real account created through the real sign-up form, a real booking written to the live Turso database. Nothing below is inferred from reading code; every claim was reproduced on a running server.
+**Date:** August 13, 2026 · **Commits:** `d87a3db` (intake geocode + zones) → `d3cbbd7` (timezone + customer sweep)
+
+---
+
+## Bottom line
+
+**Overall: 7.9 / 10 — the flow works end to end and is now correct, but it is missing the two self-serve actions that justify the product's own pitch.**
+
+The happy path is genuinely good: a stranger can sign up, book, get a confirmation and watch the technician on a map without ever calling the office. Two real defects were found by driving it rather than reading it — a hand-typed address bypassed service-zone enforcement, and every screen that *read back* an appointment time formatted it on the reader's device clock instead of the company's. Both are fixed, tested and verified live.
+
+What holds the score under 8.5 is not a bug. **There is no cancel and no reschedule anywhere in the customer portal.** A customer who books the wrong day has exactly one option: phone the office. For a product positioned as "Stop the Ringing," that is the most expensive gap on the board.
+
+| # | Criterion | Score | Direction |
+|---|-----------|-------|-----------|
+| 1 | Booking flow correctness | 9.0 | Fixed + regression-tested |
+| 2 | Self-serve completeness | 5.5 | **Biggest gap — no cancel/reschedule** |
+| 3 | Time & scheduling correctness | 9.0 | Defect found live, fixed |
+| 4 | Trust & transparency | 8.5 | Strong area |
+| 5 | Error & refusal UX | 8.5 | Solid |
+| 6 | Accessibility | 8.5 | Fixed this pass |
+| 7 | Mobile responsiveness | 8.5 | Fixed this pass |
+| 8 | Reliability of the public surface | 8.5 | New gate |
+| 9 | Anti-abuse on public endpoints | 7.0 | Partial |
+| 10 | Conversion & friction | 7.5 | One clear win left |
+
+---
+
+## 1. Booking flow correctness — 9.0 / 10
+
+**Evidence.** Driven end to end on the live server with a throwaway account created through the real `/sign-up` form: sign-up → `/app` with no page errors → book → confirm → track. The confirmed booking landed in Turso with server-resolved coordinates (`lat 49.8941299 / lng -97.13403` for `1 Portage Ave, Winnipeg, MB`) rather than the column default, so dispatch, zones and the live map all key off a real point.
+
+**The finding — now fixed (`d87a3db`).** The public intake form enforced service zones only when the browser supplied coordinates. A customer who *typed* an address got no zone check at all, so a job outside the service area could be accepted and land in dispatch. Submit now forward-geocodes a hand-typed address server-side, enforces zones on the result, persists the resolved coordinates and records `zoneStatus: "verified" | "unverified"` on the submission, incrementing an `intake_address_unresolved` counter when geocoding cannot resolve.
+
+**Proof, not inference.** Five tests written failing first (all 5 failed, then all 5 passed). Sabotage: removing the geocode call → 3 of 5 fail; restored → green. Live: with the Winnipeg zone temporarily active, a hand-typed Calgary address posted to `/api/public/forms/default/request-service/submit` returned **422** and left the bookings, submissions and user counts unchanged.
+
+## 2. Self-serve completeness — 5.5 / 10
+
+**The gap.** The portal can create and observe, but not change. `/app/track/:id` offers "Pay $156.80" and nothing else — no cancel, no reschedule, no "add a note for the tech," no way to correct a wrong address. Every one of those turns into an inbound phone call, which is the exact cost the product promises to remove.
+
+**Recommendation (highest ROI item in this review).** Ship customer-initiated **cancel** and **reschedule** on `/app/track/:id`, gated by status (allowed while `pending`/`confirmed`/`assigned`, blocked once en route) and by a company-configurable notice window (e.g. no free changes inside 2 hours). Reuse the existing slot picker for reschedule and the existing notification bus to tell dispatch. This is a contained change with a direct, measurable effect on call volume.
+
+## 3. Time & scheduling correctness — 9.0 / 10
+
+**The finding — now fixed (`d3cbbd7`).** The slot picker was already company-timezone-aware, but every screen that read a time *back* was not. A slot picked as **"Fri, Aug 14, 9 AM CDT"** displayed as **"Fri, Aug 14, 2:00 PM"** with no zone name on `/app`, `/app/bookings` and `/app/track/:id`. The stored instant was correct (`1786716000000` = 14:00Z = 9 AM Winnipeg, with `company_settings.timezone = America/Winnipeg`); the read screens used a bare `toLocaleString("en-US")` on the browser clock. The same class of bug was then found and fixed on `/t/:token` — the single page every customer opens from an SMS link.
+
+**The fix.** New shared `fmtAppointment(instant, companyTz, viewerTz?)` helper with a zone label, wired into the portal screens; `GET /api/track/:token` now returns the company timezone and the public page formats the timeline and service record in it.
+
+**Proof.** 7 tests written failing first (`0 pass / 1 fail / 1 error` → `7 pass / 0 fail`); sabotage by dropping `timeZone` → 4 fail. Live: `/t/b90cd0cf4e44` renders a 21:18Z event as **4:18 PM** identically from UTC, Asia/Tokyo and America/Vancouver devices; the sabotaged build rendered 9:18 PM / 6:18 AM / 2:18 PM from the same three.
+
+**Residual risk.** A customer genuinely in another zone now reads the company's clock with a zone label — correct and unambiguous, but a future nicety is "9:00 AM CDT (11:00 AM your time)" when the offsets differ. The helper already accepts a viewer zone for exactly this.
+
+## 4. Trust & transparency — 8.5 / 10
+
+The tracking page is the strongest customer surface in the product: live map with ETA, status stepper, technician name and photo, job timeline with attached photos, the customer's own signature reflected back, full service history for the address with no login, and a message thread to the technician. This is the part that looks like a company three times your size.
+
+**To improve:** the timeline shows times but not durations, and there is no "we're running late" state. An automatic delay notice when the ETA slips past the promised window would prevent the highest-emotion phone call of all.
+
+## 5. Error & refusal UX — 8.5 / 10
+
+An out-of-area booking returns 422 and the page says *"That address is outside our service area. Please check the address or contact us."* — plain, non-technical, actionable. Verified live on the real booking form. Dead and expired tracking links have their own handled states rather than a crash.
+
+**To improve:** the refusal is a dead end. Offer the nearest covered area or a waitlist capture so the lead is not simply lost.
+
+## 6. Accessibility — 8.5 / 10
+
+**Found and fixed this pass:** an icon-only send button on the tracking page with no accessible name (now `aria-label` + `title`); the notification bell on every `/app/*` page unnamed (now labelled with its unread count and `aria-expanded`); seven tap targets under 32px on `/`, `/sign-in` (×2), `/sign-up`, `/forgot-password` and the `/app/book/:id` Back link (55×20).
+
+## 7. Mobile responsiveness — 8.5 / 10
+
+**Found and fixed:** `/t/:token` overflowed horizontally at 390px (`411px > 390px`). Root-caused live by walking the ancestor chain — a grid item with `min-width: auto` holding a 395px intrinsic child in a 358px track; setting `min-width: 0` in the live DOM returned `[390, 390, 358]`. Fixed with `min-w-0`.
+
+**Weakness:** the booking page renders **22 flat time-slot buttons with no day grouping** — a long scroll on a phone. Group by day with a horizontal day selector.
+
+## 8. Reliability of the public surface — 8.5 / 10
+
+**New gate: `customer-sweep.py`** — drives 12 customer pages at 2 widths in real Chrome, asserting no error boundary, no page error and no a11y/overflow regression, with the signed-in portal pages included when credentials are supplied. First run produced 8 real findings (all listed above, all fixed); it now reports **PASS — 12 pages × 2 widths, 0 findings**. The admin gates were re-run alongside it: `crash-sweep.py` ALL CLEAN, `a11y-gate.py` PASS.
+
+## 9. Anti-abuse on public endpoints — 7.0 / 10
+
+Intake has a honeypot field and a minimum fill time (`c1c02b4`) plus `submitLimiter`, but the limiter is keyed by IP only and there is no CAPTCHA. Zone enforcement now also happens server-side on hand-typed addresses, which closes the "junk jobs from anywhere" hole. A determined bot behind rotating IPs could still fill the intake queue.
+
+**Recommendation:** add a per-tenant daily submission ceiling with an alert, and put Cloudflare Turnstile on the intake form only (not the booking flow, where friction costs real conversions).
+
+## 10. Conversion & friction — 7.5 / 10
+
+Sign-up → booked took one pass with no dead ends, and the confirmation immediately offers "Track my booking," which is the right next action. The friction that remains is structural: booking requires an account, and the 22-slot picker is the ugliest moment in the flow.
+
+**Recommendation:** guest booking with account creation deferred to after the confirmation (or magic-link only), plus the grouped day/time picker.
+
+---
+
+## Prioritised backlog — customer flow
+
+**P0 — done this session**
+- Hand-typed intake address bypassed service zones (`d87a3db`)
+- Appointment times read back on the device clock, not the company's, in the portal *and* on the public SMS tracking page (`d3cbbd7`)
+- `/t/:token` horizontal overflow at 390px (`d3cbbd7`)
+- Unnamed send button and notification bell; 7 sub-32px tap targets (`d3cbbd7`)
+- New `customer-sweep.py` reliability + a11y gate for the customer surface (`d3cbbd7`)
+
+**P1 — open, in priority order**
+1. **Customer cancel + reschedule** on `/app/track/:id`, status- and notice-window gated *(largest call-volume win)*
+2. Group booking slots by day with a day selector
+3. "Running late" / ETA-slip notice to the customer
+4. Waitlist or nearest-covered-area capture on an out-of-area refusal
+5. Turnstile + per-tenant daily ceiling on public intake
+6. Customer-facing email/SMS copy review and a per-tenant send-from domain test
+
+**P2 — headroom**
+7. Guest booking (defer account creation past confirmation)
+8. "9:00 AM CDT (11:00 AM your time)" dual-zone display when the viewer's offset differs
+9. Durations on the job timeline
+
+---
+
+*All findings in Part 2 were reproduced on a running server against the live database. Probe data created during the review — one customer account, one booking and its dependent rows — was deleted afterwards and the deletion verified, and the temporarily activated Winnipeg service zone was set back to inactive.*
