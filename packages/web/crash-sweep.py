@@ -14,12 +14,23 @@ import sys
 from playwright.sync_api import sync_playwright
 
 PAGES = [
-    "/admin", "/admin/work-orders", "/admin/scheduler", "/admin/team",
-    "/admin/customers", "/admin/catalog", "/admin/services", "/admin/zones",
-    "/admin/notifications", "/admin/reports", "/admin/settings", "/admin/inbox",
-    "/admin/intake-forms", "/admin/payouts", "/admin/fleet", "/admin/automation",
+    # Every path here is checked against the real router: a path that does not
+    # exist renders AdminNotFound, which is a clean, tiny page that passes every
+    # check trivially. /admin/bookings, /admin/team, /admin/users and
+    # /admin/customers were all in these lists and none of them are routes, so
+    # the gates were quietly auditing a 404 instead of the work-orders table,
+    # the tech roster and the client list. The 404 guard below makes that
+    # impossible to repeat silently.
+    "/admin", "/admin/work-orders", "/admin/scheduler", "/admin/fleet",
+    "/admin/techs", "/admin/clients", "/admin/services", "/admin/catalog",
+    "/admin/options", "/admin/builder", "/admin/intake-forms", "/admin/zones",
+    "/admin/reports", "/admin/notifications", "/admin/settings", "/admin/inbox",
+    "/admin/payouts", "/admin/automation", "/admin/maintenance", "/admin/tags",
+    "/admin/audit", "/admin/api-access", "/admin/integrations",
+    "/admin/reviews", "/admin/companies",
 ]
 BOUNDARY = "This page hit a problem"
+NOT_FOUND = "This admin page doesn't exist"
 fails = []
 
 with sync_playwright() as p:
@@ -41,6 +52,12 @@ with sync_playwright() as p:
         pg.wait_for_timeout(3500)
         errs.clear()
         body = pg.inner_text("body")
+        if NOT_FOUND in body:
+            # Not a page bug — a bug in this list. Fail loudly: a phantom path
+            # is worse than a missing one because it reports as a pass.
+            fails.append((path, "-", "PHANTOM ROUTE — renders the admin 404, fix PAGES"))
+            print(f"  ✗ {path} — phantom route (admin 404)")
+            continue
         if BOUNDARY in body:
             fails.append((path, "-", body.split(BOUNDARY)[1].strip().split("\n")[0][:120]))
             print(f"  ✗ {path}")

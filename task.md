@@ -1,66 +1,34 @@
-# Task — admin UI polish pass (Linear/Stripe level)
+# Small-screen (≤390px) pass — admin
 
-Order agreed with Dan: **6 (web admin polish) → mobile polish → 1 (intake form review) → 2 (score booking flow) → 4 (small-phone card layouts)**
-Weight polish toward the **operations modules** (work orders, scheduler, fleet, inbox) — that's where Dan spends his time.
+Gate baselines: `bun test src` (no .env) ≥352/0 · oxlint 0 · tsc non-TS2769 = 159 ·
+`bunx vite build` (NEVER `bun run build`) · crash-sweep ALL CLEAN · a11y-gate PASS.
+Dev server serves prebuilt dist → re-run `bunx vite build` after every web source change.
 
-## Baselines (do not regress)
-- `bunx tsc --noEmit -p tsconfig.app.json` from packages/web → non-TS2769 errors == **159**
-- `bun test src` (NO root .env sourced) → **323 pass / 0 fail**
-- `bunx oxlint packages/web packages/mobile --deny-warnings --no-error-on-unmatched-pattern` from repo root → 0
-- Build with `bunx vite build` (never `bun run build` — tsc step fails on pre-existing errors)
-- `python3 a11y-gate.py` from packages/web → PASS 24 pages × 2 widths
-- mobile: `bunx tsc --noEmit` filtered to `^(app|lib|components)/` → 0 ; `npx expo export --platform ios`
+## Done
+- work-orders (bookings.tsx): stacked card list below lg; table only ≥lg.
+  Job cell max-w so truncate works; Assign/Edit labels moved to 2xl; customer
+  column moved lg→xl; pill row + search stack until lg. No overflow at 390/768/1024/1280.
+- scheduler.tsx: "drag here" copy → "tap Assign" below lg; grab handle hidden below lg.
+- dead `n-2` class (never defined in any CSS) → `line-clamp-2` in notifications.tsx, services.tsx.
+- FOUND: both gates listed phantom routes (/admin/bookings, /admin/team, /admin/users,
+  /admin/customers) that render AdminNotFound → they were auditing a 404 and passing.
+  Fixed both PAGES lists to the 25 real routes + added a hard phantom-route guard.
+- a11y-gate: new `hscroll` check (inner overflow-x-auto scrollers at 390px) — the
+  document-level check could never see the work-orders table.
 
-## The 5 agreed changes
-1. [x] Thin branded scrollbars + `scrollbar-gutter: stable` (styles.css)
-2. [x] Radius scale collapsed 5 values → 2 + pills, via token mapping (styles.css)
-3. [x] Global branded `:focus-visible` ring; filled ring variant for inputs (styles.css)
-4. [x] Sidebar nav bottom fade mask (`.nvc-fade-b`, shell.tsx, desktop + drawer)
-5. [~] Ops tables + empty states
-   - [x] new shared `components/empty-state.tsx`
-   - [x] bookings: sticky thead, merged sort control, skeleton loading, split
-         "no matches" vs "nothing yet" empty states, `hasAnyFilter`
-   - [ ] scheduler empty states
-   - [ ] inbox empty state
-   - [ ] fleet empty state
-- also: folded `text-[9px]` (16 uses) → `text-[10px]`; 9px was unshippably small
+## Fixed after the gate correction (all 16 findings it surfaced)
+- work-orders sort-direction button 28x28 -> 32x32.
+- builder: 5 icon-only delete buttons got aria-label + title (page had never been audited).
+- clients/Directory: dropped the 720px table floor below lg (the columns already
+  hide there), named the delete button, role pill no longer wraps inside itself.
+- reports detail table: px-2/text-xs at phone width — dynamic report columns
+  cannot be carded, so they had to cost less padding.
+- notifications matrix, techs tab strip, fleet overlay: deliberate scrollers,
+  allowlisted in a11y-gate ALLOWED with reasons.
+- Sabotage-checked: phantom path -> exit 2; reverting the work-orders cards ->
+  hscroll finding; restoring -> clean.
+- Gates green: 352/0 · oxlint 0 · tsc 159 · vite build · crash-sweep ALL CLEAN ·
+  a11y PASS 25 pages x 2 widths.
 
-## Verify
-- Live Chrome at 1024 + 390 via `mb`, screenshots in /tmp/polish
-- Chrome debug: tmux `chrome`, port 9222. Login via `mb js` (React-controlled
-  inputs ignore `mb fill`: set value with the native setter + dispatch `input`,
-  then `form.requestSubmit()`). admin@nvc360.app / admin123
-- Web server: tmux `web` port 4200, log /tmp/web4200.log
-
-## Done earlier this session
-- Deleted all leftover `ZZ …` probe rows from real Turso (14 bookings + 222 child
-  rows + 1 orphan service), verified 0 remaining
-- TestFlight build 14 (v1.0.1) built + submitted; Dan confirmed it opens clean
-- Dan confirmed web Publish now succeeds (AWS SDK cut fixed the builder OOM)
-
-## Item 1 — public intake form audit (in progress, Aug 13 late)
-Live: /f/default/request-service?k=nvcpub_3767…f1e6 renders clean at 1024 + 390
-(/tmp/intake/01-1024.png, 02-390.png). Layout is NOT the problem.
-Suspected findings (verify with tests before fixing):
-- A. out-of-zone submit returns 422 but the customer `user` row + membership are
-     created BEFORE the zone check → junk client records + orphan photo upload
-- B. `email` is never format-validated; it lands in `user.email` and in the
-     recipient email's `Reply-To`
-- C. photo > 15 MB is silently dropped (no else branch) — customer thinks it sent
-- D. client-side: `?k=` missing only errors after filling+submitting; no
-     `aria-busy`; server errors render at the bottom with no scroll/focus move
-Never curl the real /submit — it calls fireEvent() (real SMS/email). Verify in the
-in-memory harness (see intake-form-service-zone.test.ts).
-
-### Item 1 result (commit 6a28ba2, pushed)
-All 4 suspected findings CONFIRMED by failing tests first, then fixed:
-- zone check moved before every write (was leaking a client user + membership +
-  orphan storage object on a 422)
-- email shape-checked (400) — was going raw into user.email and Reply-To
-- photo > 15 MB now 413 with the limit in the copy (was silently dropped)
-- client: up-front "link is incomplete" notice, role=alert error region that is
-  scrolled to + focused, aria-busy on submit, client-side photo cap
-New test file: src/api/routes/__tests__/intake-form-hygiene.test.ts (7 tests)
-Sabotage-checked all three server fixes. Gates: 330/0, oxlint 0, tsc 159,
-crash ALL CLEAN, a11y PASS. TestFlight build 15 submitted to Apple.
-Next: item 2 (score booking/customer flow) then item 4 (≤390px card layouts).
+## Batched for the next EAS build (not yet built)
+- cross-company Earnings screen (commit 774a0f1)

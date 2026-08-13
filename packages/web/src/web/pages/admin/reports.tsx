@@ -242,17 +242,17 @@ export default function ReportsPage() {
                   {d.rows.length === 0 ? (
                     <p className="py-10 text-center text-sm text-slate-500">No data in this range.</p>
                   ) : (
-                    <table className="w-full text-sm">
+                    <table className="w-full text-xs sm:text-sm">
                       <thead className="sticky top-0 bg-ink-2 text-left text-xs uppercase tracking-wide text-slate-500">
                         <tr>{d.columns.map((c: any) => (
-                          <th key={c.key} className={`px-4 py-2.5 font-semibold ${c.kind === "money" || c.kind === "num" || c.kind === "pct" ? "text-right" : ""}`}>{c.label}</th>
+                          <th key={c.key} className={`px-2 py-2.5 font-semibold sm:px-4 ${c.kind === "money" || c.kind === "num" || c.kind === "pct" ? "text-right" : ""}`}>{c.label}</th>
                         ))}</tr>
                       </thead>
                       <tbody>
                         {d.rows.map((row: any, ri: number) => (
                           <tr key={ri} className="border-t border-white/5 hover:bg-white/5">
                             {d.columns.map((c: any) => (
-                              <td key={c.key} className={`px-4 py-2.5 ${c.kind === "money" || c.kind === "num" || c.kind === "pct" ? "text-right tabular-nums text-slate-200" : "text-slate-300"}`}>
+                              <td key={c.key} className={`px-2 py-2.5 sm:px-4 ${c.kind === "money" || c.kind === "num" || c.kind === "pct" ? "text-right tabular-nums text-slate-200" : "text-slate-300"}`}>
                                 {fmtCell(row[c.key], c.kind)}
                               </td>
                             ))}

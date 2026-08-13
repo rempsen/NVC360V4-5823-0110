@@ -212,6 +212,30 @@ export default function AdminWorkOrders() {
     setPage(1);
   }
 
+  // Shared by the phone card list and the desktop table so the two can never
+  // drift into telling a filtered-out user two different stories.
+  const emptyEl = hasAnyFilter ? (
+    <EmptyState
+      icon={Search}
+      title="No matches"
+      hint="Nothing here fits the current filters and search. Widen the date range or clear the filters to see everything."
+      action={
+        <button
+          onClick={clearAll}
+          className="rounded-md border border-white/10 bg-ink-2 px-3 py-1.5 text-xs font-semibold text-slate-200 transition-colors hover:bg-white/5"
+        >
+          Clear filters
+        </button>
+      }
+    />
+  ) : (
+    <EmptyState
+      icon={ClipboardList}
+      title={`No ${jobPlural.toLowerCase()} yet`}
+      hint={`Create one from the button above, or let ${customerNoun.toLowerCase()}s book themselves through an intake form.`}
+    />
+  );
+
   function toggleSort(key: string) {
     if (sort === key) setDir((d) => (d === "asc" ? "desc" : "asc"));
     else {
@@ -245,7 +269,7 @@ export default function AdminWorkOrders() {
       />
 
       {/* quick pills + search + filter toggle */}
-      <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-wrap gap-1.5">
           {QUICK.map((f) => (
             <button
@@ -286,7 +310,7 @@ export default function AdminWorkOrders() {
               value={qInput}
               onChange={(e) => setQInput(e.target.value)}
               placeholder="Search name, phone, email, address…"
-              className="w-full rounded-full border border-white/10 bg-ink-2 py-2 pl-9 pr-4 text-sm text-white outline-none placeholder:text-slate-600 focus:border-brand sm:w-72"
+              className="w-full rounded-full border border-white/10 bg-ink-2 py-2 pl-9 pr-4 text-sm text-white outline-none placeholder:text-slate-600 focus:border-brand lg:w-72"
             />
           </div>
         </div>
@@ -331,12 +355,164 @@ export default function AdminWorkOrders() {
             vertical scroller fights the page scroll -- you flick to move the
             page and instead move the table -- so below lg it stays a plain
             horizontally-scrolling table inside normal page flow. */}
-        <div className="nvc-scroll-y overflow-x-auto lg:max-h-[calc(100vh-19rem)] lg:overflow-auto">
+        {/* Phone layout. Below md the table hid the customer, schedule, tech
+            and total -- the four things a dispatcher on a phone is actually
+            looking for -- behind a sideways scroll, and the address truncated
+            mid-word. Same rows, same actions, stacked instead. */}
+        <div className="lg:hidden">
+          {search.isLoading ? (
+            <div className="space-y-2.5 p-4" aria-live="polite" aria-busy="true">
+              <span className="sr-only">Loading {jobPlural.toLowerCase()}…</span>
+              {[0, 1, 2, 3, 4].map((i) => (
+                <div
+                  key={i}
+                  className="h-24 animate-pulse rounded-lg bg-white/[0.04]"
+                  style={{ animationDelay: `${i * 90}ms` }}
+                />
+              ))}
+            </div>
+          ) : list.length === 0 ? (
+            emptyEl
+          ) : (
+            <ul className="divide-y divide-white/5">
+              {list.map((b) => {
+                const archived = !!b.deletedAt;
+                return (
+                  <li key={b.id} className={`px-4 py-3 ${archived ? "opacity-50" : ""}`}>
+                    <button
+                      type="button"
+                      disabled={archived}
+                      onClick={() => openJob(b)}
+                      className="block w-full text-left disabled:cursor-default"
+                    >
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="rounded bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">
+                          {b.jobNumber}
+                        </span>
+                        {b.priority && PRIORITY_META[b.priority] && (
+                          <span
+                            className="rounded-full px-1.5 py-0.5 text-[10px] font-bold"
+                            style={{
+                              color: PRIORITY_META[b.priority].color,
+                              background: `${PRIORITY_META[b.priority].color}22`,
+                            }}
+                          >
+                            {PRIORITY_META[b.priority].label}
+                          </span>
+                        )}
+                        {archived && (
+                          <span className="rounded-full bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-bold text-rose-400">
+                            ARCHIVED
+                          </span>
+                        )}
+                        <span className="ml-auto">
+                          <StatusBadge status={b.status} />
+                        </span>
+                      </div>
+                      <p className="mt-1 font-semibold leading-snug text-slate-100">
+                        {b.title || b.service}
+                      </p>
+                      {/* Two lines, wrapped: a phone-width address that
+                          truncates at "Winnipeg, MB R3M 0A7, Canad…" is worse
+                          than no address at all. */}
+                      <p className="mt-0.5 flex items-start gap-1 text-xs leading-snug text-slate-500">
+                        <MapPin className="mt-0.5 h-3 w-3 shrink-0" />
+                        <span className="line-clamp-2">{b.address}</span>
+                      </p>
+                    </button>
+                    <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+                      <div className="min-w-0">
+                        <dt className="text-slate-600">{customerNoun}</dt>
+                        <dd className="truncate text-slate-300">{b.customerName || "—"}</dd>
+                      </div>
+                      <div className="min-w-0">
+                        <dt className="text-slate-600">{noun}</dt>
+                        <dd className="truncate text-slate-300">
+                          {b.technician === "Unassigned" ? (
+                            <span className="text-slate-600">Unassigned</span>
+                          ) : (
+                            b.technician
+                          )}
+                        </dd>
+                      </div>
+                      <div className="min-w-0">
+                        <dt className="text-slate-600">Scheduled</dt>
+                        <dd className="truncate text-slate-400">
+                          {b.scheduledAt ? fmtDate(b.scheduledAt) : "—"}
+                        </dd>
+                      </div>
+                      <div className="min-w-0">
+                        <dt className="text-slate-600">Total</dt>
+                        <dd className="font-bold text-white">{money(b.total ?? 0)}</dd>
+                      </div>
+                    </dl>
+                    <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                      {!archived && ["pending", "confirmed"].includes(b.status) && (
+                        <button
+                          onClick={() => setAssignFor(b)}
+                          className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-brand px-3.5 text-xs font-semibold text-white hover:bg-brand-deep"
+                        >
+                          <UserPlus className="h-3.5 w-3.5" /> Assign
+                        </button>
+                      )}
+                      {!archived && (
+                        <button
+                          onClick={() => openJob(b)}
+                          className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-white/10 px-3.5 text-xs font-semibold text-slate-300 hover:border-brand/50 hover:text-white"
+                        >
+                          {b.status === "completed" ? (
+                            <ClipboardList className="h-3.5 w-3.5" />
+                          ) : (
+                            <Pencil className="h-3.5 w-3.5" />
+                          )}{" "}
+                          {b.status === "completed" ? "Report" : "Edit"}
+                        </button>
+                      )}
+                      <div className="ml-auto flex items-center gap-1.5">
+                        <RowExportMenu jobId={b.id} jobNumber={b.jobNumber} />
+                        {archived ? (
+                          <button
+                            onClick={() => restore.mutate(b.id)}
+                            aria-label="Restore"
+                            title="Restore"
+                            className="grid h-11 w-11 place-items-center rounded-full border border-white/10 text-emerald-live hover:bg-white/5"
+                          >
+                            <RotateCcw className="h-4 w-4" />
+                          </button>
+                        ) : (
+                          <button
+                            onClick={async () => {
+                              if (
+                                await confirm({
+                                  title: "Archive this work order?",
+                                  message: "It moves to the archive and can be restored later.",
+                                  confirmLabel: "Archive",
+                                })
+                              )
+                                del.mutate(b.id);
+                            }}
+                            aria-label="Archive"
+                            title="Archive"
+                            className="grid h-11 w-11 place-items-center rounded-full border border-white/10 text-slate-400 hover:border-rose-500/40 hover:text-rose-400"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+
+        <div className="nvc-scroll-y hidden overflow-x-auto lg:block lg:max-h-[calc(100vh-19rem)] lg:overflow-auto">
           <table className="nvc-thead-sticky w-full text-sm">
             <thead>
               <tr className="border-b border-white/5 text-left text-xs uppercase tracking-wide text-slate-500">
                 <th className="px-3 py-3 font-semibold lg:px-4">{jobNoun}</th>
-                <th className="hidden px-3 py-3 font-semibold lg:table-cell lg:px-4">{customerNoun}</th>
+                <th className="hidden px-3 py-3 font-semibold xl:table-cell xl:px-4">{customerNoun}</th>
                 <th className="hidden px-3 py-3 font-semibold xl:table-cell xl:px-4">Schedule</th>
                 <th className="hidden px-3 py-3 font-semibold md:table-cell lg:px-4">{noun}</th>
                 <th className="px-3 py-3 font-semibold lg:px-4">Status</th>
@@ -365,29 +541,7 @@ export default function AdminWorkOrders() {
                 </tr>
               ) : list.length === 0 ? (
                 <tr>
-                  <td colSpan={7}>
-                    {hasAnyFilter ? (
-                      <EmptyState
-                        icon={Search}
-                        title="No matches"
-                        hint="Nothing here fits the current filters and search. Widen the date range or clear the filters to see everything."
-                        action={
-                          <button
-                            onClick={clearAll}
-                            className="rounded-md border border-white/10 bg-ink-2 px-3 py-1.5 text-xs font-semibold text-slate-200 transition-colors hover:bg-white/5"
-                          >
-                            Clear filters
-                          </button>
-                        }
-                      />
-                    ) : (
-                      <EmptyState
-                        icon={ClipboardList}
-                        title={`No ${jobPlural.toLowerCase()} yet`}
-                        hint={`Create one from the button above, or let ${customerNoun.toLowerCase()}s book themselves through an intake form.`}
-                      />
-                    )}
-                  </td>
+                  <td colSpan={7}>{emptyEl}</td>
                 </tr>
               ) : (
                 list.map((b) => {
@@ -397,8 +551,12 @@ export default function AdminWorkOrders() {
                       key={b.id}
                       className={`hover:bg-white/[0.03] ${archived ? "opacity-50" : ""}`}
                     >
+                      {/* The capped width is what makes the inner truncate
+                          work: in an auto-layout table this cell otherwise
+                          claims its max-content width and shoves the action
+                          buttons off the right edge between 1024 and 1440px. */}
                       <td
-                        className={`px-3 py-3 lg:px-4 ${archived ? "" : "cursor-pointer"}`}
+                        className={`max-w-[240px] px-3 py-3 lg:max-w-[200px] lg:px-4 xl:max-w-[300px] 2xl:max-w-none ${archived ? "" : "cursor-pointer"}`}
                         aria-label={b.title || b.service || b.jobNumber}
                         onClick={() => {
                           if (!archived) openJob(b);
@@ -434,7 +592,11 @@ export default function AdminWorkOrders() {
                           </p>
                         </div>
                       </td>
-                      <td className="hidden px-3 py-3 text-slate-300 lg:table-cell lg:px-4">
+                      {/* Customer waits for xl: at 1024-1279px the six
+                          columns plus the action buttons did not fit, and a
+                          sideways scroll that hides Assign/Edit costs more than
+                          a name the row already opens onto. */}
+                      <td className="hidden px-3 py-3 text-slate-300 xl:table-cell xl:px-4">
                         {b.customerName}
                       </td>
                       <td className="hidden px-3 py-3 text-slate-400 xl:table-cell xl:px-4">
@@ -463,7 +625,7 @@ export default function AdminWorkOrders() {
                                 className="inline-flex items-center gap-1.5 rounded-full bg-brand px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-brand-deep lg:px-3"
                               >
                                 <UserPlus className="h-3.5 w-3.5" />{" "}
-                                <span className="hidden lg:inline">Assign</span>
+                                <span className="hidden 2xl:inline">Assign</span>
                               </button>
                             )}
                           {!archived && (
@@ -476,7 +638,7 @@ export default function AdminWorkOrders() {
                               {b.status === "completed"
                                 ? <ClipboardList className="h-3.5 w-3.5" />
                                 : <Pencil className="h-3.5 w-3.5" />}{" "}
-                              <span className="hidden lg:inline">{b.status === "completed" ? "Report" : "Edit"}</span>
+                              <span className="hidden 2xl:inline">{b.status === "completed" ? "Report" : "Edit"}</span>
                             </button>
                           )}
                           <RowExportMenu jobId={b.id} jobNumber={b.jobNumber} />
@@ -601,7 +763,7 @@ function SortControl({
           onClick={() => onSort(sort)}
           title={`Sorted ${dirLabel} — click to reverse`}
           aria-label={`Sorted ${dirLabel}. Reverse sort order`}
-          className="grid h-7 w-7 place-items-center border-l border-white/10 text-slate-400 transition-colors hover:bg-white/5 hover:text-white"
+          className="grid h-8 w-8 place-items-center border-l border-white/10 text-slate-400 transition-colors hover:bg-white/5 hover:text-white"
         >
           <ChevronDown
             className={`h-3.5 w-3.5 transition-transform duration-150 ${dir === "asc" ? "rotate-180" : ""}`}

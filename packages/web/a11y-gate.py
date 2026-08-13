@@ -45,12 +45,20 @@ PW = os.environ.get("A11Y_PW", "NVC423!!")
 BASELINE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "a11y-baseline.json")
 
 PAGES = [
-    "/admin", "/admin/bookings", "/admin/scheduler", "/admin/techs", "/admin/team",
-    "/admin/users", "/admin/services", "/admin/catalog", "/admin/reports",
-    "/admin/notifications", "/admin/settings", "/admin/inbox", "/admin/intake-forms",
-    "/admin/payouts", "/admin/fleet", "/admin/automation", "/admin/zones",
-    "/admin/reviews", "/admin/tags", "/admin/audit", "/admin/api-access",
-    "/admin/integrations", "/admin/companies", "/admin/maintenance",
+    # Every path here is checked against the real router: a path that does not
+    # exist renders AdminNotFound, which is a clean, tiny page that passes every
+    # check trivially. /admin/bookings, /admin/team, /admin/users and
+    # /admin/customers were all in these lists and none of them are routes, so
+    # the gates were quietly auditing a 404 instead of the work-orders table,
+    # the tech roster and the client list. The 404 guard below makes that
+    # impossible to repeat silently.
+    "/admin", "/admin/work-orders", "/admin/scheduler", "/admin/fleet",
+    "/admin/techs", "/admin/clients", "/admin/services", "/admin/catalog",
+    "/admin/options", "/admin/builder", "/admin/intake-forms", "/admin/zones",
+    "/admin/reports", "/admin/notifications", "/admin/settings", "/admin/inbox",
+    "/admin/payouts", "/admin/automation", "/admin/maintenance", "/admin/tags",
+    "/admin/audit", "/admin/api-access", "/admin/integrations",
+    "/admin/reviews", "/admin/companies",
 ]
 
 # Findings we accept and will not fail on, with the reason. Keep this list SHORT
@@ -62,12 +70,34 @@ ALLOWED = [
     ("ctlNoName", "leaflet-marker-icon"),
     ("ctlNoName", "leaflet-control"),
     ("tinyTap", "leaflet"),
+    # Deliberate horizontal scrollers with a visible affordance, not layout
+    # accidents. A phone-shaped replacement would cost more than it buys:
+    # the notification grid is a real event x recipient x channel matrix, and
+    # the other two are tab/chip strips that are meant to swipe.
+    ("hscroll", "overflow-x-auto rounded-2xl border border-white/5 nvc-card"),
+    ("hscroll", "mb-5 flex gap-1 overflow-x-auto border-b border-white/5"),
+    ("hscroll", "nvc-glass no-scrollbar pointer-events-auto"),
 ]
 
 AUDIT_JS = """
 () => {
-  const out = {overflow:null, imgNoAlt:[], ctlNoName:[], inputNoLabel:[], tinyTap:[]};
+  const out = {overflow:null, imgNoAlt:[], ctlNoName:[], inputNoLabel:[],
+               tinyTap:[], hscroll:[], notFound:false};
   const de = document.documentElement;
+  // A path that isn't a route renders the admin 404, which passes every check
+  // below trivially and reports as coverage it never had.
+  out.notFound = (document.body.innerText || '').includes("This admin page doesn't exist");
+  // Document-level overflow was the only width check here, so a table inside
+  // its own overflow-x-auto -- exactly how the work-orders list hid the
+  // customer, tech and total behind a sideways scroll on a phone -- was
+  // invisible to this gate. Inner scrollers count too.
+  document.querySelectorAll('div, section, main, ul, ol').forEach(el => {
+    if (el.scrollWidth <= el.clientWidth + 8) return;
+    const ov = getComputedStyle(el).overflowX;
+    if (ov !== 'auto' && ov !== 'scroll') return;
+    out.hscroll.push(el.scrollWidth + 'px in ' + el.clientWidth + 'px ' +
+                     (el.className || '').toString().slice(0, 80));
+  });
   out.overflow = de.scrollWidth > de.clientWidth + 2
     ? {scrollWidth: de.scrollWidth, clientWidth: de.clientWidth} : null;
   if (out.overflow) {
@@ -123,7 +153,7 @@ AUDIT_JS = """
 }
 """
 
-CHECKS = ("ctlNoName", "inputNoLabel", "imgNoAlt", "tinyTap")
+CHECKS = ("ctlNoName", "inputNoLabel", "imgNoAlt", "tinyTap", "hscroll")
 
 
 def allowed(kind: str, descriptor: str) -> bool:
@@ -159,6 +189,11 @@ def collect():
                     a = pg.evaluate(AUDIT_JS)
                 except Exception as e:
                     a = {"error": str(e)[:140]}
+                if a.get("notFound"):
+                    print(f"SETUP FAILURE: {path} is not a route — it renders the "
+                          f"admin 404, so auditing it proves nothing. Fix PAGES.")
+                    b.close()
+                    sys.exit(2)
                 results[f"{width}{path}"] = a
         b.close()
     return results
@@ -174,7 +209,7 @@ def findings(results):
         width = 390 if key.startswith("390") else 1440
         for kind in CHECKS:
             # tap-target size and overflow only matter at phone width
-            if kind == "tinyTap" and width != 390:
+            if kind in ("tinyTap", "hscroll") and width != 390:
                 continue
             for d in v.get(kind) or []:
                 if not allowed(kind, d):
@@ -230,6 +265,8 @@ How to fix:
   inputNoLabel <select>/<input> -> add aria-label, or a <label for=...>
   imgNoAlt     add alt="" for decorative, or real descriptive text
   tinyTap      make it at least 32x32 at 390px (padding, not font-size)
+  hscroll      an inner overflow-x-auto scrolls sideways on a phone — give the
+               list a stacked card layout below md/lg instead of a wide table
   overflow     something is wider than the viewport — usually a table or a
                fixed-width element that needs overflow-x-auto or a min-w-0
   loadError    the page threw or timed out — that's a real bug, not an a11y one

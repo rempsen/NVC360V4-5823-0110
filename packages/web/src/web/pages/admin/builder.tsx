@@ -379,7 +379,9 @@ export default function BuilderPage() {
                       </button>
                       <button
                         onClick={() => setDelId(t.id)}
-                        className="grid h-6 w-7 place-items-center rounded-md bg-white/5 text-slate-500 hover:bg-red-500/10 hover:text-red-400"
+                        aria-label={`Delete template ${t.name}`}
+                        title={`Delete template ${t.name}`}
+                        className="grid h-8 w-8 place-items-center rounded-md bg-white/5 text-slate-500 hover:bg-red-500/10 hover:text-red-400"
                       >
                         <Trash2 className="h-3 w-3" />
                       </button>

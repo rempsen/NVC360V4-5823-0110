@@ -194,7 +194,7 @@ export default function AdminClients() {
 
       <div className="nvc-card overflow-hidden">
         <div className="overflow-x-auto">
-        <table className="w-full min-w-[720px] text-sm">
+        <table className="w-full text-sm lg:min-w-[720px]">
           <thead>
             <tr className="border-b border-white/5 text-left text-xs uppercase tracking-wide text-slate-500">
               <th className="px-4 py-3 font-semibold">Name</th>
@@ -233,7 +233,7 @@ export default function AdminClients() {
                   </td>
                   <td className="px-4 py-3">
                     <span
-                      className={`rounded-full px-2.5 py-1 text-xs font-semibold ${ROLE_TINT[u.role] ?? "bg-white/5 text-slate-400"}`}
+                      className={`inline-block whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${ROLE_TINT[u.role] ?? "bg-white/5 text-slate-400"}`}
                     >
                       {roleLabel(u.role)}
                     </span>
@@ -244,8 +244,9 @@ export default function AdminClients() {
                   <td className="px-4 py-3 text-right">
                     <button
                       onClick={(e) => { e.stopPropagation(); setDelUser(u); }}
+                      aria-label={`Delete account ${u.name}`}
                       title="Delete account"
-                      className="grid h-7 w-7 place-items-center rounded-lg text-slate-600 transition hover:bg-red-500/10 hover:text-red-400"
+                      className="grid h-8 w-8 place-items-center rounded-lg text-slate-600 transition hover:bg-red-500/10 hover:text-red-400"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>

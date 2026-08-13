@@ -767,7 +767,9 @@ export default function SchedulerPage() {
                   }`}
                 >
                   <div className="flex items-start gap-2">
-                    <GripVertical className="mt-0.5 h-4 w-4 shrink-0 cursor-grab text-slate-600 group-hover:text-slate-400" />
+                    {/* The grab handle promises drag-to-dispatch, so it only
+                        appears at the widths where dragging exists. */}
+                    <GripVertical className="mt-0.5 hidden h-4 w-4 shrink-0 cursor-grab text-slate-600 group-hover:text-slate-400 lg:block" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5">
                         <p className="truncate text-sm font-semibold text-white">
@@ -1039,7 +1041,12 @@ export default function SchedulerPage() {
                     // rather than "this tech is free".
                     <div className="flex w-full items-center gap-2 rounded-md border border-dashed border-white/10 px-3 py-2.5 text-[11px] text-slate-500">
                       <Plus className="h-3.5 w-3.5 shrink-0 text-slate-600" aria-hidden="true" />
-                      Free — drag a work order here to dispatch
+                      {/* Telling a phone user to drag is telling them to do
+                          something the platform cannot do -- HTML5 drag events
+                          never fire from touch. Point them at the Assign button
+                          that does work instead. */}
+                      <span className="hidden lg:inline">Free — drag a work order here to dispatch</span>
+                      <span className="lg:hidden">Free — tap Assign on an unassigned job to dispatch</span>
                     </div>
                   ) : (
                     jobs.map((b) => (
