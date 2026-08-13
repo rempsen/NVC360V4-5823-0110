@@ -128,10 +128,24 @@ export const messages = sqliteTable("messages", {
   senderName: text("sender_name").notNull().default(""),
   body: text("body").notNull(),
   channel: text("channel").notNull().default("app"), // app | sms
+  // ── read state is PER AUDIENCE, not per message ───────────────────────────
+  // A job thread is read by three different parties (customer, office, field
+  // tech) and one shared flag cannot represent that. `read` historically means
+  // "the OFFICE has read this" — the dispatcher inbox counts depend on it, and
+  // POST /:bookingId/mark-read sets it on the office's behalf.
+  //
+  // `readByTech` is the FIELD side's own acknowledgement. Without it, counting
+  // job-thread messages toward the driver app's badge meant either a red number
+  // the tech could never clear, or a tech silently blanking the dispatcher's
+  // inbox just by opening a job.
   read: integer("read", { mode: "boolean" }).notNull().default(false),
+  readByTech: integer("read_by_tech", { mode: "boolean" }).notNull().default(false),
   createdAt: now(),
 }, (t) => ({
   companyIdx: index("msg_company_idx").on(t.companyId),
+  // The driver-app badge query filters unread-for-tech within one booking, and
+  // runs for every company a technician works for on an 8s poll.
+  techUnreadIdx: index("msg_tech_unread_idx").on(t.bookingId, t.readByTech),
 }));
 
 /** AI / automation rules engine */

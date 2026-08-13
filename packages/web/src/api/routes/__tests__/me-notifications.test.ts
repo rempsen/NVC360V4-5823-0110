@@ -153,21 +153,34 @@ beforeAll(async () => {
     senderRole: string,
     read: number,
     bookingId: string | null = null,
+    readByTech = 0,
   ) =>
     sql.execute({
-      sql: "INSERT OR IGNORE INTO messages (id, company_id, rider_id, booking_id, sender_role, sender_name, body, read) VALUES (?,?,?,?,?,?,?,?)",
-      args: [id, company, riderId, bookingId, senderRole, "Dispatcher", "hello", read],
+      sql: "INSERT OR IGNORE INTO messages (id, company_id, rider_id, booking_id, sender_role, sender_name, body, read, read_by_tech) VALUES (?,?,?,?,?,?,?,?,?)",
+      args: [id, company, riderId, bookingId, senderRole, "Dispatcher", "hello", read, readByTech],
     });
 
-  // ---- Acme messages: 2 unread from dispatch = the only ones that count.
+  // ---- Acme direct thread: 2 unread from dispatch.
   await msg("nm-acme-1", ACME, "r-tech-acme", "dispatch", 0);
   await msg("nm-acme-2", ACME, "r-tech-acme", "dispatch", 0);
   await msg("nm-acme-read", ACME, "r-tech-acme", "dispatch", 1);
   await msg("nm-acme-mine", ACME, "r-tech-acme", "tech", 0); // tech's own — never counts
   await msg("nm-acme-other", ACME, "r-solo-acme", "dispatch", 0); // another tech's thread
-  // A job-thread message: intentionally excluded (see the note in me.ts — the
-  // tech has no way to ack it, so counting it would stick the badge on).
+
+  // ---- Acme job threads, counted via read_by_tech (the FIELD's own ack).
+  // On the tech's own live job: a dispatcher message and a customer message.
+  // Both count — on a job thread the customer is talking to the tech.
   await msg("nm-acme-job", ACME, "r-tech-acme", "dispatch", 0, "nb-acme-accepted");
+  await msg("nm-acme-job-client", ACME, "r-tech-acme", "client", 0, "nb-acme-accepted");
+  // ...and every shape on a job thread that must NOT count:
+  await msg("nm-acme-job-mine", ACME, "r-tech-acme", "tech", 0, "nb-acme-accepted"); // own send
+  await msg("nm-acme-job-acked", ACME, "r-tech-acme", "dispatch", 0, "nb-acme-accepted", 1); // already acked
+  await msg("nm-acme-job-done", ACME, "r-tech-acme", "dispatch", 0, "nb-acme-done"); // completed job
+  await msg("nm-acme-job-cxl", ACME, "r-tech-acme", "dispatch", 0, "nb-acme-cancelled"); // cancelled
+  await msg("nm-acme-job-del", ACME, "r-tech-acme", "dispatch", 0, "nb-acme-deleted"); // soft-deleted
+  // On a job that belongs to a DIFFERENT tech at the same company: it counts
+  // for SOLO (who can open it) and never for TECH (who cannot).
+  await msg("nm-acme-job-other", ACME, "r-solo-acme", "dispatch", 0, "nb-acme-other");
 
   // ---- Bolt: no unread messages, only the two work orders.
   await msg("nm-bolt-read", BOLT, "r-tech-bolt", "dispatch", 1);
@@ -207,13 +220,15 @@ describe("GET /me/notifications — auth", () => {
 });
 
 describe("GET /me/notifications — per-company counts", () => {
-  it("counts unread dispatch messages and pending work orders per company", async () => {
+  it("counts unread messages and pending work orders per company", async () => {
     const s = await get({ user: TECH, company: ACME });
     expect(at(s, ACME)).toMatchObject({
       company: "Acme Facilities",
-      unreadMessages: 2,
+      // 2 unread on the direct dispatch thread + 2 unacked on the live job
+      // thread (one from dispatch, one from the customer).
+      unreadMessages: 4,
       pendingOffers: 1,
-      total: 3,
+      total: 5,
     });
     expect(at(s, BOLT)).toMatchObject({
       company: "Bolt Mechanical",
@@ -233,21 +248,21 @@ describe("GET /me/notifications — per-company counts", () => {
 
   it("totals across every company, which is what the app-icon badge shows", async () => {
     const s = await get({ user: TECH, company: ACME });
-    expect(s.unreadMessages).toBe(2);
+    expect(s.unreadMessages).toBe(4);
     expect(s.pendingOffers).toBe(3);
-    expect(s.total).toBe(5);
+    expect(s.total).toBe(7);
   });
 
   it("splits out the active company for the Jobs and Messages tab badges", async () => {
     const s = await get({ user: TECH, company: ACME });
-    expect(s.active).toMatchObject({ companyId: ACME, unreadMessages: 2, pendingOffers: 1, total: 3 });
+    expect(s.active).toMatchObject({ companyId: ACME, unreadMessages: 4, pendingOffers: 1, total: 5 });
   });
 
   it("follows the header when the tech switches company", async () => {
     const s = await get({ user: TECH, company: BOLT });
     expect(s.active).toMatchObject({ companyId: BOLT, unreadMessages: 0, pendingOffers: 2, total: 2 });
     // The cross-company total must NOT change just because they switched.
-    expect(s.total).toBe(5);
+    expect(s.total).toBe(7);
   });
 
   it("returns zeroed active counts when no company has been picked yet", async () => {
@@ -256,7 +271,7 @@ describe("GET /me/notifications — per-company counts", () => {
     const s = await get({ user: TECH });
     expect(s.active).toMatchObject({ companyId: "", total: 0 });
     expect(s.companies.length).toBe(2);
-    expect(s.total).toBe(5);
+    expect(s.total).toBe(7);
   });
 
   it("sorts companies by name for a stable picker order", async () => {
@@ -284,8 +299,10 @@ describe("GET /me/notifications — never reports a badge the tech can't clear",
   });
 
   it("ignores messages the tech sent themselves", async () => {
+    // nm-acme-mine (direct) and nm-acme-job-mine (job thread) are both the
+    // tech's own outbound messages; a naive count would report 6 here.
     const s = await get({ user: TECH, company: ACME });
-    expect(at(s, ACME)?.unreadMessages).toBe(2); // nm-acme-mine excluded
+    expect(at(s, ACME)?.unreadMessages).toBe(4);
   });
 
   it("ignores already-read messages", async () => {
@@ -293,12 +310,35 @@ describe("GET /me/notifications — never reports a badge the tech can't clear",
     expect(at(s, BOLT)?.unreadMessages).toBe(0);
   });
 
-  it("excludes job-thread messages (no tech-side read ack exists yet)", async () => {
-    // nm-acme-job is unread and from dispatch, but lives on a booking thread
-    // whose only mark-read acks on behalf of the OFFICE. Counting it would put
-    // a permanent red number on the app.
+  it("counts job-thread messages the tech has not acked, from dispatch AND the customer", async () => {
+    // These are counted off read_by_tech, the field's own flag, so the number
+    // is one the tech can clear by opening the job (POST mark-read-tech) —
+    // without touching the office's `read` and its inbox counts.
     const s = await get({ user: TECH, company: ACME });
-    expect(at(s, ACME)?.unreadMessages).toBe(2);
+    expect(at(s, ACME)?.unreadMessages).toBe(4); // 2 direct + nm-acme-job + nm-acme-job-client
+  });
+
+  it("ignores a job-thread message the tech has already acked", async () => {
+    // nm-acme-job-acked is read_by_tech=1 but read=0: the office still owes it
+    // a look, the tech does not.
+    const s = await get({ user: TECH, company: ACME });
+    expect(at(s, ACME)?.unreadMessages).toBe(4); // would be 5 if read_by_tech were ignored
+  });
+
+  it("ignores job-thread messages on completed, cancelled and deleted jobs", async () => {
+    // nm-acme-job-done / -cxl / -del are all unacked messages from dispatch.
+    // The tech can no longer reach those jobs, so the badge would never clear.
+    const s = await get({ user: TECH, company: ACME });
+    expect(at(s, ACME)?.unreadMessages).toBe(4); // would be 7 without the job-status filter
+  });
+
+  it("ignores job-thread messages on a job assigned to another tech", async () => {
+    // nm-acme-job-other sits on nb-acme-other, a live job belonging to SOLO.
+    // TECH cannot open it (and must not be told about it); SOLO can, and is.
+    const tech = await get({ user: TECH, company: ACME });
+    expect(at(tech, ACME)?.unreadMessages).toBe(4);
+    const solo = await get({ user: SOLO, company: ACME });
+    expect(at(solo, ACME)?.unreadMessages).toBe(2); // own direct + own job thread
   });
 
   it("never badges a suspended company", async () => {
@@ -310,11 +350,12 @@ describe("GET /me/notifications — never reports a badge the tech can't clear",
 
 describe("GET /me/notifications — isolation", () => {
   it("counts only the caller's own work, never a colleague's at the same company", async () => {
-    // SOLO has one offered job (nb-acme-other) and one unread dispatch message
-    // (nm-acme-other) — and must see exactly those, not TECH's.
+    // SOLO has one offered job (nb-acme-other), one unread dispatch message
+    // (nm-acme-other) and one unacked message on that job (nm-acme-job-other)
+    // — and must see exactly those, not TECH's.
     const s = await get({ user: SOLO, company: ACME });
     expect(s.companies.length).toBe(1);
-    expect(at(s, ACME)).toMatchObject({ unreadMessages: 1, pendingOffers: 1, total: 2 });
+    expect(at(s, ACME)).toMatchObject({ unreadMessages: 2, pendingOffers: 1, total: 3 });
   });
 
   it("reports nothing for a company whose invite hasn't been accepted", async () => {
@@ -358,6 +399,6 @@ describe("GET /me/notifications — a company with no rider identity", () => {
     const s = await get({ user: TECH, company: ACME });
     expect(at(s, "notif-office")).toMatchObject({ unreadMessages: 0, pendingOffers: 0, total: 0 });
     // and the real counts are unaffected
-    expect(s.total).toBe(5);
+    expect(s.total).toBe(7);
   });
 });

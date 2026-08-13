@@ -16,7 +16,7 @@ import {
   Modal,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import * as Location from "expo-location";
 import * as ImagePicker from "expo-image-picker";
@@ -53,6 +53,7 @@ import {
 import { api } from "../../lib/api";
 import { useCustomerNoun, useJobNoun } from "../../lib/use-brand";
 import { useLiveMessageSignal } from "../../lib/live-messages";
+import { NOTIFY_SUMMARY_KEY } from "../../lib/notify-summary";
 import { getToken, authHeaders } from "../../lib/auth";
 import { C, money, fmtDate, assetUrl } from "../../lib/theme";
 import { StatusBadge, Button, FullLoader } from "../../components/ui";
@@ -155,6 +156,32 @@ export default function JobDetail() {
   });
   useLiveMessageSignal(id ? `/api/messages/${id}/stream` : null, () =>
     qc.invalidateQueries({ queryKey: ["messages", id] }),
+  );
+
+  // Ack this job thread on behalf of the FIELD, once per focus — never from
+  // the 60s poll or the SSE handler above, or "read" would clear itself while
+  // the phone sat in a pocket.
+  //
+  // This hits mark-read-tech, which sets `readByTech` only. The office's own
+  // `read` flag (and therefore the dispatcher inbox's unread list) is left
+  // alone on purpose: the tech having seen a customer message doesn't mean
+  // anyone in the office has.
+  //
+  // Then refetch the notification summary so the Jobs/Messages tab badges and
+  // the app icon drop the count this screen just cleared.
+  useFocusEffect(
+    useCallback(() => {
+      if (!id) return;
+      fetch(`${API}/api/messages/${id}/mark-read-tech`, {
+        method: "POST",
+        headers: authHeaders(),
+      })
+        .then(() => {
+          qc.invalidateQueries({ queryKey: NOTIFY_SUMMARY_KEY });
+        })
+        .catch(() => {});
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [id]),
   );
 
   const photos = useQuery({

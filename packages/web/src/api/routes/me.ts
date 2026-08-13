@@ -28,9 +28,11 @@ type SessionUser = { id: string; role?: string; companyId?: string };
  * never drift apart between the badge and the picker — both read this.
  *
  * "Needs my attention" for a technician is exactly two things:
- *   1. Dispatch said something I haven't read (direct thread, and any thread on
- *      a job that is still mine — a message on a finished job is history, not a
- *      task).
+ *   1. Someone said something I haven't read — the dispatcher's direct thread,
+ *      plus any thread on a job that is still mine and still live (a message on
+ *      a finished job is history, not a task). Job threads are counted with
+ *      `readByTech`, the field's own read flag, so this can never fight with
+ *      the dispatcher inbox's `read`.
  *   2. A work order is sitting on `offered`, waiting for accept/decline.
  *
  * Messages the tech sent themselves are never counted (senderRole filter), and
@@ -69,22 +71,45 @@ async function countsForCompany(
     ),
   );
 
-  // NOTE — job-thread messages are deliberately NOT counted here.
+  // ── Job-thread messages, counted via the FIELD's own read flag ────────────
   //
-  // `messages.read` is a single shared flag, and the only thing that clears it
-  // on a job thread is POST /:bookingId/mark-read, which marks CLIENT messages
-  // read on behalf of the OFFICE (it feeds the dispatcher inbox count). The
-  // driver app has no ack of its own for a job thread, so counting those
-  // messages here would put a red number on the app that the technician has no
-  // way to clear by doing anything — and letting the tech clear it would
-  // silently blank the dispatcher's inbox instead.
+  // `messages.read` means "the OFFICE has read this" and drives the dispatcher
+  // inbox, so it cannot answer "has the tech seen this". `readByTech` is the
+  // field side's independent ack, cleared by POST /:bookingId/mark-read-tech
+  // when the tech opens the job. That is what makes this count safe to show:
+  // the tech can clear it, and clearing it does not touch the office's inbox.
   //
-  // Doing this properly needs a per-audience read flag (`read_by_tech`) so the
-  // office and the field can ack independently. Until then the badge counts
-  // only what the tech can actually action: the dispatcher's direct thread and
-  // work orders awaiting accept/decline.
+  // Scoped to jobs that are still the tech's OWN and still live. A message on a
+  // completed, cancelled or reassigned job is history, not a task — counting it
+  // would leave a number the tech can no longer reach a screen to clear.
+  const myLiveJobs = await t.select(
+    schema.bookings,
+    and(
+      eq(schema.bookings.riderId, rider.id),
+      notInArray(schema.bookings.status, ["completed", "cancelled"]),
+      isNull(schema.bookings.deletedAt),
+    ),
+  );
+
+  let jobUnread = 0;
+  if (myLiveJobs.length > 0) {
+    const jobMsgs = await t.select(
+      schema.messages,
+      and(
+        inArray(
+          schema.messages.bookingId,
+          myLiveJobs.map((b) => b.id),
+        ),
+        eq(schema.messages.readByTech, false),
+      ),
+    );
+    // Inbound only — the tech's own sends are theirs. Both dispatch AND client
+    // messages count: on a job thread the customer is talking to the tech.
+    jobUnread = jobMsgs.filter((m) => m.senderRole !== "tech").length;
+  }
+
   return {
-    unreadMessages: direct.filter((m) => m.senderRole === "dispatch").length,
+    unreadMessages: direct.filter((m) => m.senderRole === "dispatch").length + jobUnread,
     pendingOffers: offered.length,
   };
 }

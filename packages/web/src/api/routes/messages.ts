@@ -3,7 +3,7 @@ import { streamSSE } from "hono/streaming";
 import { db } from "../database";
 import { tdb } from "../database/tenant";
 import * as schema from "../database/schema";
-import { eq, and, or, isNull, inArray } from "drizzle-orm";
+import { eq, and, or, isNull, inArray, notInArray } from "drizzle-orm";
 import { requireAuth, requireAdmin, tx, tenantId } from "../middleware/auth";
 import { isAdminRole } from "../lib/permissions";
 import { sendSms, trackingUrl } from "../../services/sms";
@@ -691,6 +691,51 @@ export const messagesRoutes = new Hono()
         }
       }
     });
+  })
+
+  /**
+   * POST /api/messages/:bookingId/mark-read-tech — the FIELD side acks a job
+   * thread. Sets `readByTech` only; never touches `read`.
+   *
+   * Why this is a separate endpoint rather than a flag on the office's
+   * mark-read: `read` means "the office has seen this" and drives the
+   * dispatcher inbox counts. If opening a job on the phone set `read`, a
+   * technician would silently blank the dispatcher's unread list; if the tech
+   * had no ack at all, every job-thread message would sit on the driver app's
+   * badge forever. Two audiences, two flags, two explicit acks.
+   *
+   * Scoped to the caller's own assigned job — a tech cannot ack a thread on
+   * someone else's work order (that would hide a message from the tech who
+   * actually needs it).
+   */
+  .post("/:bookingId/mark-read-tech", requireAuth, async (c) => {
+    const u = c.get("user") as SessionUser;
+    if (u.role !== "rider") return c.json({ message: "Forbidden" }, 403);
+    const t = tx(c);
+    const bookingId = c.req.param("bookingId");
+
+    const rider = await t.selectOne(schema.riders, eq(schema.riders.userId, u.id));
+    if (!rider) return c.json({ message: "Rider not found" }, 404);
+
+    // Ownership check inside the tenant scope: 404 (not 403) so this can never
+    // be used to probe which booking ids exist in the company.
+    const b = await t.selectOne(
+      schema.bookings,
+      and(eq(schema.bookings.id, bookingId), eq(schema.bookings.riderId, rider.id)),
+    );
+    if (!b) return c.json({ message: "Work order not found" }, 404);
+
+    // Only inbound messages: the tech's own sends are already "read by tech",
+    // and a client message on the job thread is addressed to the tech too.
+    await t.update(
+      schema.messages,
+      { readByTech: true },
+      and(
+        eq(schema.messages.bookingId, bookingId),
+        notInArray(schema.messages.senderRole, ["tech"]),
+      ),
+    );
+    return c.json({ ok: true }, 200);
   })
 
   // POST /api/messages/:bookingId/mark-read — office explicitly acks a client
