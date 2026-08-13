@@ -50,6 +50,16 @@ const CORE_KEYS = new Set(["name", "email", "phone", "address", "serviceType", "
 const PHOTO_MAX_MB = 15;
 const PHOTO_MAX_BYTES = PHOTO_MAX_MB * 1024 * 1024;
 
+// Bot guard, paired with isLikelyBot() in api/routes/public-forms.ts.
+// `_hp` is a hidden honeypot no human can fill; `_ts` is when this page rendered,
+// and the server drops anything submitted less than MIN_FILL_MS after it. A real
+// visitor with a prefilled address could in theory beat that, so we hold the
+// submit here until the window has passed rather than let the server eat a
+// genuine lead — the spinner is already up, so nothing is visible to them.
+const HONEYPOT_FIELD = "_hp";
+const RENDER_STAMP_FIELD = "_ts";
+const MIN_FILL_MS = 2_500;
+
 // Fallback types for core keys — defensive against legacy rows saved without type
 const CORE_KEY_TYPES: Record<string, string> = {
   name: "text", email: "email", phone: "phone", address: "address",
@@ -83,6 +93,8 @@ export default function IntakeForm() {
   // renders below a form that can be a screen and a half tall on a phone, so the
   // message has to be brought to the visitor rather than waiting to be found.
   const errRef = useRef<HTMLParagraphElement | null>(null);
+  const renderedAt = useRef(Date.now());
+  const hpRef = useRef<HTMLInputElement | null>(null);
 
   const fail = (msg: string) => {
     setErr(msg);
@@ -130,6 +142,11 @@ export default function IntakeForm() {
         if (!f.enabled || CORE_KEYS.has(f.key)) return;
         if (v[f.key] != null && v[f.key] !== "") fd.append(f.key, v[f.key]);
       });
+      // bot guard (see MIN_FILL_MS above)
+      fd.append(HONEYPOT_FIELD, hpRef.current?.value || "");
+      fd.append(RENDER_STAMP_FIELD, String(renderedAt.current));
+      const tooFast = MIN_FILL_MS - (Date.now() - renderedAt.current);
+      if (tooFast > 0) await new Promise((res) => setTimeout(res, tooFast));
       const r = await fetch(`/api/public/forms/${encodeURIComponent(companyId)}/${encodeURIComponent(slug)}/submit`, {
         method: "POST",
         headers: { "X-Public-Key": publicKey },
@@ -321,6 +338,21 @@ export default function IntakeForm() {
         )}
 
         <form onSubmit={submit} className="space-y-6 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+          {/* Honeypot. Hidden from sight, from screen readers and from the tab
+              order, and given a name autofill won't touch — only a bot filling
+              every input it finds will put anything in it. */}
+          <div aria-hidden="true" className="absolute h-0 w-0 overflow-hidden opacity-0">
+            <input
+              ref={hpRef}
+              id="nvc-hp-website"
+              name="nvc_website_url"
+              type="text"
+              tabIndex={-1}
+              autoComplete="off"
+              aria-label="Leave this field empty"
+              defaultValue=""
+            />
+          </div>
           {sectionsOrder.map((sec) => {
             const inSec = enabled.filter((f) => (f.sectionId || "") === sec.id);
             if (!inSec.length) return null;

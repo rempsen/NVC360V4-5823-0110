@@ -143,6 +143,29 @@ const PHOTO_MAX_BYTES = PHOTO_MAX_MB * 1024 * 1024;
  */
 const EMAIL_RE = /^[^\s@,;:<>"'()[\]\\]+@[^\s@,;:<>"'()[\]\\]+\.[A-Za-z]{2,}$/;
 
+/**
+ * Hidden field the real form renders and a human can never fill, and the
+ * shortest time a person could plausibly take to complete the form. Kept here
+ * next to each other so the page and the check can't drift.
+ */
+export const HONEYPOT_FIELD = "_hp";
+export const RENDER_STAMP_FIELD = "_ts";
+const MIN_FILL_MS = Number(process.env.INTAKE_MIN_FILL_MS ?? 2_500);
+
+/** True when a public submission is almost certainly automated. */
+function isLikelyBot(body: Record<string, any>): boolean {
+  // 1. Honeypot filled. Trimmed: some password managers/browsers drop a space in.
+  if (String(body[HONEYPOT_FIELD] ?? "").trim() !== "") return true;
+  // 2. Submitted within MIN_FILL_MS of the page rendering. A missing, non-numeric
+  //    or future stamp is treated as "unknown" and allowed through.
+  const ts = Number(body[RENDER_STAMP_FIELD]);
+  if (Number.isFinite(ts) && ts > 0) {
+    const elapsed = Date.now() - ts;
+    if (elapsed >= 0 && elapsed < MIN_FILL_MS) return true;
+  }
+  return false;
+}
+
 const submitLimiter = rateLimit({
   name: "intake",
   limit: Number(process.env.RL_INTAKE_LIMIT ?? 30),
@@ -427,6 +450,22 @@ export const publicFormsRoutes = new Hono()
       }
     } else {
       body = await c.req.json().catch(() => ({}));
+    }
+
+    // ---- bot guard: honeypot + minimum fill time ----
+    // This endpoint creates a client row, a pending booking, and fires real
+    // (billable) customer notifications while unauthenticated, and a 30/min
+    // per-IP limit is no defence against a scripted or distributed submitter.
+    // Both checks fail quiet: identical success response, zero writes, so a bot
+    // gets nothing to tune against. The timestamp is client-supplied and
+    // spoofable by design — this is a spam filter, not auth, which is also why
+    // a missing/garbage `_ts` must still be accepted (tenants POST JSON to this
+    // endpoint straight from their own sites; eating their leads is worse than
+    // the spam).
+    if (isLikelyBot(body)) {
+      incr("intake_bot_blocked");
+      console.warn(`intake bot guard: dropped submission for ${companyId}/${slug}`);
+      return c.json({ ok: true, message: form.successMessage }, 201);
     }
 
     // ---- photo size: refuse loudly, before anything is written ----
