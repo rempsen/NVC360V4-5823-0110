@@ -12,13 +12,14 @@
 ## Done
 - `774a0f1` cross-company driver earnings, every row labelled with its company
 - `2feceda` phone layouts for work orders + directory; both gates were auditing 404 phantom routes — fixed, added hscroll check
-- rate limiter no longer fails open when Redis is down → falls back to bounded in-process MemoryStore + debounced infra alert
+- `3e7203d` rate limiter no longer fails open when Redis is down → bounded in-process MemoryStore + debounced infra alert
+- `c1c02b4` public intake bot guard: honeypot (`_hp`) + minimum fill time (`_ts`, 2.5s), fail-quiet with zero writes, `intake_bot_blocked` metric; the page holds its own submit until the window passes so a fast real visitor is never dropped
 
 ## Batched for the next EAS iOS build
 - cross-company Earnings screen (`774a0f1`)
 
 ## Backlog (next)
-1. Public intake hardening leftovers: no honeypot/CAPTCHA on `POST /api/public-forms/:companyId/:slug/submit` (IP-keyed rate limit only); hand-typed addresses can bypass zone enforcement.
+1. Public intake leftover: a hand-typed address (no autocomplete coords) still bypasses zone enforcement.
 2. Score the booking/customer flow, append to `admin-review.report/content.md`.
 3. Customer-facing email/SMS copy review + per-tenant send-from domain test.
 
