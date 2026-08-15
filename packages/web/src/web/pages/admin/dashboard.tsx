@@ -6,6 +6,7 @@ import { FullLoader } from "../../components/loader";
 import { StatusBadge, PageWrap } from "../../components/brand";
 import { PageHead } from "./shell";
 import { fmtDate, money, TECH_STATUS } from "../../lib/utils";
+import { RunningLateBoard } from "../../components/running-late-board";
 import { useWorkerNoun, useCustomerNoun } from "../../lib/use-brand";
 import {
   ClipboardList,
@@ -114,7 +115,7 @@ function kpiMoney(n: number) {
 }
 
 export default function AdminDashboard() {
-  const { nounPlural: workerPlural } = useWorkerNoun();
+  const { noun: workerNoun, nounPlural: workerPlural } = useWorkerNoun();
   const { nounPlural: customerPlural } = useCustomerNoun();
   const [fleetSort, setFleetSort] = useState("all");
 
@@ -244,6 +245,8 @@ export default function AdminDashboard() {
         title="Operations Dashboard"
         subtitle="Live overview of your field service fleet"
       />
+
+      <RunningLateBoard workerNoun={workerNoun} />
 
       {/* date-range filter for the metric cards */}
       <div className="nvc-card mb-4 flex flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3">

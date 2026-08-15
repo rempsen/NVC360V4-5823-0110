@@ -312,6 +312,43 @@ const ON_SITE_STATUSES = ["arrived", "onsite", "in_progress", "paused"];
 /** Statuses that mean the tech is on their way. */
 const EN_ROUTE_STATUSES = ["assigned", "enroute"];
 
+/**
+ * Running late.
+ *
+ * The customer took time off for this. What they need is the new number and
+ * the fact that somebody knows — not an apology paragraph, and deliberately not
+ * a reschedule link: this is an update, and offering a re-book here quietly
+ * suggests we can't make it at all.
+ */
+function DelayBanner({
+  delay, tz, workerNoun,
+}: {
+  delay: { mins: number; revisedAt: number | null } | null;
+  tz?: string;
+  workerNoun: string;
+}) {
+  if (!delay || !delay.mins) return null;
+  return (
+    <div
+      aria-live="polite"
+      className="mb-4 flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3.5"
+    >
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+      <div className="min-w-0">
+        <p className="text-sm font-bold text-amber-200">
+          Running about {delay.mins} minutes late
+        </p>
+        <p className="mt-0.5 text-xs leading-relaxed text-amber-100/70">
+          {delay.revisedAt
+            ? `Your ${workerNoun.toLowerCase()} is now expected around ${fmtTime(delay.revisedAt, tz, true)}. `
+            : ""}
+          Sorry about the wait — this page updates on its own as things change.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function StatusStepper({ status }: { status: string }) {
   // Stage order is shared with the customer portal — see shared/job-status.ts.
   const current = statusStepIndex(status);
@@ -701,6 +738,10 @@ export default function TrackPublic() {
             {meta.label}
           </span>
         </div>
+
+        {!isDone && (
+          <DelayBanner delay={(data as any).delay} tz={data.timezone} workerNoun={workerNoun} />
+        )}
 
         {/* ── Status stepper ── */}
         {!isDone && <div className="mb-4"><StatusStepper status={data.status} /></div>}

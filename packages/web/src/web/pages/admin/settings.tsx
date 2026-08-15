@@ -7,7 +7,7 @@ import { PageWrap } from "../../components/brand";
 import { PageHead } from "./shell";
 import { Field, inputCls, BtnPrimary, ConfirmModal } from "../../components/modal";
 import { AddressAutocomplete } from "../../components/address-autocomplete";
-import { Save, Building2, Check, Calendar, Copy, RefreshCw, ExternalLink, MapPin, Sparkles, Plug, KeyRound, ScrollText, Lock, Eye, EyeOff, Tag, Plus, Trash2, Pencil, X, Star, CalendarClock } from "lucide-react";
+import { Save, Building2, Check, Calendar, Copy, RefreshCw, ExternalLink, MapPin, Sparkles, Plug, KeyRound, ScrollText, Lock, Eye, EyeOff, Tag, Plus, Trash2, Pencil, X, Star, CalendarClock, Clock3 } from "lucide-react";
 import { useWorkerNoun } from "../../lib/use-brand";
 import { cn } from "../../lib/utils";
 import AutomationPage from "./automation";
@@ -220,6 +220,92 @@ function CustomerChangesCard({
   );
 }
 
+/**
+ * Running-late notices.
+ *
+ * The costly part of a delay is the silence around it: a customer who took the
+ * morning off and hears nothing at 9:20 for a 9:00 slot phones the office, and
+ * that call costs more than the slip did. Detection is always automatic; what
+ * the tenant chooses here is how long dispatch gets to handle it personally
+ * before the system speaks for them.
+ */
+function RunningLateCard({
+  form, set, noun,
+}: { form: any; set: (k: string, v: any) => void; noun: string }) {
+  const enabled = form.delayNoticeEnabled ?? true;
+  const threshold = Number(form.delayNoticeThresholdMins ?? 15);
+  const auto = Number(form.delayNoticeAutoSendAfterMins ?? 10);
+  return (
+    <div className="nvc-card space-y-4 p-5">
+      <h3 className="flex items-center gap-2 font-bold text-white">
+        <Clock3 className="h-4 w-4 text-brand" /> Running-late notices
+      </h3>
+      <p className="text-xs text-white/50">
+        We watch every live job against its promised time. When one slips, it
+        lands on your dispatch board first so you can send it, adjust it, or
+        mute it — and if nobody gets to it, the customer is told anyway. Notices
+        go out by text and on the customer&apos;s tracking page. No email, and
+        never a reschedule link.
+      </p>
+
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm text-white/80">Watch jobs for delays</span>
+        <Toggle
+          on={enabled}
+          label="Toggle running-late notices"
+          onClick={() => set("delayNoticeEnabled", !enabled)}
+        />
+      </div>
+
+      <Field
+        label="Count as late after (minutes past the promised time)"
+        hint="Default 15. Also catches a tech who is driving but whose live ETA lands past the slot."
+      >
+        <input
+          aria-label="Delay threshold minutes"
+          type="number"
+          min={5}
+          max={240}
+          step={5}
+          className={inputCls}
+          value={threshold}
+          onChange={(e) =>
+            set("delayNoticeThresholdMins", Math.min(240, Math.max(5, parseInt(e.target.value) || 15)))
+          }
+        />
+      </Field>
+
+      <Field
+        label="Send it automatically after (minutes on the board)"
+        hint="Default 10. Set to 0 to never send automatically — nothing goes out unless a dispatcher presses send."
+      >
+        <input
+          aria-label="Delay auto send minutes"
+          type="number"
+          min={0}
+          max={240}
+          step={5}
+          className={inputCls}
+          value={auto}
+          onChange={(e) =>
+            set("delayNoticeAutoSendAfterMins", Math.min(240, Math.max(0, parseInt(e.target.value) || 0)))
+          }
+        />
+      </Field>
+
+      <p className="rounded-lg bg-white/5 p-3 text-[11px] leading-relaxed text-white/60">
+        Right now: {enabled
+          ? auto > 0
+            ? `a job ${threshold} minutes past its promised time appears on your board, and if nobody acts within ${auto} minute${auto === 1 ? "" : "s"} the customer gets a text on their own.`
+            : `a job ${threshold} minutes past its promised time appears on your board and waits there — nothing is sent until you press send.`
+          : "delays are not tracked and no notices are sent."}{" "}
+        A customer is never texted twice about the same slip, and never once the{" "}
+        {noun.toLowerCase()} has arrived.
+      </p>
+    </div>
+  );
+}
+
 function CompanySettingsTab() {
   const qc = useQueryClient();
   const { noun } = useWorkerNoun();
@@ -372,6 +458,8 @@ function CompanySettingsTab() {
           </div>
 
           <CustomerChangesCard form={form} set={set} noun={noun} />
+
+          <RunningLateCard form={form} set={set} noun={noun} />
         </div>
 
         {/* Calendar + branding + locale (right column) */}

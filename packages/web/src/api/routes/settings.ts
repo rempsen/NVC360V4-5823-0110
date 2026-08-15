@@ -55,6 +55,8 @@ export const settingsRoutes = new Hono()
       "reviewRequestEnabled", "reviewRequestDelayMins", "googleReviewUrl",
       // customer-initiated appointment changes (shared/change-policy.ts)
       "allowCustomerReschedule", "allowCustomerCancelRequest", "customerChangeCutoffHours",
+      // running-late notices (shared/delay-policy.ts)
+      "delayNoticeEnabled", "delayNoticeThresholdMins", "delayNoticeAutoSendAfterMins",
     ];
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     for (const k of allowed) if (k in body) patch[k] = body[k];
@@ -65,8 +67,20 @@ export const settingsRoutes = new Hono()
       const n = Math.round(Number(patch.customerChangeCutoffHours));
       patch.customerChangeCutoffHours = Number.isFinite(n) ? Math.min(336, Math.max(0, n)) : 12;
     }
-    for (const k of ["allowCustomerReschedule", "allowCustomerCancelRequest"]) {
+    for (const k of ["allowCustomerReschedule", "allowCustomerCancelRequest", "delayNoticeEnabled"]) {
       if (k in patch) patch[k] = patch[k] === true || patch[k] === 1 || patch[k] === "true";
+    }
+    // Same normalisation for the running-late windows. A 1-minute threshold
+    // would text every customer about traffic lights; a 0 threshold would text
+    // them about nothing at all, so the floor is 5. Grace of 0 is meaningful
+    // (dispatcher-only, never auto-send) and is kept.
+    if ("delayNoticeThresholdMins" in patch) {
+      const n = Math.round(Number(patch.delayNoticeThresholdMins));
+      patch.delayNoticeThresholdMins = Number.isFinite(n) ? Math.min(240, Math.max(5, n)) : 15;
+    }
+    if ("delayNoticeAutoSendAfterMins" in patch) {
+      const n = Math.round(Number(patch.delayNoticeAutoSendAfterMins));
+      patch.delayNoticeAutoSendAfterMins = Number.isFinite(n) ? Math.min(240, Math.max(0, n)) : 10;
     }
     const [updated] = await tx(c).update(
       schema.companySettings,

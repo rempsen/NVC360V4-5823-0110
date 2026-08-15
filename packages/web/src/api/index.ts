@@ -36,6 +36,7 @@ import { uploadsRoutes } from "./routes/uploads";
 import { geoRoutes } from "./routes/geo";
 import { zonesRoutes } from "./routes/zones";
 import { changeRequestsRoutes } from "./routes/change-requests";
+import { delaysRoutes } from "./routes/delays";
 import { shiftsRoutes } from "./routes/shifts";
 import { payoutsRoutes } from "./routes/payouts";
 import { reviewsRoutes } from "./routes/reviews";
@@ -307,6 +308,7 @@ const app = new Hono<{ Variables: Variables }>()
   .route("/geo", geoRoutes)
   .route("/zones", zonesRoutes)
   .route("/change-requests", changeRequestsRoutes)
+  .route("/delays", delaysRoutes)
   .route("/shifts", shiftsRoutes)
   .route("/payouts", payoutsRoutes)
   .route("/reviews", reviewsRoutes)

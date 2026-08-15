@@ -57,6 +57,42 @@ tech, and the customer.
       saw it (sidebar badge 1) and approved it in the UI -> booking went to cancelled.
 - [ ] needs a web Publish from the Runable UI (Dan)
 
+## IN FLIGHT — running-late notices
+Product shape (Dan, Aug 2026): auto-DETECT always, dispatcher gets first refusal,
+auto-send after a grace period if nobody acts. Threshold default 15 min (per tenant).
+Triggers: tech hasn't started the drive by the promised time, OR enroute with a live ETA
+landing past it. Customer told by SMS + in-app + tracking-page banner. NO email.
+Inform only — no reschedule link.
+
+- [x] shared/delay-policy.ts pure evaluator + 21 tests (failed first, then green)
+- [x] schema + migration 0011 applied to live Turso (5 booking cols, 3 settings cols)
+- [x] dispatch.ts `delayed` event, copy, template vars, seed rules (client = in-app + SMS only)
+- [x] BUG FIXED en route: dispatch context() `when` formatted on the SERVER's clock, so every
+      outgoing SMS/email quoted appointment times in the wrong timezone. Now uses companyTimeZone().
+- [x] services/delay-watch.ts sweep (flag / clear / notify), 60s interval in server.ts
+- [x] api/routes/delays.ts (list, count, notify, mute) — re-evaluates server-side so a stale tab
+      can't text about a job that's fine
+- [x] settings PUT allow-list + normalisation (threshold 5-240, auto-send 0-240)
+- [x] 27 route/sweep tests green; 9-mutation sabotage battery — every behaviour caught by a
+      named test (same-pass notify, mute, quiet gap, growth check, arrived, lookback, stale tab,
+      admin guard, guessing a promised time)
+- [x] admin settings card (enable / threshold / auto-send after)
+- [x] dispatcher board on the admin dashboard (Send now / Mute, hides itself when nothing is late)
+- [x] customer banners: public /t/:token and portal /app/track/:id — only after the notice was
+      actually sent, and never once the tech is on site
+- [x] LIVE verified on real Turso with throwaway probe rows (all deleted, deletion verified; the
+      tenant's `delayed` rules were forced disabled first so nothing could actually text anyone):
+      19/19 — flag without notifying, on-time/arrived/no-schedule/yesterday untouched, ETA overrun
+      caught before the slot passed, grace held then auto-sent, job event written, no notification
+      rows, no nagging on the next pass, mute respected, flag cleared on catch-up, board + count.
+      HTTP: Send now 200, not-late 409, unknown/cross-tenant 404, unauthenticated 401, mute 200.
+      Browser: dashboard board renders with slip/Muted/Send update, settings card + both inputs,
+      tracking page banner quotes the revised time in the company's zone with no reschedule link,
+      un-notified job shows no banner, zero console errors.
+- [x] full gate set green: 464 tests / tsc 159 / oxlint 0 / vite build ok / crash-sweep ALL CLEAN (26)
+      / a11y PASS (26 x 2) / customer-sweep PASS (12 x 2)
+- [ ] needs a web Publish from the Runable UI (Dan)
+
 ## Backlog (next)
 1. Customer-facing email/SMS copy review + per-tenant send-from domain test.
 

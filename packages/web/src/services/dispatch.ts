@@ -41,6 +41,10 @@ export type NvcEvent =
   | "change_requested"
   | "change_declined"
   | "rescheduled"
+  // The tech is going to miss the promised time. Fired by the running-late
+  // sweep (services/delay-watch.ts), not by anything the tech taps: the whole
+  // point is that nobody has to remember to send it.
+  | "delayed"
   | "receipt";
 
 export type Recipient = "client" | "tech" | "office";
@@ -66,6 +70,7 @@ export const EVENT_META: Record<
   change_requested: { label: "Customer requests a change", defaultTitle: "Customer requested a change", notifType: "reminder" },
   change_declined: { label: "Change request declined", defaultTitle: "We kept your appointment as booked", notifType: "reminder" },
   rescheduled: { label: "Appointment rescheduled", defaultTitle: "Appointment rescheduled", notifType: "reminder" },
+  delayed: { label: "Running late", defaultTitle: "We're running behind", notifType: "reminder" },
   receipt: { label: "Payment / receipt", defaultTitle: "Payment receipt", notifType: "receipt" },
 };
 
@@ -123,6 +128,19 @@ function defaultMessage(event: NvcEvent, recipient: Recipient, v: Vars): string 
       if (recipient === "tech")
         return `${co}: Work order #${v.shortId} moved — ${v.service} at ${v.address} is now ${v.when}.`;
       return `${co}: #${v.shortId} rescheduled to ${v.when}.`;
+    case "delayed":
+      // Says the three things a waiting customer actually wants: that we know,
+      // roughly how long, and where to look. No apology theatre, no promise we
+      // can't keep, and no "sorry for any inconvenience caused".
+      if (recipient === "client")
+        return (
+          `${co}: Update on your ${v.service} — we're running about ${v.delayMins} minutes behind, ` +
+          `so ${v.techName} should reach you closer to ${v.newWhen}. ` +
+          `Sorry to hold you up. Live status: ${v.trackUrl}`
+        );
+      if (recipient === "tech")
+        return `${co}: #${v.shortId} (${v.address}) is now ~${v.delayMins} min late — the customer has been told you're arriving closer to ${v.newWhen}.`;
+      return `${co}: #${v.shortId} is running ~${v.delayMins} min late (${v.service} at ${v.address}, promised ${v.when}). Customer notified.`;
     case "receipt":
       return `${co}: Receipt for ${v.service} — $${v.price}. Thank you!`;
   }
@@ -145,6 +163,10 @@ interface Vars {
   workerNoun: string;
   /** Permanent, no-login property service-history hub. "" when unlinked. */
   propertyUrl: string;
+  /** Rounded minutes late — only meaningful on a `delayed` notice. */
+  delayMins: number;
+  /** Revised arrival time in the company's timezone, e.g. "2:45 PM". */
+  newWhen: string;
 }
 
 function interpolate(tpl: string, v: Vars): string {
@@ -167,6 +189,8 @@ export const TEMPLATE_VARS: { key: keyof Vars; label: string }[] = [
   { key: "trackUrl", label: "Live tracking link" },
   { key: "bookingUrl", label: "Booking link" },
   { key: "propertyUrl", label: "Property service-history link" },
+  { key: "delayMins", label: "Minutes late (running-late notice)" },
+  { key: "newWhen", label: "Revised arrival time (running-late notice)" },
 ];
 
 /** Sample values used for live preview in the template editor. */
@@ -186,6 +210,8 @@ const SAMPLE_VARS: Vars = {
   bookingUrl: "https://nvc360.app/t/abc123",
   workerNoun: "Technician",
   propertyUrl: "https://nvc360.app/p/abc123def456",
+  delayMins: 20,
+  newWhen: "2:50 PM",
 };
 
 /** Default copy for a given event+recipient (exposed so the editor can show/restore it). */
@@ -338,9 +364,26 @@ async function context(bookingId: string) {
     if (rider) [riderUser] = await db.select().from(schema.user).where(eq(schema.user.id, rider.userId));
   }
   const [co] = await db.select().from(schema.companySettings).where(eq(schema.companySettings.companyId, companyId));
-  const when = b.scheduledAt
-    ? new Date(b.scheduledAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
-    : "TBD";
+  // Format in the COMPANY's timezone, not the server's. Every appointment time
+  // in every outgoing SMS and email flows through here, so a bare
+  // toLocaleString quoted UTC to a Winnipeg customer — the same bug that was
+  // already fixed on-screen (shared/fmt-appointment.ts) was still going out in
+  // the messages themselves.
+  const tz = await companyTimeZone(companyId);
+  const fmtWhen = (ms: number) =>
+    new Date(ms).toLocaleString("en-US", {
+      month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: tz,
+    });
+  const when = b.scheduledAt ? fmtWhen(Number(b.scheduledAt)) : "TBD";
+  // Revised arrival for a running-late notice: the promised time plus the slip
+  // the customer is actually being told about.
+  const delayMins = Number(b.delayNotifiedMins ?? b.delayFlaggedMins ?? 0);
+  const newWhen =
+    b.scheduledAt && delayMins > 0
+      ? new Date(Number(b.scheduledAt) + delayMins * 60_000).toLocaleString("en-US", {
+          hour: "numeric", minute: "2-digit", timeZone: tz,
+        })
+      : when;
   // Best-effort: the property hub link is a nice-to-have, never a reason to
   // fail a notification.
   let propToken = "";
@@ -371,6 +414,8 @@ async function context(bookingId: string) {
     bookingUrl: trackingUrl(b.publicToken),
     workerNoun: co?.workerNoun || "Technician",
     propertyUrl: propToken ? propertyUrl(propToken) : "",
+    delayMins,
+    newWhen,
   };
   return { b, companyId, svc, cust, rider, riderUser, co, vars };
 }
@@ -748,6 +793,14 @@ const BASE_RULES: RuleSeed[] = [
     { event: "rescheduled", recipient: "client", inApp: true, email: true, sms: false, webhook: false },
     { event: "rescheduled", recipient: "tech", inApp: true, email: true, sms: true, webhook: false },
     { event: "rescheduled", recipient: "office", inApp: true, email: false, sms: false, webhook: false },
+    // Running late. SMS for the customer on purpose and NOT email: this is only
+    // useful in the next twenty minutes, and nobody sitting on a couch waiting
+    // for a technician is refreshing their inbox. No email means no
+    // "we're late" letter landing at 9pm either. The tech gets in-app only so
+    // they know what the customer was told before they walk in the door.
+    { event: "delayed", recipient: "client", inApp: true, email: false, sms: true, webhook: false },
+    { event: "delayed", recipient: "tech", inApp: true, email: false, sms: false, webhook: false },
+    { event: "delayed", recipient: "office", inApp: true, email: false, sms: false, webhook: false },
 ];
 
 /**

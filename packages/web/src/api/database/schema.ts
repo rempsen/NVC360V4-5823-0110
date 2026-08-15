@@ -294,6 +294,19 @@ export const bookings = sqliteTable("bookings", {
   tokenExpiresAt: integer("token_expires_at", { mode: "timestamp_ms" }),
   etaMins: integer("eta_mins"),
   etaDistanceKm: real("eta_distance_km"),
+  // ── Running-late watch (shared/delay-policy.ts) ──────────────────────────
+  // delayFlaggedAt is set by the sweep the moment the job slips past the
+  // tenant's threshold; it's what puts the job on the dispatcher's board and
+  // starts the grace clock before the notice sends itself. delayNotifiedMins
+  // records the slip the customer was actually told about, so a second notice
+  // only goes out if things genuinely got worse.
+  delayFlaggedAt: integer("delay_flagged_at", { mode: "timestamp_ms" }),
+  delayFlaggedMins: integer("delay_flagged_mins"),
+  delayNotifiedAt: integer("delay_notified_at", { mode: "timestamp_ms" }),
+  delayNotifiedMins: integer("delay_notified_mins"),
+  // Dispatch handled it another way (already phoned the customer) — detection
+  // keeps running, the automatic notice does not.
+  delayMuted: integer("delay_muted", { mode: "boolean" }).notNull().default(false),
   // assignment lifecycle: none | offered | accepted | declined
   assignStatus: text("assign_status").notNull().default("none"),
   assignedAt: integer("assigned_at", { mode: "timestamp_ms" }),
@@ -668,6 +681,13 @@ export const companySettings = sqliteTable("company_settings", {
   // Hours before the appointment where self-serve stops and changes need an
   // office approval instead. 0 = no cutoff (always self-serve).
   customerChangeCutoffHours: integer("customer_change_cutoff_hours").notNull().default(12),
+  // ── Running-late notices (shared/delay-policy.ts) ───────────────────────
+  // Detection is automatic; the notice waits delayAutoSendAfterMins for a
+  // human to send, adjust, or mute it, then goes out on its own. 0 = never
+  // auto-send, dispatcher only.
+  delayNoticeEnabled: integer("delay_notice_enabled", { mode: "boolean" }).notNull().default(true),
+  delayNoticeThresholdMins: integer("delay_notice_threshold_mins").notNull().default(15),
+  delayNoticeAutoSendAfterMins: integer("delay_notice_auto_send_after_mins").notNull().default(10),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }),
   createdAt: now(),
 }, (t) => ({

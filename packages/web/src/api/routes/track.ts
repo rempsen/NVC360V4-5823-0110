@@ -111,6 +111,16 @@ async function cachedRoute(
 }
 
 /** Build the full public tracking snapshot for a booking row. */
+/** Statuses where a running-late banner still helps. Once the tech is on site
+ * the customer can see the van, and a delay banner is just noise. */
+const DELAY_VISIBLE_STATUSES = new Set([
+  "pending",
+  "confirmed",
+  "assigned",
+  "accepted",
+  "enroute",
+]);
+
 async function buildSnapshot(b: typeof schema.bookings.$inferSelect) {
   const t = tdb(b.companyId);
   const svc = await t.selectOne(schema.services, eq(schema.services.id, b.serviceId));
@@ -244,6 +254,20 @@ async function buildSnapshot(b: typeof schema.bookings.$inferSelect) {
       ? { url: b.signatureUrl, name: b.signatureName, at: b.signedAt }
       : null,
     propertyLink,
+    // Running late — shown ONLY once the office has actually told them. The
+    // dispatcher gets first refusal on every notice, so a customer must never
+    // read a delay on this page that nobody has decided to send yet. It also
+    // disappears the moment the tech is on site: they can see the van.
+    delay:
+      b.delayNotifiedAt && DELAY_VISIBLE_STATUSES.has(b.status)
+        ? {
+            mins: b.delayNotifiedMins ?? 0,
+            at: Number(b.delayNotifiedAt),
+            revisedAt: b.scheduledAt
+              ? Number(b.scheduledAt) + (b.delayNotifiedMins ?? 0) * 60_000
+              : null,
+          }
+        : null,
     scheduledAt: b.scheduledAt,
     // The company's clock. The page used to format every time on the DEVICE's
     // clock with no zone label, so an out-of-town property owner opening the

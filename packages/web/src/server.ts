@@ -10,6 +10,7 @@ import { startScheduler } from "./services/scheduler";
 import "./services/reviews";
 import "./services/maintenance";
 import { sweepTimeTriggers } from "./services/automation";
+import { sweepDelays } from "./services/delay-watch";
 import { log, captureException } from "./api/lib/logger";
 import { initRealtimeBus } from "./services/realtime";
 import { initRateLimitStore } from "./api/lib/rate-limit";
@@ -83,6 +84,14 @@ setInterval(() => {
   sweepTimeTriggers().catch((e) =>
     console.error("automation time sweep failed", e),
   );
+}, 60 * 1000);
+
+// Running-late watch. Nothing in the app can fire this either — a job going
+// late is the absence of an event, not an event — so it is swept once a minute.
+// It flags the slip for dispatch first and only sends the customer notice if
+// nobody acts within the tenant's grace period.
+setInterval(() => {
+  sweepDelays().catch((e) => console.error("delay sweep failed", e));
 }, 60 * 1000);
 
 // Auto-poll pending/verifying email sending domains and flip to verified.

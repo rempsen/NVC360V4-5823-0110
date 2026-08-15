@@ -30,6 +30,7 @@ export type JobEventKind =
   | "change_requested"
   | "change_declined"
   | "rescheduled"
+  | "delayed"
   // activity
   | "photo_added"
   | "signature_captured"
@@ -63,6 +64,9 @@ const EVENT_POLICY: Record<JobEventKind, { visible: boolean; label: string }> = 
   change_requested: { visible: true, label: "Change requested by customer" },
   change_declined: { visible: true, label: "Appointment kept as booked" },
   rescheduled: { visible: true, label: "Appointment rescheduled" },
+  // Visible on purpose: "we told you at 9:18 that we were running late" is the
+  // record that settles the argument at the end of a bad day.
+  delayed: { visible: true, label: "Running late — customer notified" },
   photo_added: { visible: true, label: "Photo added" },
   signature_captured: { visible: true, label: "Sign-off captured" },
   // field notes are written for the office, not the client

@@ -11,7 +11,7 @@ import { fmtAppointment } from "../../../shared/fmt-appointment";
 import { useBrand } from "../../lib/use-brand";
 import {
   ArrowLeft, Phone, Star, Truck, CheckCircle2, CreditCard, MapPin, Navigation,
-  PackageOpen,
+  PackageOpen, AlertTriangle,
 } from "lucide-react";
 import { useState } from "react";
 import { JOB_STEPS, statusStepIndex, isActiveStatus, isTerminalStatus } from "../../../shared/job-status";
@@ -92,6 +92,16 @@ export default function TrackPage() {
       <Link to="/app/bookings" className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-cyan-glow">
         <ArrowLeft className="h-4 w-4" /> All bookings
       </Link>
+
+      {/* Running late — only once the office actually sent the notice, and only
+          while the tech is still on their way. Same rule as the SMS link page. */}
+      <PortalDelayBanner
+        mins={(b as any).delayNotifiedMins}
+        notifiedAt={(b as any).delayNotifiedAt}
+        status={b.status}
+        scheduledAt={b.scheduledAt}
+        tz={brand.timezone}
+      />
 
       <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
         {/* map */}
@@ -216,6 +226,37 @@ export default function TrackPage() {
           onPaid={onPaid}
         />
       )}
+    </div>
+  );
+}
+
+/** Statuses where a delay banner still tells the customer something useful. */
+const DELAY_VISIBLE = new Set(["pending", "confirmed", "assigned", "accepted", "enroute"]);
+
+function PortalDelayBanner({
+  mins, notifiedAt, status, scheduledAt, tz,
+}: {
+  mins?: number | null;
+  notifiedAt?: string | number | null;
+  status: string;
+  scheduledAt?: string | number | null;
+  tz?: string;
+}) {
+  if (!notifiedAt || !mins || !DELAY_VISIBLE.has(status)) return null;
+  const revised = scheduledAt ? new Date(new Date(scheduledAt).getTime() + mins * 60_000) : null;
+  return (
+    <div
+      aria-live="polite"
+      className="mb-5 flex items-start gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4"
+    >
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+      <div className="min-w-0">
+        <p className="text-sm font-bold text-amber-200">Running about {mins} minutes late</p>
+        <p className="mt-0.5 text-xs leading-relaxed text-amber-100/70">
+          {revised ? `Now expected around ${fmtAppointment(revised.toISOString(), tz)}. ` : ""}
+          Sorry about the wait — this page updates on its own as things change.
+        </p>
+      </div>
     </div>
   );
 }
