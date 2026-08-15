@@ -5,6 +5,7 @@ import { LiveMap } from "../../components/live-map";
 import { StatusBadge } from "../../components/brand";
 import { FullLoader } from "../../components/loader";
 import { StripePayModal } from "../../components/stripe-pay";
+import { AppointmentChangeCard } from "../../components/appointment-change";
 import { money } from "../../lib/utils";
 import { fmtAppointment } from "../../../shared/fmt-appointment";
 import { useBrand } from "../../lib/use-brand";
@@ -174,6 +175,10 @@ export default function TrackPage() {
               <Detail icon={CheckCircle2} text={fmtAppointment(b.scheduledAt, brand.timezone)} />
             </div>
           </div>
+
+          {/* Reschedule / cancellation request. Renders itself away when the
+              job is past the point where a customer can change it. */}
+          <AppointmentChangeCard bookingId={id} />
 
           {inv && (
             <div className="rounded-2xl border border-white/5 bg-ink-2 p-5 shadow-sm">

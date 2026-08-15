@@ -418,6 +418,43 @@ export const bookingOptionSelections = sqliteTable("booking_option_selections", 
   companyIdx: index("optsel_company_idx").on(t.companyId),
 }));
 
+/**
+ * Customer-initiated change requests on a booked appointment.
+ *
+ * A cancellation is NEVER applied straight to the booking — it lands here as a
+ * pending row the office approves or declines, so a job can't vanish off the
+ * dispatch board on its own and every request keeps its reason, who decided,
+ * and when. A reschedule outside the tenant's cutoff is applied immediately but
+ * still recorded here (status "applied") as the audit trail of what moved and
+ * from when. Policy lives in shared/change-policy.ts.
+ */
+export const bookingChangeRequests = sqliteTable("booking_change_requests", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  companyId: text("company_id").notNull().default("default"),
+  bookingId: text("booking_id")
+    .notNull()
+    .references(() => bookings.id, { onDelete: "cascade" }),
+  // who asked. customer id for the portal; may be an admin acting on their behalf.
+  requestedBy: text("requested_by").notNull().default(""),
+  requestedByName: text("requested_by_name").notNull().default(""),
+  kind: text("kind").notNull(), // cancel | reschedule
+  status: text("status").notNull().default("pending"), // pending | approved | declined | applied | withdrawn
+  reason: text("reason").notNull().default(""), // customer's words, shown to the office
+  // reschedule only: the time the customer asked for, and the time it was on
+  // before, so the office sees the move and an applied change is reversible.
+  proposedAt: integer("proposed_at", { mode: "timestamp_ms" }),
+  previousAt: integer("previous_at", { mode: "timestamp_ms" }),
+  decidedBy: text("decided_by").notNull().default(""),
+  decidedByName: text("decided_by_name").notNull().default(""),
+  decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
+  decisionNote: text("decision_note").notNull().default(""), // office reply back to the customer
+  createdAt: now(),
+}, (t) => ({
+  companyIdx: index("chgreq_company_idx").on(t.companyId),
+  bookingIdx: index("chgreq_booking_idx").on(t.bookingId),
+  statusIdx: index("chgreq_status_idx").on(t.companyId, t.status),
+}));
+
 /** Live rider location pings during an active job (track history) */
 export const trackingPings = sqliteTable("tracking_pings", {
   id: text("id")
@@ -620,6 +657,17 @@ export const companySettings = sqliteTable("company_settings", {
   // private feedback so the company can fix it before it becomes public.
   googleReviewUrl: text("google_review_url").notNull().default(""),
   website: text("website").notNull().default(""),
+  // ── Customer-initiated appointment changes ─────────────────────────────
+  // Who owns a change to a booked appointment is a per-company decision, so it
+  // lives here rather than being hardcoded. Defaults match the shipped policy
+  // in shared/change-policy.ts: the customer may move their own appointment
+  // outside the cutoff, and may ASK to cancel, but a cancellation is always
+  // approved by the office so nothing silently leaves the dispatch board.
+  allowCustomerReschedule: integer("allow_customer_reschedule", { mode: "boolean" }).notNull().default(true),
+  allowCustomerCancelRequest: integer("allow_customer_cancel_request", { mode: "boolean" }).notNull().default(true),
+  // Hours before the appointment where self-serve stops and changes need an
+  // office approval instead. 0 = no cutoff (always self-serve).
+  customerChangeCutoffHours: integer("customer_change_cutoff_hours").notNull().default(12),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }),
   createdAt: now(),
 }, (t) => ({

@@ -26,6 +26,10 @@ export type JobEventKind =
   | "started"
   | "completed"
   | "cancelled"
+  // customer-initiated change requests
+  | "change_requested"
+  | "change_declined"
+  | "rescheduled"
   // activity
   | "photo_added"
   | "signature_captured"
@@ -54,6 +58,11 @@ const EVENT_POLICY: Record<JobEventKind, { visible: boolean; label: string }> = 
   started: { visible: true, label: "Work started" },
   completed: { visible: true, label: "Work completed" },
   cancelled: { visible: true, label: "Appointment cancelled" },
+  // The customer raised these themselves, so hiding them would look like the
+  // request went nowhere. Showing them is what makes the request feel handled.
+  change_requested: { visible: true, label: "Change requested by customer" },
+  change_declined: { visible: true, label: "Appointment kept as booked" },
+  rescheduled: { visible: true, label: "Appointment rescheduled" },
   photo_added: { visible: true, label: "Photo added" },
   signature_captured: { visible: true, label: "Sign-off captured" },
   // field notes are written for the office, not the client

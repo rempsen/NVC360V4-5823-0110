@@ -303,11 +303,16 @@ describe("POST /bookings/:id/cancel authorization", () => {
     expect((await row("rel-cancel-2")).status).toBe("enroute");
   });
 
-  it("still lets the owning customer cancel", async () => {
+  // Superseded on purpose (Aug 2026): the owning customer used to get a 200 and
+  // the job went straight to "cancelled". A job can no longer leave the dispatch
+  // board without the office deciding it should — the customer now files a
+  // request instead. See __tests__/change-requests.test.ts for the full flow.
+  it("no longer lets even the owning customer hard-cancel — it becomes an office request", async () => {
     await seedJob({ id: "rel-cancel-3", status: "assigned", customerId: CUST });
     const res = await cancel("rel-cancel-3", CUST);
-    expect(res.status).toBe(200);
-    expect((await row("rel-cancel-3")).status).toBe("cancelled");
+    expect(res.status).toBe(409);
+    expect((await res.json()).useEndpoint).toBe("/api/bookings/rel-cancel-3/cancel-request");
+    expect((await row("rel-cancel-3")).status).toBe("assigned");
   });
 
   it("still lets the office cancel anything in the tenant", async () => {

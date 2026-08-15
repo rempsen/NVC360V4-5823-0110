@@ -19,6 +19,12 @@ import { checkServiceZone, OUTSIDE_ZONE_MESSAGE, OUTSIDE_ZONE_MESSAGE_ADMIN } fr
 import { forwardGeocode } from "../../services/geocode";
 import { linkBookingToProperty } from "../../services/properties";
 import { logJobEvent, jobTimeline } from "../../services/job-events";
+import {
+  changeStateFor,
+  serializeState,
+  requestReschedule,
+  requestCancel,
+} from "../../services/change-requests";
 import { companyTimeZone } from "../../services/company-tz";
 import { zonedDayBounds } from "../../shared/tz";
 import { z } from "zod";
@@ -321,6 +327,13 @@ const SignatureBody = z.object({
   name: shortText("Printed name", 120),
 });
 const DeclineBody = z.object({ reason: longText(2_000).optional().default("") });
+
+/** Customer-initiated appointment changes (see shared/change-policy.ts). */
+const RescheduleRequestBody = z.object({
+  scheduledAt: isoDate("New appointment time"),
+  reason: longText(2_000).optional().default(""),
+});
+const CancelRequestBody = z.object({ reason: longText(2_000).optional().default("") });
 
 /**
  * Why a tech is dropping a job they already ACCEPTED. Fixed list (so the office
@@ -997,11 +1010,100 @@ export const bookingsRoutes = new Hono()
     // customer's booking id — could kill someone else's work order.
     if (!isAdminRole(u.role) && prev.customerId !== u.id)
       return c.json({ message: "Forbidden" }, 403);
+    // A CUSTOMER can no longer hard-cancel their own job here, which is what
+    // this endpoint allowed: a job could leave the dispatch board with nobody at
+    // the company deciding it should, and no reason recorded. Customer-side
+    // cancellation is a request the office approves
+    // (POST /:id/cancel-request). Office cancellation is unchanged.
+    if (!isAdminRole(u.role))
+      return c.json(
+        {
+          message:
+            "Cancellations are handled by the office — send a cancellation request and we'll confirm it.",
+          useEndpoint: `/api/bookings/${id}/cancel-request`,
+        },
+        409,
+      );
     const [b] = await t.update(schema.bookings, { status: "cancelled" }, eq(schema.bookings.id, id));
     await fireEvent("cancelled", id);
     // free the assigned tech so they don't stay stuck "busy" after a cancel
     if (prev?.riderId) await reconcileRiderStatus(co, prev.riderId);
     return c.json({ booking: await enrich(b) }, 200);
+  })
+  /**
+   * What the signed-in customer may do to this appointment right now, plus any
+   * request already in flight. The portal renders buttons off this instead of
+   * guessing, and the write endpoints below re-run the same evaluator — so the
+   * screen and the server can never disagree.
+   */
+  .get("/:id/change-policy", requireAuth, async (c) => {
+    const co = tenantId(c);
+    const u = c.get("user") as SessionUser;
+    const id = c.req.param("id");
+    const b = await tx(c).selectOne(schema.bookings, eq(schema.bookings.id, id));
+    if (!b) return c.json({ message: "Not found" }, 404);
+    if (!isAdminRole(u.role) && b.customerId !== u.id)
+      return c.json({ message: "Forbidden" }, 403);
+    const state = await changeStateFor(co, b);
+    return c.json(serializeState(state), 200);
+  })
+  /**
+   * Customer moves their appointment. Outside the tenant's cutoff this is
+   * applied immediately; inside it, it becomes a request the office approves.
+   * services/change-requests.ts owns both paths so the audit trail is identical.
+   */
+  .post("/:id/reschedule", requireAuth, async (c) => {
+    const co = tenantId(c);
+    const u = c.get("user") as SessionUser;
+    const id = c.req.param("id");
+    const body = await parseBody(c, RescheduleRequestBody);
+    const b = await tx(c).selectOne(schema.bookings, eq(schema.bookings.id, id));
+    if (!b) return c.json({ message: "Not found" }, 404);
+    if (!isAdminRole(u.role) && b.customerId !== u.id)
+      return c.json({ message: "Forbidden" }, 403);
+    const r = await requestReschedule({
+      companyId: co,
+      booking: b,
+      proposedAt: body.scheduledAt,
+      reason: body.reason ?? "",
+      actorId: u.id,
+      actorName: u.name ?? "",
+    });
+    if (!r.ok)
+      return c.json(
+        { message: r.message },
+        r.code === "invalid" ? 422 : r.code === "conflict" ? 409 : 403,
+      );
+    return c.json(
+      r.mode === "applied"
+        ? { mode: "applied", scheduledAt: r.scheduledAt, request: r.request }
+        : { mode: "requested", request: r.request },
+      200,
+    );
+  })
+  /**
+   * Customer ASKS to cancel. Never cancels anything — it files a pending request
+   * for the office. See the /:id/cancel guard above for why.
+   */
+  .post("/:id/cancel-request", requireAuth, async (c) => {
+    const co = tenantId(c);
+    const u = c.get("user") as SessionUser;
+    const id = c.req.param("id");
+    const body = await parseBody(c, CancelRequestBody);
+    const b = await tx(c).selectOne(schema.bookings, eq(schema.bookings.id, id));
+    if (!b) return c.json({ message: "Not found" }, 404);
+    if (!isAdminRole(u.role) && b.customerId !== u.id)
+      return c.json({ message: "Forbidden" }, 403);
+    const r = await requestCancel({
+      companyId: co,
+      booking: b,
+      reason: body.reason ?? "",
+      actorId: u.id,
+      actorName: u.name ?? "",
+    });
+    if (!r.ok)
+      return c.json({ message: r.message }, r.code === "conflict" ? 409 : 403);
+    return c.json({ mode: "requested", request: r.request }, 201);
   })
   // review
   .post("/:id/review", requireAuth, async (c) => {

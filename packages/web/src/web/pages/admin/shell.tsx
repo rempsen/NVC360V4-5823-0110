@@ -1,4 +1,6 @@
 import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "../../lib/api";
 import { Link, useLocation } from "wouter";
 import { Logo } from "../../components/brand";
 import { DispatchMessenger } from "../../components/dispatch-messenger";
@@ -12,6 +14,7 @@ import {
   Map as MapIcon,
   CalendarClock,
   CalendarSync,
+  CalendarCheck,
   ClipboardList,
   Inbox,
   LayoutTemplate,
@@ -33,7 +36,13 @@ import {
   X,
 } from "lucide-react";
 
-type NavItem = { to: string; label: string; icon: typeof LayoutDashboard };
+type NavItem = {
+  to: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+  /** Sidebar count. "changeRequests" = appointment changes waiting on a decision. */
+  badge?: "changeRequests";
+};
 type NavGroup = { heading: string; items: NavItem[] };
 
 // Human-readable label for the footer, driven by the signed-in user's role.
@@ -60,6 +69,10 @@ const NAV_GROUPS: NavGroup[] = [
       { to: "/admin/scheduler", label: "Scheduler", icon: CalendarClock },
       { to: "/admin/work-orders", label: "__JOB_PLURAL__", icon: ClipboardList },
       { to: "/admin/inbox", label: "Inbox", icon: Inbox },
+      // Badged deliberately: a customer's cancellation request sits here doing
+      // nothing until someone decides, and an unseen one means a truck rolls to
+      // a job the customer thinks is already cancelled.
+      { to: "/admin/change-requests", label: "Change Requests", icon: CalendarCheck, badge: "changeRequests" },
     ],
   },
   {
@@ -150,6 +163,25 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     navigate("/sign-in");
   }
 
+  // Cheap count endpoint, polled: the sidebar is on every admin screen, so this
+  // is how a dispatcher finds out about a request without sitting on the page.
+  const pendingChanges = useQuery({
+    queryKey: ["change-request-count"],
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+    queryFn: async () => {
+      try {
+        const r = await (api as any)["change-requests"].count.$get();
+        if (!r.ok) return { pendingCount: 0 };
+        return await r.json();
+      } catch {
+        // A failed count must never break the sidebar.
+        return { pendingCount: 0 };
+      }
+    },
+  });
+  const changeBadge = Number((pendingChanges.data as any)?.pendingCount ?? 0);
+
   function NavLinks() {
     return (
       <>
@@ -177,10 +209,20 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                       <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r bg-brand" />
                     )}
                     <n.icon className={cn("h-[17px] w-[17px] shrink-0 transition-colors", active ? "text-brand" : "text-slate-600 group-hover:text-slate-400")} />{" "}
-                    {n.label
-                      .replace("__WORKER_PLURAL__", workerPlural)
-                      .replace("__CUSTOMER_PLURAL__", customerPlural)
-                      .replace("__JOB_PLURAL__", jobPlural)}
+                    <span className="flex-1 truncate">
+                      {n.label
+                        .replace("__WORKER_PLURAL__", workerPlural)
+                        .replace("__CUSTOMER_PLURAL__", customerPlural)
+                        .replace("__JOB_PLURAL__", jobPlural)}
+                    </span>
+                    {n.badge === "changeRequests" && changeBadge > 0 && (
+                      <span
+                        aria-label={`${changeBadge} change requests waiting`}
+                        className="shrink-0 rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold text-amber-warn"
+                      >
+                        {changeBadge}
+                      </span>
+                    )}
                   </Link>
                 );
               })}

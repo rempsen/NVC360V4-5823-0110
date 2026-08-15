@@ -34,6 +34,13 @@ export type NvcEvent =
   | "started"
   | "completed"
   | "cancelled"
+  // Customer-initiated appointment changes (shared/change-policy.ts). Separate
+  // events on purpose: "the customer is asking for something" is an office
+  // to-do, while "the appointment actually moved" is news for the tech and a
+  // confirmation for the customer.
+  | "change_requested"
+  | "change_declined"
+  | "rescheduled"
   | "receipt";
 
 export type Recipient = "client" | "tech" | "office";
@@ -56,6 +63,9 @@ export const EVENT_META: Record<
   started: { label: "Job started", defaultTitle: "Service has started", notifType: "reminder" },
   completed: { label: "Job completed", defaultTitle: "Job completed", notifType: "completed" },
   cancelled: { label: "Cancelled", defaultTitle: "Work order cancelled", notifType: "reminder" },
+  change_requested: { label: "Customer requests a change", defaultTitle: "Customer requested a change", notifType: "reminder" },
+  change_declined: { label: "Change request declined", defaultTitle: "We kept your appointment as booked", notifType: "reminder" },
+  rescheduled: { label: "Appointment rescheduled", defaultTitle: "Appointment rescheduled", notifType: "reminder" },
   receipt: { label: "Payment / receipt", defaultTitle: "Payment receipt", notifType: "receipt" },
 };
 
@@ -97,6 +107,22 @@ function defaultMessage(event: NvcEvent, recipient: Recipient, v: Vars): string 
       return `${co}: #${v.shortId} completed by ${v.techName}.`;
     case "cancelled":
       return `${co}: Work order #${v.shortId} (${v.service}) was cancelled.`;
+    case "change_requested":
+      if (recipient === "client")
+        return `${co}: We've got your request for the ${v.service} appointment on ${v.when}. The office will confirm shortly — nothing has changed yet.`;
+      if (recipient === "tech")
+        return `${co}: The customer asked to change work order #${v.shortId} (${v.service} on ${v.when}). Dispatch is reviewing it.`;
+      return `${co}: Customer change request on work order #${v.shortId} — ${v.service} at ${v.address}, currently ${v.when}. Needs a decision.`;
+    case "change_declined":
+      if (recipient === "client")
+        return `${co}: We weren't able to make that change — your ${v.service} appointment stays as booked for ${v.when}. Call us if that doesn't work.`;
+      return `${co}: Change request declined on #${v.shortId} — still ${v.when}.`;
+    case "rescheduled":
+      if (recipient === "client")
+        return `${co}: Your ${v.service} appointment is now ${v.when}. Details: ${v.trackUrl}`;
+      if (recipient === "tech")
+        return `${co}: Work order #${v.shortId} moved — ${v.service} at ${v.address} is now ${v.when}.`;
+      return `${co}: #${v.shortId} rescheduled to ${v.when}.`;
     case "receipt":
       return `${co}: Receipt for ${v.service} — $${v.price}. Thank you!`;
   }
@@ -675,16 +701,22 @@ export async function provisionNotificationBranding(input: {
   }
 }
 
-/** Seed the default rule matrix on first run for a company (idempotent). */
-export async function seedNotificationRules(companyId: string) {
-  const existing = await db
-    .select()
-    .from(schema.notificationRules)
-    .where(eq(schema.notificationRules.companyId, companyId))
-    .limit(1);
-  if (existing.length) return;
-  // sensible defaults, then adjusted per-ICP (see notification-presets.ts)
-  const base: { event: NvcEvent; recipient: Recipient; inApp: boolean; email: boolean; sms: boolean; webhook: boolean }[] = [
+export type RuleSeed = {
+  event: NvcEvent;
+  recipient: Recipient;
+  inApp: boolean;
+  email: boolean;
+  sms: boolean;
+  webhook: boolean;
+};
+
+/**
+ * Shipped default rule matrix (event x recipient x channel), before per-ICP
+ * overrides. Module-level rather than inline in the seeder because
+ * ensureEventRules() needs the same defaults to backfill a company that was
+ * provisioned before a new event existed.
+ */
+const BASE_RULES: RuleSeed[] = [
     { event: "created", recipient: "office", inApp: true, email: false, sms: false, webhook: false },
     { event: "created", recipient: "client", inApp: true, email: true, sms: false, webhook: false },
     { event: "assigned", recipient: "tech", inApp: true, email: true, sms: true, webhook: false },
@@ -701,7 +733,64 @@ export async function seedNotificationRules(companyId: string) {
     { event: "cancelled", recipient: "office", inApp: true, email: false, sms: false, webhook: false },
     { event: "cancelled", recipient: "client", inApp: true, email: true, sms: false, webhook: false },
     { event: "receipt", recipient: "client", inApp: true, email: true, sms: false, webhook: false },
-  ];
+    // Customer-initiated appointment changes. The office MUST hear about a
+    // request (in-app + email) — an unseen request is a truck rolling to a job
+    // the customer thinks is cancelled. The customer gets a written "we've got
+    // it, nothing has changed yet" so they don't call to check, and the assigned
+    // tech is told their day may move.
+    { event: "change_requested", recipient: "office", inApp: true, email: true, sms: false, webhook: false },
+    { event: "change_requested", recipient: "client", inApp: true, email: true, sms: false, webhook: false },
+    { event: "change_requested", recipient: "tech", inApp: true, email: false, sms: false, webhook: false },
+    { event: "change_declined", recipient: "client", inApp: true, email: true, sms: false, webhook: false },
+    { event: "change_declined", recipient: "office", inApp: true, email: false, sms: false, webhook: false },
+    // A moved appointment is the one change where the tech needs SMS: it changes
+    // where they have to be, and they may not have the app open.
+    { event: "rescheduled", recipient: "client", inApp: true, email: true, sms: false, webhook: false },
+    { event: "rescheduled", recipient: "tech", inApp: true, email: true, sms: true, webhook: false },
+    { event: "rescheduled", recipient: "office", inApp: true, email: false, sms: false, webhook: false },
+];
+
+/**
+ * Backfill the default rules for ONE event on a company that already has a rule
+ * matrix. seedNotificationRules() is all-or-nothing on first run, so a tenant
+ * provisioned before an event was added would silently deliver nothing for it:
+ * the event fires, finds zero rules, and nobody is told. Call this immediately
+ * before firing a newly added event.
+ *
+ * Idempotent, and deliberately keyed on "any rule for this event exists" rather
+ * than "an enabled rule exists" — so an admin who turned a notification OFF
+ * never has that decision quietly undone.
+ */
+export async function ensureEventRules(companyId: string, event: NvcEvent) {
+  try {
+    const existing = await db
+      .select()
+      .from(schema.notificationRules)
+      .where(and(
+        eq(schema.notificationRules.companyId, companyId),
+        eq(schema.notificationRules.event, event),
+      ))
+      .limit(1);
+    if (existing.length) return;
+    const seeds = BASE_RULES.filter((r) => r.event === event);
+    for (const d of seeds) await db.insert(schema.notificationRules).values({ ...d, companyId });
+    if (seeds.length)
+      console.log("[dispatch] backfilled", seeds.length, "rules for", event, "on", companyId);
+  } catch (e) {
+    console.error("[dispatch] ensureEventRules failed", event, companyId, e);
+  }
+}
+
+/** Seed the default rule matrix on first run for a company (idempotent). */
+export async function seedNotificationRules(companyId: string) {
+  const existing = await db
+    .select()
+    .from(schema.notificationRules)
+    .where(eq(schema.notificationRules.companyId, companyId))
+    .limit(1);
+  if (existing.length) return;
+  // sensible defaults, then adjusted per-ICP (see notification-presets.ts)
+  const base: RuleSeed[] = BASE_RULES.slice();
   const [company] = await db
     .select({ industry: schema.companies.industry })
     .from(schema.companies)

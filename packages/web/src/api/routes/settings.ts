@@ -53,9 +53,21 @@ export const settingsRoutes = new Hono()
       "defaultRegion", "autoTaxByRegion", "geofenceRadiusM",
       // review requests + reputation routing
       "reviewRequestEnabled", "reviewRequestDelayMins", "googleReviewUrl",
+      // customer-initiated appointment changes (shared/change-policy.ts)
+      "allowCustomerReschedule", "allowCustomerCancelRequest", "customerChangeCutoffHours",
     ];
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     for (const k of allowed) if (k in body) patch[k] = body[k];
+    // This endpoint stores whatever it is handed, so the three change-policy
+    // fields are normalised here: a NaN / negative / absurd cutoff would either
+    // blow up the integer column or hand out a policy nobody chose.
+    if ("customerChangeCutoffHours" in patch) {
+      const n = Math.round(Number(patch.customerChangeCutoffHours));
+      patch.customerChangeCutoffHours = Number.isFinite(n) ? Math.min(336, Math.max(0, n)) : 12;
+    }
+    for (const k of ["allowCustomerReschedule", "allowCustomerCancelRequest"]) {
+      if (k in patch) patch[k] = patch[k] === true || patch[k] === 1 || patch[k] === "true";
+    }
     const [updated] = await tx(c).update(
       schema.companySettings,
       patch as any,

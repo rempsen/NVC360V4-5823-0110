@@ -7,7 +7,7 @@ import { PageWrap } from "../../components/brand";
 import { PageHead } from "./shell";
 import { Field, inputCls, BtnPrimary, ConfirmModal } from "../../components/modal";
 import { AddressAutocomplete } from "../../components/address-autocomplete";
-import { Save, Building2, Check, Calendar, Copy, RefreshCw, ExternalLink, MapPin, Sparkles, Plug, KeyRound, ScrollText, Lock, Eye, EyeOff, Tag, Plus, Trash2, Pencil, X, Star } from "lucide-react";
+import { Save, Building2, Check, Calendar, Copy, RefreshCw, ExternalLink, MapPin, Sparkles, Plug, KeyRound, ScrollText, Lock, Eye, EyeOff, Tag, Plus, Trash2, Pencil, X, Star, CalendarClock } from "lucide-react";
 import { useWorkerNoun } from "../../lib/use-brand";
 import { cn } from "../../lib/utils";
 import AutomationPage from "./automation";
@@ -115,6 +115,107 @@ function CalendarSync() {
           </p>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Small reusable switch matching the review-requests toggle style. */
+function Toggle({
+  on, onClick, label,
+}: { on: boolean; onClick: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      onClick={onClick}
+      className={cn(
+        "relative h-6 w-11 shrink-0 rounded-full transition",
+        on ? "bg-emerald-live" : "bg-white/10",
+      )}
+    >
+      <span
+        className={cn(
+          "absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all",
+          on ? "left-[22px]" : "left-0.5",
+        )}
+      />
+    </button>
+  );
+}
+
+/**
+ * What a customer may do to their own appointment.
+ *
+ * The split here is deliberate and worth the words on screen, because it is the
+ * difference between fewer phone calls and jobs quietly vanishing off the board:
+ * moving a time is safe to hand to the customer while the day isn't routed yet,
+ * but a cancellation is ALWAYS a request someone here approves.
+ */
+function CustomerChangesCard({
+  form, set, noun,
+}: { form: any; set: (k: string, v: any) => void; noun: string }) {
+  const cutoff = Number(form.customerChangeCutoffHours ?? 12);
+  const reschedule = form.allowCustomerReschedule ?? true;
+  const cancelReq = form.allowCustomerCancelRequest ?? true;
+  return (
+    <div className="nvc-card space-y-4 p-5">
+      <h3 className="flex items-center gap-2 font-bold text-white">
+        <CalendarClock className="h-4 w-4 text-brand" /> Customer self-service
+      </h3>
+      <p className="text-xs text-white/50">
+        What a customer can do from their appointment page. Cancellations are
+        never automatic — they always come to you as a request to approve or
+        decline, so nothing leaves the dispatch board without your say.
+      </p>
+
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm text-white/80">Let customers move their own appointment</span>
+        <Toggle
+          on={reschedule}
+          label="Toggle customer reschedule"
+          onClick={() => set("allowCustomerReschedule", !reschedule)}
+        />
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm text-white/80">Let customers send a cancellation request</span>
+        <Toggle
+          on={cancelReq}
+          label="Toggle customer cancellation requests"
+          onClick={() => set("allowCustomerCancelRequest", !cancelReq)}
+        />
+      </div>
+
+      <Field
+        label="Approval cutoff (hours before the appointment)"
+        hint="Default 12. Inside this window a reschedule becomes a request instead of going through. 0 = always self-serve."
+      >
+        <input
+          aria-label="Customer change cutoff hours"
+          type="number"
+          min={0}
+          max={336}
+          step={1}
+          className={inputCls}
+          value={cutoff}
+          onChange={(e) =>
+            set("customerChangeCutoffHours", Math.min(336, Math.max(0, parseInt(e.target.value) || 0)))
+          }
+        />
+      </Field>
+
+      <p className="rounded-lg bg-white/5 p-3 text-[11px] leading-relaxed text-white/60">
+        Right now: {reschedule
+          ? cutoff > 0
+            ? `a customer can move their appointment themselves up to ${cutoff} hour${cutoff === 1 ? "" : "s"} before it starts, then it needs your approval.`
+            : "a customer can move their appointment themselves at any time."
+          : "customers cannot reschedule online."}{" "}
+        {cancelReq
+          ? "Cancellations come to you for approval."
+          : "Customers cannot request a cancellation online."}{" "}
+        Either way, once the {noun.toLowerCase()} is on the way it&apos;s a phone call.
+      </p>
     </div>
   );
 }
@@ -269,6 +370,8 @@ function CompanySettingsTab() {
               />
             </Field>
           </div>
+
+          <CustomerChangesCard form={form} set={set} noun={noun} />
         </div>
 
         {/* Calendar + branding + locale (right column) */}

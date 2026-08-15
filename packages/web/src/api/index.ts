@@ -35,6 +35,7 @@ import { customFieldsRoutes } from "./routes/custom-fields";
 import { uploadsRoutes } from "./routes/uploads";
 import { geoRoutes } from "./routes/geo";
 import { zonesRoutes } from "./routes/zones";
+import { changeRequestsRoutes } from "./routes/change-requests";
 import { shiftsRoutes } from "./routes/shifts";
 import { payoutsRoutes } from "./routes/payouts";
 import { reviewsRoutes } from "./routes/reviews";
@@ -305,6 +306,7 @@ const app = new Hono<{ Variables: Variables }>()
   .route("/uploads", uploadsRoutes)
   .route("/geo", geoRoutes)
   .route("/zones", zonesRoutes)
+  .route("/change-requests", changeRequestsRoutes)
   .route("/shifts", shiftsRoutes)
   .route("/payouts", payoutsRoutes)
   .route("/reviews", reviewsRoutes)

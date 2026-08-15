@@ -56,6 +56,7 @@ PAGES = [
     "/admin/techs", "/admin/clients", "/admin/services", "/admin/catalog",
     "/admin/options", "/admin/builder", "/admin/intake-forms", "/admin/zones",
     "/admin/reports", "/admin/notifications", "/admin/settings", "/admin/inbox",
+    "/admin/change-requests",
     "/admin/payouts", "/admin/automation", "/admin/maintenance", "/admin/tags",
     "/admin/audit", "/admin/api-access", "/admin/integrations",
     "/admin/reviews", "/admin/companies",

@@ -24,9 +24,41 @@
 ## Batched for the next EAS iOS build
 - cross-company Earnings screen (`774a0f1`)
 
+## IN FLIGHT — customer change requests (reschedule / cancel)
+Dan's decision (Aug 14): reschedule = self-serve outside cutoff; cancel = ALWAYS a request the
+office approves. Per-tenant toggles. Default cutoff 12h. Notify office (in-app+email), assigned
+tech, and the customer.
+- [x] schema: company_settings.allowCustomerReschedule / allowCustomerCancelRequest /
+      customerChangeCutoffHours + new `booking_change_requests` table (db:generate → db:migrate)
+- [x] `src/shared/change-policy.ts` pure evaluator + 11 tests (failed first, then green)
+- [x] events: `rescheduled` / `change_requested` / `change_declined` in dispatch NvcEvent +
+      EVENT_META + defaultMessage + seed matrix + job-events kinds + backfill for existing tenants
+- [x] API: GET /api/bookings/:id/change-policy, POST /:id/reschedule, POST /:id/cancel-request;
+      HARDEN existing POST /:id/cancel (today a customer can hard-cancel their own job by API)
+- [x] API: /api/change-requests list/approve/decline (admin) + pending count
+- [x] API tests `src/api/routes/__tests__/change-requests.test.ts` — 29 tests. Caught a REAL gap:
+      BASE_RULES had no seeds for the 3 new events, so ensureEventRules backfilled nothing and no
+      tenant would have been notified. Fixed (8 seed rows). Sabotage-checked (requestCancel writing
+      status=cancelled -> 3 failures -> restored). Suite now 416 pass / 0 fail (was 376).
+      release-job.test.ts "still lets the owning customer cancel" intentionally superseded: now
+      asserts 409 + useEndpoint.
+- [x] admin settings UI toggles (Reschedule / Cancel-request switches + cutoff hours, clamped 0-336)
+- [x] admin approval queue `/admin/change-requests` + sidebar badge (polled count, never breaks the shell)
+- [x] customer UI on /app/track/:id — `AppointmentChangeCard`, day-grouped slot picker, pending-request state
+- [x] full gate set green: 416 tests / tsc 159 / oxlint 0 / vite build ok / crash-sweep ALL CLEAN (26) /
+      a11y PASS (26 x 2) / customer-sweep PASS (12 x 2). crash-sweep + a11y-gate now include the new page.
+- [x] LIVE verified end-to-end on real Turso with throwaway probe rows (all deleted, deletion verified):
+      policy JSON self_serve/request; self-serve reschedule moved scheduled_at; inside-cutoff reschedule
+      created a pending row WITHOUT moving the job; customer POST /cancel -> 409 + useEndpoint;
+      duplicate request -> 409; admin approve (reschedule -> new time, cancel -> cancelled), double
+      approve -> 409, decline left the booking untouched; customer 403 on the admin list; bad status 422;
+      settings toggle off -> reschedule "blocked" for the customer; cutoff 9999 clamped to 336.
+      Also driven through the real browser: customer sent a cancellation request from /app/track, admin
+      saw it (sidebar badge 1) and approved it in the UI -> booking went to cancelled.
+- [ ] needs a web Publish from the Runable UI (Dan)
+
 ## Backlog (next)
-1. Score the booking/customer flow, append to `admin-review.report/content.md`.
-3. Customer-facing email/SMS copy review + per-tenant send-from domain test.
+1. Customer-facing email/SMS copy review + per-tenant send-from domain test.
 
 ## Dan's manual items
 - separate `nvc360-web` Sentry project + `VITE_SENTRY_DSN` in Runable publish settings
