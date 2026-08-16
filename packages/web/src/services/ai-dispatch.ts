@@ -33,6 +33,7 @@ import { db } from "../api/database";
 import * as schema from "../api/database/schema";
 import { gateway, MODELS } from "../api/agent/gateway";
 import { log } from "../api/lib/logger";
+import { fmtInZone } from "../shared/tz";
 
 export const AVG_KMH = 32; // urban average
 /** Beyond this we don't trust the location data enough to recommend on distance. */
@@ -109,6 +110,10 @@ export interface RankInput {
   }>;
   /** tenant's own historical average for this service type, minutes */
   typicalMins: number | null;
+  /** Tenant's IANA zone. The model is told the appointment time in it —
+   *  formatted on the server's UTC clock it was hours out, and the model
+   *  reasons about "is this tech free by then". */
+  tz?: string | null;
 }
 
 /**
@@ -271,12 +276,13 @@ export async function rankCandidates(
     })
     .join("\n");
 
-  const when = job.scheduledAt
-    ? new Date(job.scheduledAt).toLocaleString("en-CA", {
-        dateStyle: "medium",
-        timeStyle: "short",
-      })
-    : "unscheduled";
+  const when = fmtInZone(
+    job.scheduledAt,
+    input.tz,
+    { dateStyle: "medium", timeStyle: "short" },
+    "en-CA",
+    "unscheduled",
+  );
 
   const prompt = `You are the dispatcher for a field-service company. Pick the best ${noun} for this job and rank the rest.
 

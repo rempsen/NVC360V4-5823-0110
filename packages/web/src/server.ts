@@ -57,6 +57,7 @@ const port = Number(process.env.PORT ?? 3000);
 
 // Warm up the Turso connection before serving traffic so the first real user
 // request after a cold start / host resume never races the socket coming up.
+import { oncePerTick } from "./services/tick";
 import { warmUpDb, pingDb } from "./api/database";
 warmUpDb().catch((e) => console.error("db warm-up (boot) failed", e));
 // Keep the DB socket warm: a cheap `select 1` every 60s stops Turso's
@@ -65,11 +66,16 @@ setInterval(() => {
   pingDb().catch(() => {});
 }, 60 * 1000);
 
+// Every sweep below is wrapped in oncePerTick: setInterval does not wait for
+// the previous run, so one slow Turso minute would otherwise put two passes
+// inside the same rows at once — two "running late" texts about one job, or the
+// same automation rule firing twice. A skipped tick is harmless; the next one
+// is 60s away and every sweep is safe to repeat.
 // Periodic self-heal: clear any stuck "busy"/"available" mismatches so a tech
 // never stays locked by a future-dated or cancelled job. Runs on boot + every 2 min.
 reconcileAllRiders().catch((e) => console.error("presence sweep (boot) failed", e));
 setInterval(() => {
-  reconcileAllRiders().catch((e) => console.error("presence sweep failed", e));
+  void oncePerTick("presence-sweep", reconcileAllRiders);
 }, 2 * 60 * 1000);
 
 // Deferred task queue: review requests, maintenance reminders, warranty
@@ -81,9 +87,7 @@ startScheduler();
 // they are conditions of time passing — so we sweep once a minute. Cheap: the
 // sweep exits immediately when no tenant has an enabled time-based rule.
 setInterval(() => {
-  sweepTimeTriggers().catch((e) =>
-    console.error("automation time sweep failed", e),
-  );
+  void oncePerTick("automation-sweep", sweepTimeTriggers);
 }, 60 * 1000);
 
 // Running-late watch. Nothing in the app can fire this either — a job going
@@ -91,7 +95,7 @@ setInterval(() => {
 // It flags the slip for dispatch first and only sends the customer notice if
 // nobody acts within the tenant's grace period.
 setInterval(() => {
-  sweepDelays().catch((e) => console.error("delay sweep failed", e));
+  void oncePerTick("delay-sweep", sweepDelays);
 }, 60 * 1000);
 
 // Auto-poll pending/verifying email sending domains and flip to verified.
@@ -106,7 +110,7 @@ async function pollEmailDomains() {
 }
 pollEmailDomains().catch((e) => console.error("email-domain poll (boot) failed", e));
 setInterval(() => {
-  pollEmailDomains().catch((e) => console.error("email-domain poll failed", e));
+  void oncePerTick("email-domain-poll", pollEmailDomains);
 }, 2 * 60 * 1000);
 const distDir = `${import.meta.dir}/../dist`;
 const indexPath = `${distDir}/index.html`;

@@ -8,6 +8,8 @@ import { tdb, type TenantDb } from "../database/tenant";
 import ExcelJS from "exceljs";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { slugifyName, fetchRouteBasemap, fetchSiteBasemap, type JobRoutePoint } from "../lib/export-map";
+import { companyTimeZone } from "../../services/company-tz";
+import { fmtInZone } from "../../shared/tz";
 
 export { slugifyName, fetchRouteBasemap, fetchSiteBasemap };
 export type { JobRoutePoint };
@@ -80,6 +82,9 @@ export async function toPdf(
   columns: { key: string; label: string; kind?: string }[],
   title: string,
   subtitle?: string,
+  /** Tenant's IANA zone. Without it a date cell renders on the server's UTC
+   *  clock, so an evening job prints on the next calendar day. */
+  tz?: string | null,
 ): Promise<Buffer> {
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
@@ -93,7 +98,7 @@ export async function toPdf(
     if (kind === "money") return `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     if (kind === "pct") return `${Number(v).toFixed(1)}%`;
     if (kind === "num") return Number(v).toLocaleString("en-US", { maximumFractionDigits: 2 });
-    if (kind === "date") { const d = new Date(v); return isNaN(+d) ? String(v) : d.toLocaleDateString("en-US"); }
+    if (kind === "date") { const d = new Date(v); return isNaN(+d) ? String(v) : fmtInZone(d, tz, { year: "numeric", month: "numeric", day: "numeric" }); }
     const s = String(v);
     return s.length > 26 ? s.slice(0, 24) + "…" : s;
   };
@@ -572,7 +577,7 @@ export const exportRoutes = new Hono()
       return fileResponse(buf, `${pre}-${slug}-${stamp}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     }
     if (format === "pdf") {
-      const buf = await toPdf(rows, columns, title || "Report", subtitle);
+      const buf = await toPdf(rows, columns, title || "Report", subtitle, await companyTimeZone(tenantId(c)));
       return fileResponse(buf, `${pre}-${slug}-${stamp}.pdf`, "application/pdf");
     }
     const csv = toCsv(rows, columns.map((c: any) => c.key));
@@ -598,7 +603,7 @@ export const exportRoutes = new Hono()
       return fileResponse(buf, `${pre}-${dataset}-${stamp}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     }
     if (format === "pdf") {
-      const buf = await toPdf(rows, cols, title);
+      const buf = await toPdf(rows, cols, title, undefined, await companyTimeZone(tenantId(c)));
       return fileResponse(buf, `${pre}-${dataset}-${stamp}.pdf`, "application/pdf");
     }
     const csv = toCsv(rows, cols.map((c) => c.key));

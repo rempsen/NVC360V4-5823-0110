@@ -7,6 +7,8 @@ import {
 import { requireAuth, tenantId } from "../middleware/auth";
 import { isAdminRole } from "../lib/permissions";
 import { toCsv, toPdf, buildJobPdf, fileResponse, tenantFilePrefix, type JobUnitLine, type JobPhoto } from "./export";
+import { companyTimeZone } from "../../services/company-tz";
+import { fmtInZone } from "../../shared/tz";
 
 type SessionUser = { id: string; role?: string; email: string; name: string };
 
@@ -331,7 +333,12 @@ export const jobSearchRoutes = new Hono()
     // filenames carry the tenant name, not the product name — see tenantFilePrefix
     const pre = await tenantFilePrefix(cid);
     const title = "Work Orders";
-    const subtitle = `${enriched.length} jobs · exported ${new Date().toLocaleString("en-CA")}`;
+    // Dates in an export belong on the TENANT's clock, not the server's (UTC):
+    // an evening job otherwise prints on the next calendar day.
+    const tz = await companyTimeZone(cid);
+    const fmtDate = (v: any) =>
+      fmtInZone(v, tz, { dateStyle: "medium", timeStyle: "short" }, "en-CA", "");
+    const subtitle = `${enriched.length} jobs · exported ${fmtDate(Date.now())}`;
 
     if (format === "json") {
       const slim = enriched.map((r: any) => Object.fromEntries(pickedKeys.map((k) => [k, r[k]])));
@@ -342,7 +349,7 @@ export const jobSearchRoutes = new Hono()
         const o: any = {};
         for (const col of cols) {
           let v = r[col.key];
-          if (col.kind === "date" && v) v = new Date(v).toLocaleString("en-CA");
+          if (col.kind === "date" && v) v = fmtDate(v);
           o[col.key] = v;
         }
         return o;
@@ -376,6 +383,9 @@ export const jobSearchRoutes = new Hono()
     await logExport(tenantId(c), u, format, 1, { jobId: id }, JOB_COLUMNS.map((c) => c.key));
     const stamp = Date.now();
     const pre = await tenantFilePrefix(tenantId(c));
+    const detailTz = await companyTimeZone(tenantId(c));
+    const fmtDetailDate = (v: any) =>
+      fmtInZone(v, detailTz, { dateStyle: "medium", timeStyle: "short" }, "en-CA", "");
 
     if (format === "json") {
       return fileResponse(JSON.stringify({ ...enriched, raw: b }, null, 2), `${pre}-job-${jobNumber(b.id)}-${stamp}.json`, "application/json");
@@ -383,7 +393,7 @@ export const jobSearchRoutes = new Hono()
     // PDF: vertical label/value sheet (one column = label, one = value)
     const rows = JOB_COLUMNS.map((col) => {
       let v: any = (enriched as any)[col.key];
-      if (col.kind === "date" && v) v = new Date(v).toLocaleString("en-CA");
+      if (col.kind === "date" && v) v = fmtDetailDate(v);
       if (col.kind === "money" && v != null) v = `$${Number(v).toFixed(2)}`;
       return { field: col.label, value: v ?? "" };
     });

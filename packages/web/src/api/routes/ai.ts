@@ -11,6 +11,7 @@ import {
   techWorkload,
   typicalDurationMins,
 } from "../../services/ai-dispatch";
+import { companyTimeZone } from "../../services/company-tz";
 
 export const aiRoutes = new Hono()
   // suggest the best technician for a work order (nearest + skill match + availability)
@@ -46,6 +47,7 @@ export const aiRoutes = new Hono()
     ]);
 
     const result = await rankCandidates({
+      tz: await companyTimeZone(t.companyId),
       job: {
         id: b.id,
         title: b.title,

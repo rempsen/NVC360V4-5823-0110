@@ -19,6 +19,8 @@ import { and, eq } from "drizzle-orm";
 import { registerTaskHandler, scheduleTask } from "./scheduler";
 import { sendSms } from "./sms";
 import { propertyUrl } from "./properties";
+import { companyTimeZone } from "./company-tz";
+import { fmtInZone } from "../shared/tz";
 
 const KIND = "maintenance_reminder";
 
@@ -93,6 +95,36 @@ export async function syncPlanReminder(planId: string): Promise<void> {
   }
 }
 
+/**
+ * The words that actually go out for a maintenance reminder.
+ *
+ * Pure, and takes the tenant's zone explicitly, because the due DATE was being
+ * rendered on the server's clock (UTC). A plan due 8pm Winnipeg is already the
+ * next calendar day in UTC, so the customer was texted the wrong day.
+ */
+export function maintenanceReminderCopy(input: {
+  company: string;
+  what: string;
+  dueAt: Date | number | null;
+  address: string;
+  hubUrl: string;
+  tz: string;
+}): { due: string; sms: string; officeTitle: string } {
+  const due = fmtInZone(
+    input.dueAt == null ? null : Number(input.dueAt),
+    input.tz,
+    { month: "short", day: "numeric" },
+    "en-US",
+    "soon",
+  );
+  const sms =
+    `${input.company}: ${input.what} is due ${due}` +
+    (input.address ? ` at ${input.address}` : "") +
+    `. Reply to book a time.` +
+    (input.hubUrl ? ` Service history: ${input.hubUrl}` : "");
+  return { due, sms, officeTitle: `${input.what} due ${due}` };
+}
+
 // ── Scheduler handler ────────────────────────────────────────────────────────
 registerTaskHandler(KIND, async (task) => {
   const planId = String((task.payload as any)?.planId ?? "");
@@ -130,21 +162,18 @@ registerTaskHandler(KIND, async (task) => {
     phone = cust?.phone || "";
   }
 
-  const due = plan.nextDueAt
-    ? new Date(Number(plan.nextDueAt)).toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-      })
-    : "soon";
   const what = plan.name || "your scheduled service";
+  const copy = maintenanceReminderCopy({
+    company,
+    what,
+    dueAt: plan.nextDueAt ? Number(plan.nextDueAt) : null,
+    address: plan.address || "",
+    hubUrl,
+    tz: await companyTimeZone(plan.companyId),
+  });
 
   if (phone) {
-    const body =
-      `${company}: ${what} is due ${due}` +
-      (plan.address ? ` at ${plan.address}` : "") +
-      `. Reply to book a time.` +
-      (hubUrl ? ` Service history: ${hubUrl}` : "");
-    const res = await sendSms(phone, body);
+    const res = await sendSms(phone, copy.sms);
     if (!res.ok && !res.skipped) throw new Error(res.error || "sms failed");
   }
 
@@ -163,7 +192,7 @@ registerTaskHandler(KIND, async (task) => {
       companyId: plan.companyId,
       userId: a.id,
       type: "maintenance_due",
-      title: `${what} due ${due}`,
+      title: copy.officeTitle,
       body: plan.address || "Recurring maintenance plan is due.",
     });
   }

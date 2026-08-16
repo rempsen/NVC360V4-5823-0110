@@ -158,3 +158,40 @@ export function namedDayBounds(input: string | Date, tz: string): { start: Date;
   if (Number.isNaN(dt.getTime())) return zonedDayBounds(new Date(), tz);
   return zonedDayBounds(dt, tz);
 }
+
+/**
+ * Format an instant on a GIVEN zone's clock — the only date formatter the
+ * server should ever use.
+ *
+ * `new Date(x).toLocaleDateString("en-US", ...)` on the server formats in the
+ * process zone, and the server runs UTC. For a Winnipeg tenant (UTC-5 in
+ * summer) every instant after 19:00 local is already tomorrow in UTC, so a
+ * maintenance reminder for a job due Aug 17 at 8pm went out by SMS reading
+ * "due Aug 18". Same class of bug as the quiet-hours and today-stats ones:
+ * the tenant's zone existed in settings and nothing read it.
+ *
+ * Also normalises the narrow no-break space newer ICU builds put before AM/PM,
+ * so the same string comes out of every runtime and lands cleanly in an SMS.
+ */
+export function fmtInZone(
+  d: string | number | Date | null | undefined,
+  tz: string | null | undefined,
+  opts: Intl.DateTimeFormatOptions,
+  locale = "en-US",
+  /** Shown instead of "Invalid Date" — never put that in a customer message. */
+  fallback = "—",
+): string {
+  if (d == null || d === "") return fallback;
+  const dt = d instanceof Date ? d : new Date(d);
+  if (Number.isNaN(dt.getTime())) return fallback;
+  try {
+    return dt
+      .toLocaleString(locale, { ...opts, timeZone: safeTimeZone(tz) })
+      .replace(/[  ]/g, " ");
+  } catch {
+    // A bad locale must not 500 a request or lose a notification.
+    return dt
+      .toLocaleString("en-US", { ...opts, timeZone: safeTimeZone(tz) })
+      .replace(/[  ]/g, " ");
+  }
+}

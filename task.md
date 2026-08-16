@@ -100,3 +100,48 @@ Inform only — no reschedule link.
 - separate `nvc360-web` Sentry project + `VITE_SENTRY_DSN` in Runable publish settings
 - resolve/ignore Sentry `REACT-NATIVE-9`; revoke old key ending …744457c
 - test Accept and Decline on a TestFlight build (untested since build 13)
+
+## IN FLIGHT — audit fixes: server-side timezone leaks + sweep races
+
+Two bugs found in the Aug 16 audit pass.
+
+BUG 1 — the company-timezone fix never reached the rest of the server. dispatch.ts was
+fixed last session, but five other places still format on the server's clock (UTC):
+  - services/maintenance.ts:134  reminder SMS quotes the WRONG DAY for an evening due date
+  - api/routes/public-forms.ts:712  intake email quotes the customer's preferred time 5-6h off
+  - api/routes/bookings.ts:1310  voice-note stamps in driver notes are UTC
+  - services/ai-dispatch.ts:275  the AI dispatcher is fed the wrong appointment time
+  - api/routes/export.ts + job-search.ts  exported job dates roll to the next day after ~6pm
+
+BUG 2 — the running-late notice can text a customer twice.
+  a) sendDelayNotice() writes delay_notified_at blind, no compare-and-set: the minute
+     sweep and a dispatcher's "Send now" can both read null and both fire.
+  b) none of the minute sweeps (sweepDelays, sweepTimeTriggers, pollEmailDomains,
+     reconcileAllRiders) are re-entrant-guarded: setInterval does not wait for the
+     previous run, so one slow Turso tick over 60s overlaps two passes over the same rows.
+
+- [x] failing tests first (35 new: 8 fmtInZone, 9 oncePerTick, 7 reminder copy, 3 reminder wiring,
+      8 delay-notice race) — all confirmed red before implementing
+- [x] shared/tz.ts fmtInZone(): the one server-side date formatter, zone always explicit,
+      never renders "Invalid Date", normalises the narrow no-break space before AM/PM
+- [x] all five timezone call sites now read companyTimeZone(); maintenance reminder copy
+      extracted into a pure maintenanceReminderCopy() so the words that go out are testable
+- [x] services/tick.ts oncePerTick(): all four minute sweeps in server.ts are now
+      re-entrancy guarded (skip, never queue; a throw releases the lock)
+- [x] sendDelayNotice() is compare-and-set on delay_notified_at — the loser sends nothing;
+      POST /delays/:id/notify passes the state it read and 409s if the customer was already told
+- [x] 7-mutation sabotage battery: drop the CAS / sweep opts out of CAS / route drops the
+      already-told check / fmtInZone ignores the zone / reminder handler hardcodes UTC /
+      oncePerTick stops guarding / oncePerTick leaks the lock on throw — every one caught by a
+      named test, all restored
+- [x] LIVE on real Turso (probe rows deleted, deletion verified): two simultaneous Send-now
+      clicks = one 200 + one 409, exactly one delayed job event, zero notification rows;
+      a third click 409s. Export PDF prints 8/17/2026 and "Aug 17, 2026, 8:00 p.m." for a job
+      at 2026-08-18T01:00Z (was the next day in UTC). Voice note stamped "Aug 15, 9:37 p.m."
+      while the server clock read Aug 16 02:37 UTC. A guarded sweep tick still flags normally.
+- [x] full gate set: 499 tests / tsc 159 / oxlint 0 / vite build ok / crash-sweep ALL CLEAN (26)
+      / a11y PASS (26 x 2) / customer-sweep PASS (12 x 2)
+- [ ] needs a web Publish from the Runable UI (Dan)
+
+NOT live-verified (no safe way without sending real mail): the intake recipient email's
+"preferred date" line. Covered by fmtInZone tests + a one-line call site.

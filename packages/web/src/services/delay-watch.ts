@@ -13,7 +13,7 @@
 import { db } from "../api/database";
 import { tdb } from "../api/database/tenant";
 import * as schema from "../api/database/schema";
-import { and, eq, gte, lte, inArray, isNotNull } from "drizzle-orm";
+import { and, eq, gte, lte, inArray, isNotNull, isNull } from "drizzle-orm";
 import {
   evaluateDelay,
   roundedSlip,
@@ -78,16 +78,41 @@ export function decideFor(b: BookingRow, policy: DelayPolicy, now = Date.now()):
  * it back off the booking (dispatch context()) to quote a revised arrival time.
  * Rounded on the way in so the number the customer was told and the number we
  * logged are the same one.
+ *
+ * COMPARE-AND-SET, and this matters more than it looks. The minute sweep and a
+ * dispatcher pressing "Send now" are independent writers: both read the
+ * booking, both see delay_notified_at empty, both decide to send — and the
+ * customer gets two "we're running late" texts about one job. So the caller
+ * passes the delay_notified_at it READ, and the write only lands while the row
+ * still says that. The loser returns ok:false and never fires. The claim and
+ * the send are in that order on purpose: a duplicate text is a support call, a
+ * missed one is caught by the next sweep 60 seconds later.
  */
 export async function sendDelayNotice(opts: {
   companyId: string;
   bookingId: string;
   slipMins: number;
   actor?: string;
-}): Promise<{ ok: boolean; notifiedMins: number }> {
+  /**
+   * The row's delay_notified_at as the caller read it (null = never told).
+   * Omit only from a context where no other writer can exist.
+   */
+  expectNotifiedAt?: number | null;
+}): Promise<{ ok: boolean; notifiedMins: number; reason?: "already-sent" }> {
   const rounded = roundedSlip(opts.slipMins);
   const now = new Date();
-  await tdb(opts.companyId).update(
+
+  const guard =
+    opts.expectNotifiedAt === undefined
+      ? undefined
+      : opts.expectNotifiedAt === null
+        ? isNull(schema.bookings.delayNotifiedAt)
+        : eq(schema.bookings.delayNotifiedAt, new Date(opts.expectNotifiedAt));
+  const where = guard
+    ? and(eq(schema.bookings.id, opts.bookingId), guard)
+    : eq(schema.bookings.id, opts.bookingId);
+
+  const claimed = await tdb(opts.companyId).update(
     schema.bookings,
     {
       delayNotifiedAt: now,
@@ -95,8 +120,15 @@ export async function sendDelayNotice(opts: {
       delayFlaggedAt: now, // keep the board showing it, with a fresh clock
       delayFlaggedMins: rounded,
     },
-    eq(schema.bookings.id, opts.bookingId),
+    where,
   );
+  // Nothing matched: another writer got there first (or it isn't our tenant's
+  // booking). Either way, say nothing to the customer.
+  if (!claimed.length) {
+    incr("delay_notice_raced_total");
+    return { ok: false, notifiedMins: 0, reason: "already-sent" };
+  }
+
   // A tenant provisioned before this event existed has no rules for it, and
   // would silently notify nobody.
   await ensureEventRules(opts.companyId, "delayed");
@@ -217,12 +249,15 @@ export async function sweepDelays(now: Date = new Date()): Promise<{
             );
             result.cleared++;
           } else if (d.action === "notify") {
-            await sendDelayNotice({
+            const sent = await sendDelayNotice({
               companyId: co.companyId,
               bookingId: b.id,
               slipMins: d.slipMins,
+              // The row as this pass read it — an overlapping sweep or a
+              // dispatcher's click since then wins, and we stay quiet.
+              expectNotifiedAt: b.delayNotifiedAt ? Number(b.delayNotifiedAt) : null,
             });
-            result.notified++;
+            if (sent.ok) result.notified++;
           }
         }
       } catch (e) {

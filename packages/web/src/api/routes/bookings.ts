@@ -26,7 +26,7 @@ import {
   requestCancel,
 } from "../../services/change-requests";
 import { companyTimeZone } from "../../services/company-tz";
-import { zonedDayBounds } from "../../shared/tz";
+import { zonedDayBounds, fmtInZone } from "../../shared/tz";
 import { z } from "zod";
 import {
   parseBody,
@@ -1307,7 +1307,14 @@ export const bookingsRoutes = new Hono()
     if (!transcript) transcript = await transcribeAudio(bytes, file.name || `note.${ext}`, file.type);
 
     const me = c.get("user") as SessionUser;
-    const stamp = new Date().toLocaleString("en-CA", { dateStyle: "medium", timeStyle: "short" });
+    // Stamped on the tenant's clock: an office reader seeing "2:14 AM" on a
+    // note dictated at 9:14 PM has no idea what they're looking at.
+    const stamp = fmtInZone(
+      new Date(),
+      await companyTimeZone(t.companyId),
+      { dateStyle: "medium", timeStyle: "short" },
+      "en-CA",
+    );
     if (transcript) {
       const line = `[Voice note — ${me?.name || "Tech"}, ${stamp}] ${transcript}`;
       const next = b.driverNotes ? `${b.driverNotes}\n${line}` : line;

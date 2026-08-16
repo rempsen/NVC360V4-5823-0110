@@ -61,12 +61,31 @@ export const delaysRoutes = new Hono()
         409,
       );
 
+    // Sending EARLY is the whole point of this button, so a flagged job still
+    // inside its grace period is fair game. Sending AGAIN is not: once the
+    // customer has been told, only the evaluator decides there is something new
+    // worth saying (the slip grew by another threshold, outside the quiet gap).
+    // Without this, two dispatchers on the same board double-text the customer.
+    if (b.delayNotifiedAt && d.action !== "notify")
+      return c.json(
+        { message: "This customer has already been told about this delay." },
+        409,
+      );
+
     const r = await sendDelayNotice({
       companyId: co,
       bookingId,
       slipMins: d.slipMins,
       actor: u.id,
+      // Compare-and-set against the row we just read: if the sweep or another
+      // dispatcher sent in the meantime, this one sends nothing.
+      expectNotifiedAt: b.delayNotifiedAt ? Number(b.delayNotifiedAt) : null,
     });
+    if (!r.ok)
+      return c.json(
+        { message: "This customer has already been told about this delay." },
+        409,
+      );
     await audit({
       actorId: u.id,
       actorName: u.name,

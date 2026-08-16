@@ -14,6 +14,8 @@ import { recomputeBooking } from "../../services/billing";
 import { reconcileRiderStatus } from "../../services/presence";
 import { capture } from "../lib/analytics";
 import { incr } from "../lib/metrics";
+import { companyTimeZone } from "../../services/company-tz";
+import { fmtInZone } from "../../shared/tz";
 import { z } from "zod";
 import {
   parseBody,
@@ -707,11 +709,23 @@ export const publicFormsRoutes = new Hono()
 
     // ---- email the form's designated recipient (master "where it's sent") ----
     if (form.recipientEmail) {
-      notifyRecipient(form, {
-        name, email, phone, address, notes, service: svc.name,
-        preferredAt: preferredAt ? preferredAt.toLocaleString() : "",
-        photoUrl, custom: customAnswers,
-      }).catch((e) => console.error("intake recipient email failed", e));
+      // The customer's preferred time, on the TENANT's clock — formatted on
+      // the server's (UTC) it landed in the office inbox hours out.
+      companyTimeZone(form.companyId)
+        .then((tz) =>
+          notifyRecipient(form, {
+            name, email, phone, address, notes, service: svc.name,
+            preferredAt: fmtInZone(
+              preferredAt,
+              tz,
+              { dateStyle: "medium", timeStyle: "short" },
+              "en-US",
+              "",
+            ),
+            photoUrl, custom: customAnswers,
+          }),
+        )
+        .catch((e) => console.error("intake recipient email failed", e));
     }
 
     return c.json({ ok: true, message: form.successMessage }, 201);

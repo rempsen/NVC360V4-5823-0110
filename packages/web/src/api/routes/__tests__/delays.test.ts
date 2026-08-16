@@ -30,7 +30,7 @@ process.env.TWILIO_AUTH_TOKEN = "";
 const { db } = await import("../../database/index");
 const schema = await import("../../database/schema");
 const { delaysRoutes } = await import("../delays");
-const { sweepDelays, listDelays, pendingDelayCount } = await import(
+const { sweepDelays, listDelays, pendingDelayCount, sendDelayNotice } = await import(
   "../../../services/delay-watch"
 );
 const { AppError } = await import("../../lib/errors");
@@ -452,5 +452,117 @@ describe("POST /delays/:bookingId/mute", () => {
     await seedBooking({ id: "dly-m3", minsLate: 20 });
     const res = await call("/delays/dly-m3/mute", asCustomer, { method: "POST", body: { muted: true } });
     expect(res.status).toBe(403);
+  });
+});
+
+/**
+ * ONE SLIP, ONE TEXT — even when two writers fire at the same instant.
+ *
+ * The minute sweep and a dispatcher pressing "Send now" are independent
+ * writers. Both read the booking, both see delay_notified_at = null, both
+ * decide to send: the customer gets two "we're running late" texts about the
+ * same job. The notify write has to be a compare-and-set — only the writer
+ * whose expected delay_notified_at still matches the row may send.
+ */
+describe("send is compare-and-set — a customer is never told twice", () => {
+  it("only one of two simultaneous sends actually fires", async () => {
+    await seedBooking({ id: "dly-r1", minsLate: 20, flaggedAt: Date.now() - 60 * MIN });
+    const before = await bookingRow("dly-r1");
+    const expected = before.delay_notified_at ? Number(before.delay_notified_at) : null;
+
+    const [a, b] = await Promise.all([
+      sendDelayNotice({ companyId: CO, bookingId: "dly-r1", slipMins: 20, expectNotifiedAt: expected }),
+      sendDelayNotice({ companyId: CO, bookingId: "dly-r1", slipMins: 20, expectNotifiedAt: expected }),
+    ]);
+    expect([a.ok, b.ok].filter(Boolean).length).toBe(1);
+    const loser = a.ok ? b : a;
+    expect(loser.reason).toBe("already-sent");
+  });
+
+  it("writes exactly one 'delayed' job event for two simultaneous sends", async () => {
+    await seedBooking({ id: "dly-r2", minsLate: 25, flaggedAt: Date.now() - 60 * MIN });
+    await Promise.all([
+      sendDelayNotice({ companyId: CO, bookingId: "dly-r2", slipMins: 25, expectNotifiedAt: null }),
+      sendDelayNotice({ companyId: CO, bookingId: "dly-r2", slipMins: 25, expectNotifiedAt: null }),
+    ]);
+    const r = await sqlClient().execute({
+      sql: "SELECT COUNT(*) AS n FROM job_events WHERE booking_id = ? AND kind = 'delayed'",
+      args: ["dly-r2"],
+    });
+    expect(Number(r.rows[0].n)).toBe(1);
+  });
+
+  it("rejects a send whose expected state is stale (someone sent since we read the row)", async () => {
+    const sentAt = Date.now() - 5 * MIN;
+    await seedBooking({
+      id: "dly-r3", minsLate: 40, flaggedAt: Date.now() - 60 * MIN,
+      notifiedAt: sentAt, notifiedMins: 20,
+    });
+    // Caller read the row BEFORE that notice landed.
+    const r = await sendDelayNotice({
+      companyId: CO, bookingId: "dly-r3", slipMins: 40, expectNotifiedAt: null,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("already-sent");
+    // The earlier notice's numbers survive untouched.
+    const row = await bookingRow("dly-r3");
+    expect(Number(row.delay_notified_mins)).toBe(20);
+  });
+
+  it("allows a legitimate re-notify when the expected state matches what was sent", async () => {
+    const sentAt = Date.now() - 45 * MIN;
+    await seedBooking({
+      id: "dly-r4", minsLate: 60, flaggedAt: Date.now() - 60 * MIN,
+      notifiedAt: sentAt, notifiedMins: 20,
+    });
+    const r = await sendDelayNotice({
+      companyId: CO, bookingId: "dly-r4", slipMins: 60, expectNotifiedAt: sentAt,
+    });
+    expect(r.ok).toBe(true);
+    expect(Number((await bookingRow("dly-r4")).delay_notified_mins)).toBe(60);
+  });
+
+  it("never lets a send cross tenants even with a matching expected state", async () => {
+    await seedBooking({ id: "dly-r5", minsLate: 20, companyId: CO });
+    const r = await sendDelayNotice({
+      companyId: CO2, bookingId: "dly-r5", slipMins: 20, expectNotifiedAt: null,
+    });
+    expect(r.ok).toBe(false);
+    expect((await bookingRow("dly-r5")).delay_notified_at).toBeFalsy();
+  });
+
+  it("HTTP: two simultaneous Send-now clicks produce one 200 and one 409", async () => {
+    await seedBooking({ id: "dly-r6", minsLate: 20, flaggedAt: Date.now() - MIN });
+    const [a, b] = await Promise.all([
+      call("/delays/dly-r6/notify", asAdmin, { method: "POST", body: {} }),
+      call("/delays/dly-r6/notify", asAdmin, { method: "POST", body: {} }),
+    ]);
+    const codes = [a.status, b.status].sort();
+    expect(codes).toEqual([200, 409]);
+  });
+
+  it("HTTP: the losing click says the customer was already told, and changes nothing", async () => {
+    const sentAt = Date.now() - 2 * MIN;
+    await seedBooking({
+      id: "dly-r7", minsLate: 20, flaggedAt: Date.now() - 30 * MIN,
+      notifiedAt: sentAt, notifiedMins: 20,
+    });
+    const res = await call("/delays/dly-r7/notify", asAdmin, { method: "POST", body: {} });
+    // Inside the quiet gap after a notice of the same size: nothing to send.
+    expect(res.status).toBe(409);
+    expect(Number((await bookingRow("dly-r7")).delay_notified_mins)).toBe(20);
+  });
+
+  it("the sweep's own auto-send is compare-and-set too", async () => {
+    // Grace lapsed, nobody acted — the sweep sends. A second sweep in the same
+    // minute (overlapping tick) must not send again.
+    await seedBooking({ id: "dly-r8", minsLate: 30, flaggedAt: Date.now() - 60 * MIN });
+    const [s1, s2] = await Promise.all([sweepDelays(), sweepDelays()]);
+    expect(s1.notified + s2.notified).toBe(1);
+    const r = await sqlClient().execute({
+      sql: "SELECT COUNT(*) AS n FROM job_events WHERE booking_id = ? AND kind = 'delayed'",
+      args: ["dly-r8"],
+    });
+    expect(Number(r.rows[0].n)).toBe(1);
   });
 });
