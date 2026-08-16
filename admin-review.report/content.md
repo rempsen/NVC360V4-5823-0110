@@ -290,3 +290,94 @@ Sign-up → booked took one pass with no dead ends, and the confirmation immedia
 ---
 
 *All findings in Part 2 were reproduced on a running server against the live database. Probe data created during the review — one customer account, one booking and its dependent rows — was deleted afterwards and the deletion verified, and the temporarily activated Winnipeg service zone was set back to inactive.*
+
+---
+
+# Part 3 — Customer-facing email & SMS copy review
+
+*Reviewed 2026-08-16. Every fix below is committed as `e0b2248` and proven live against
+the real database and the real Resend account, on the NVC360 and BMD Materials tenants.*
+
+## The one thing that needs you, not code
+
+**NVC360 cannot send any email right now.** Resend has `nvc360.com` marked **failed**, so
+every email from the NVC360 tenant is being rejected. BMD Materials is fine and sending
+normally — that was confirmed with a real test email that Resend logged as *delivered*.
+
+The cause is one DNS record. `nvc360.com` currently has **two** DKIM values published at
+`resend._domainkey`, and neither is the one Resend expects. One of them is actually BMD's
+key, so it looks like a copy/paste from setting up the other domain. The SPF and MX records
+are both correct — only DKIM is wrong.
+
+**The fix, in your DNS host for nvc360.com:**
+
+1. Delete **every** existing TXT record at the name `resend._domainkey`
+2. Add one TXT record:
+
+| Field | Value |
+|---|---|
+| Type | TXT |
+| Name | `resend._domainkey` |
+| Value | `p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDNKnH45Jab/JtgwzMOni3Y7sjDZmpqkVsLYA8X8NfQD6sZR7rIgqKFh8Iw7RVfpvJ+g0u+niYFhNnVjI48yEjhXJcm55XR0fCkg8Vvh3pNewi93q7YqBnnjmmQnKwDfD6amhng1+B+QZVFXcprWXdtS6EIUyHNgblVaLIog1eD1QIDAQAB` |
+
+Leave `send.nvc360.com` (the SPF TXT and the MX) exactly as they are. Once DNS propagates,
+the platform re-checks on its own within six hours and email starts flowing again — no
+button to press.
+
+## Why nobody noticed
+
+The domain had been broken since roughly early July. The platform only ever re-checked
+domains that were still *waiting* on DNS; once a domain reached "verified" it was never
+looked at again, so a domain that broke afterwards stayed marked verified forever. That is
+now fixed: verified and failed domains are re-checked every six hours, and a domain falling
+out of verified writes a loud error to the logs.
+
+## Fixed in code
+
+| What was wrong | Why it mattered |
+|---|---|
+| A tenant's custom From address was used even when their domain was **not verified** | On receipt and password-reset emails a company could send as a domain they hadn't proven they own. Allco Electrical was doing this on the live database. |
+| Appointment times in emails used the **server's** clock (UTC) | A Winnipeg company's 8pm job printed **tomorrow's date** in the confirmation and reminder emails. Same bug family as last session's, in a file the earlier pass didn't reach. |
+| Prices had **no dollar sign** | The receipt text message said "$149.00"; the receipt *email* said "149.00". |
+| Email buttons could be **dead links** | Links were assembled assuming the site address ends in a slash. Without one, every button pointed at `https://uberize.aitrack/...`. It worked locally by luck. |
+| A bad appointment date **killed the whole email** | One unusable date value made the "add to calendar" section crash, so the customer got nothing instead of an email minus the calendar buttons. |
+| Calendar invites said **NVC360** for every company | A BMD customer filed "NVC360 service appointment" in their calendar. Now it names their actual contractor. |
+| A rejected email **retried on the same broken domain** | A guaranteed second failure and a wasted send. It also lost the Reply-To, so replies went to an unmonitored inbox. |
+
+## Text message costs — 24% saving
+
+A text fits 160 characters in one paid segment, but the moment a single character falls
+outside the basic GSM alphabet the limit drops to 70 and the whole message re-encodes. Two
+characters were doing that: the long dash **—** (in 17 of the built-in messages) and the
+middle dot **·** (in one). Nothing else.
+
+That meant ordinary 145-character notices — the running-late notice, the completion notice,
+the change-request notices — were billing as **three segments instead of one**.
+
+Both characters now get swapped for plain equivalents at the moment of sending, which also
+covers any wording a company writes themselves and their own company name. Across all 45
+default messages: **66 segments down to 50, a 24% reduction**, with two notices going from
+three segments to one. Emoji and genuinely accented names are left alone — there's no
+harmless substitute and mangling a customer's name isn't worth a segment.
+
+## Still open — your call
+
+**No text message says "Reply STOP to opt out."** Opt-out itself works (the carrier and
+Twilio handle STOP automatically), but the disclosure isn't there. For 10DLC/A2P messaging
+in Canada and the US that wording is normally expected, at minimum on the first message a
+customer receives. Adding it costs about 25 characters, which can push a message into
+another segment — so it's a trade-off worth deciding deliberately rather than silently.
+
+## Verification
+
+- 32 new tests, every one confirmed failing before the fix
+- 12 deliberate re-breakages, each caught by a specifically named test, all restored
+- Real test email from the BMD Materials tenant: sent as `BMD Materials
+  <contact@bmdmaterials.com>`, reply-to correct, Resend status **delivered**
+- The unverified-domain refusal proven both ways by running the same live probe with the
+  guard removed, which produced `Allco Electrical <careers@allcoelectrical.com>`
+- Gates: 543 tests pass, 0 lint findings, build clean, 26 admin pages crash-free,
+  accessibility and customer-flow sweeps pass
+
+**Not verified live:** the text-message change. There was no phone number authorised to
+text, so it's covered by tests and the send-path log line only.
