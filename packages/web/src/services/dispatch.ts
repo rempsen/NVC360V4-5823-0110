@@ -13,6 +13,7 @@ import { eq, and } from "drizzle-orm";
 import { sendEmail } from "./email";
 import { renderEmailDesign, designToText, type EmailBlock, type EmailBrand } from "./email-render";
 import { verifiedDomainsForCompany } from "./email-domains";
+import { pickSender } from "./sender";
 import { sendSms, trackingUrl } from "./sms";
 import { sendPush } from "./push";
 import { applyNotificationOverrides } from "./notification-presets";
@@ -276,15 +277,13 @@ export async function sendDesignTest(companyId: string, to: string, subject: str
   const interp = (s: string) => interpolate(s, vars);
   const html = renderEmailDesign(blocks || [], brand, interp);
   const text = designToText(blocks || [], interp);
-  let emailFrom: string | undefined;
-  if (cfg?.emailFromAddress) {
-    const fromDomain = cfg.emailFromAddress.split("@")[1]?.toLowerCase() || "";
-    const verified = await verifiedDomainsForCompany(companyId).catch((): string[] => []);
-    if (fromDomain && verified.includes(fromDomain))
-      emailFrom = `${cfg.emailFromName || SAMPLE_VARS.company} <${cfg.emailFromAddress}>`;
-  }
+  const sender = pickSender(
+    { ...cfg, emailFromName: cfg?.emailFromName || SAMPLE_VARS.company },
+    await verifiedDomainsForCompany(companyId).catch((): string[] => []),
+  );
+  const emailFrom = sender.from;
   const subj = interp(subject || `${brand.company}: test email`);
-  const r: any = await sendEmail({ to, subject: `[TEST] ${subj}`, html, text, from: emailFrom, replyTo: cfg?.emailReplyTo || undefined }).catch((e) => ({ error: e?.message }));
+  const r: any = await sendEmail({ to, subject: `[TEST] ${subj}`, html, text, from: emailFrom, replyTo: sender.replyTo }).catch((e) => ({ error: e?.message }));
   if (r?.skipped) return { ok: false, skipped: true };
   if (r?.error) return { ok: false, error: r.error };
   return { ok: true };
@@ -508,15 +507,12 @@ export async function fireEvent(event: NvcEvent, bookingId: string) {
     // Only honor a tenant's custom from-address if its domain is verified in
     // Resend. Otherwise fall through to undefined so email.ts uses its safe
     // shared sender (onboarding@resend.dev) and mail still goes out.
-    let emailFrom: string | undefined;
-    if (chanCfg?.emailFromAddress) {
-      const fromDomain = chanCfg.emailFromAddress.split("@")[1]?.toLowerCase() || "";
-      const verified = await verifiedDomainsForCompany(companyId).catch((): string[] => []);
-      if (fromDomain && verified.includes(fromDomain)) {
-        emailFrom = `${chanCfg.emailFromName || vars.company} <${chanCfg.emailFromAddress}>`;
-      }
-    }
-    const emailReplyTo = chanCfg?.emailReplyTo || undefined;
+    const sender = pickSender(
+      { ...chanCfg, emailFromName: chanCfg?.emailFromName || vars.company },
+      await verifiedDomainsForCompany(companyId).catch((): string[] => []),
+    );
+    const emailFrom = sender.from;
+    const emailReplyTo = sender.replyTo;
     const emailFooter = chanCfg?.emailFooter || "";
     const emailBrand: EmailBrand = {
       company: vars.company,

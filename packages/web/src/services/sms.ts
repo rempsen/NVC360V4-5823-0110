@@ -35,9 +35,64 @@ function normalize(phone: string): string {
   return "+" + digits;
 }
 
+/**
+ * Characters that force the whole message out of GSM-7 (and so out of a
+ * 160-character segment into a 70-character one) but have a lossless ASCII
+ * equivalent. Measured across the built-in copy: "—" appeared in 17 messages
+ * and "·" in one, which was enough to make routine 145-character notices cost
+ * three segments instead of one.
+ *
+ * Applied at the send boundary so tenant-authored templates and company names
+ * are covered too, not just the strings in dispatch.ts.
+ */
+const GSM_SUBSTITUTIONS: [RegExp, string][] = [
+  [/[—–‒―]/g, "-"], // em/en/figure/horizontal dash
+  [/[·•]/g, "|"], // middle dot, bullet — used as separators
+  [/[‘’‛′]/g, "'"], // curly single quotes, prime
+  [/[“”‟″]/g, '"'], // curly double quotes
+  [/…/g, "..."], // ellipsis
+  [/[      ]/g, " "], // no-break / thin spaces
+  [/→/g, "->"],
+  [/«/g, '"'],
+  [/»/g, '"'],
+];
+
+/**
+ * Normalise punctuation that needlessly forces UCS-2 encoding.
+ * Emoji and genuinely accented letters are left alone — there is no lossless
+ * substitute, and mangling a customer's name to save a segment is not a trade
+ * worth making.
+ */
+export function toGsm7(body: string): string {
+  let out = String(body ?? "");
+  for (const [re, to] of GSM_SUBSTITUTIONS) out = out.replace(re, to);
+  return out;
+}
+
+// GSM-7 alphabet. Characters in the extended table cost two septets each.
+const GSM_BASIC =
+  "@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡" +
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
+const GSM_EXTENDED = "^{}\\[~]|€";
+
+/**
+ * How many segments a body actually bills as. Used for cost visibility in the
+ * copy review; kept here next to the alphabet it depends on.
+ */
+export function smsSegments(body: string): number {
+  const s = String(body ?? "");
+  let septets = 0;
+  for (const ch of s) {
+    if (GSM_BASIC.includes(ch)) septets += 1;
+    else if (GSM_EXTENDED.includes(ch)) septets += 2;
+    else return s.length <= 70 ? 1 : Math.ceil(s.length / 67); // UCS-2
+  }
+  return septets <= 160 ? 1 : Math.ceil(septets / 153);
+}
+
 export async function sendSms(to: string, body: string): Promise<SmsResult> {
   if (!smsConfigured) {
-    console.log(`[sms:skip] would text ${to}: ${body}`);
+    console.log(`[sms:skip] would text ${to}: ${toGsm7(body)}`);
     return { ok: false, skipped: true };
   }
   try {
@@ -45,7 +100,8 @@ export async function sendSms(to: string, body: string): Promise<SmsResult> {
     const params = new URLSearchParams({
       To: normalize(to),
       From: FROM!,
-      Body: body,
+      // Normalised so a stray em dash does not triple the segment count.
+      Body: toGsm7(body),
     });
     const res = await fetch(url, {
       method: "POST",

@@ -141,10 +141,19 @@ export async function syncStatus(rowId: string) {
     return row;
   }
   const records = normalizeRecords((data as any)?.records);
+  const nextStatus = mapStatus((data as any)?.status);
+  if (row.status === "verified" && nextStatus !== "verified") {
+    // A working sending domain just stopped working. Every email for this
+    // tenant is now failing its first send, so this must not be silent.
+    console.error(
+      `[email-domain] ${row.domain} (company ${row.companyId}) regressed verified -> ${nextStatus}. ` +
+        `Outbound mail for this tenant is falling back to the platform sender until DNS is fixed.`,
+    );
+  }
   const [updated] = await db
     .update(schema.tenantEmailDomains)
     .set({
-      status: mapStatus((data as any)?.status),
+      status: nextStatus,
       ...(records.length ? { records: JSON.stringify(records) } : {}),
       lastCheckedAt: new Date(),
     })
@@ -213,8 +222,39 @@ export async function verifiedDomainsForCompany(companyId: string): Promise<stri
   return rows.filter((r) => r.status === "verified").map((r) => r.domain.toLowerCase());
 }
 
-/** All rows that still need polling (pending or verifying). */
+/**
+ * How stale a settled (verified/failed) domain may get before we look again.
+ *
+ * A domain is not verified once and forever: DNS drifts, a record gets edited
+ * or overwritten, a registrar migration drops a TXT. Found live — nvc360.com
+ * sat in our table as "verified" for six weeks while Resend had already
+ * flipped it to "failed", because we only ever polled unsettled rows. Every
+ * email from that tenant was failing its first send and nobody was told.
+ */
+export const RECHECK_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+type PollRow = { status?: string | null; lastCheckedAt?: Date | number | null };
+
+/** Should this row be re-checked against Resend right now? */
+export function needsPoll(row: PollRow, now: number = Date.now()): boolean {
+  const status = (row.status || "").toLowerCase();
+
+  // Still waiting on the tenant's DNS — check on every tick, this is the
+  // window where they are sitting in the UI clicking "Check verification".
+  if (status === "pending" || status === "verifying") return true;
+
+  // Settled either way: re-check slowly. "failed" is included so a tenant who
+  // quietly fixes their DNS recovers without anyone pressing a button.
+  if (status !== "verified" && status !== "failed") return false;
+
+  const last = row.lastCheckedAt instanceof Date ? row.lastCheckedAt.getTime() : row.lastCheckedAt;
+  if (last == null || !Number.isFinite(last)) return true; // never checked
+  return now - Number(last) >= RECHECK_MS;
+}
+
+/** All rows due for a status check — unsettled every tick, settled every RECHECK_MS. */
 export async function rowsNeedingPoll() {
   const rows = await db.select().from(schema.tenantEmailDomains);
-  return rows.filter((r) => r.status === "pending" || r.status === "verifying");
+  const now = Date.now();
+  return rows.filter((r) => needsPoll(r, now));
 }

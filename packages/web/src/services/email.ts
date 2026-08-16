@@ -2,6 +2,9 @@ import { Resend } from "resend";
 import { db } from "../api/database";
 import * as schema from "../api/database/schema";
 import { eq } from "drizzle-orm";
+import { fmtInZone } from "../shared/tz";
+import { pickSender, pickRetrySender, type SenderIdentity } from "./sender";
+import { verifiedDomainsForCompany } from "./email-domains";
 
 const apiKey = process.env.RESEND_API_KEY;
 const resend = apiKey ? new Resend(apiKey) : null;
@@ -49,14 +52,22 @@ export async function sendEmail({ to, subject, html, text, from, replyTo, attach
     if (error) {
       // If the custom domain isn't verified yet, fall back to Resend's
       // shared test sender so notifications still go out.
-      if (/not verified/i.test(error.message) && FROM !== FALLBACK_FROM) {
-        console.warn(`Email domain unverified, retrying via ${FALLBACK_FROM}`);
+      // Compare the sender we ACTUALLY used, not the global default — a tenant
+      // override could be the unverified one while EMAIL_FROM is fine.
+      // Prefer the platform's own verified address over Resend's shared test
+      // sender; only drop to resend.dev if that is all we have.
+      const retryFrom = pickRetrySender(sender, FROM, FALLBACK_FROM);
+      if (/not verified/i.test(error.message) && retryFrom) {
+        console.warn(`Email domain unverified for "${sender}", retrying via ${retryFrom}`);
         const retry = await resend.emails.send({
-          from: FALLBACK_FROM,
+          from: retryFrom,
           to: recipients,
           subject,
           html,
           text: text || subject,
+          // replyTo must survive the retry, otherwise a customer hitting Reply
+          // on the fallback lands on Resend's unmonitored test inbox.
+          ...(replyTo ? { replyTo } : {}),
           ...(att?.length ? { attachments: att } : {}),
         });
         if (retry.error) {
@@ -108,28 +119,31 @@ export function resolveLogo(url?: string): string {
  * canonical per-tenant sender identity, configurable in Notifications settings).
  * Falls back to the global EMAIL_FROM env var if not configured.
  *
- * Only honours the custom address if the domain portion is non-empty.
- * Returns an empty object to let sendEmail use its own default when no override exists.
+ * The custom address is only honoured once the tenant has VERIFIED that domain
+ * (tenant_email_domains.status === "verified") — the same guard dispatch.ts
+ * applies, now shared via pickSender(). Without it a tenant could type any
+ * domain, including one they do not own, and have it used as the envelope From
+ * on the receipt and password-reset emails.
+ *
+ * Returns an empty object to let sendEmail use its own default when no
+ * override is allowed.
  */
-export async function resolveFromAddress(companyId: string): Promise<{ from?: string; replyTo?: string }> {
+export async function resolveFromAddress(companyId: string): Promise<SenderIdentity> {
   try {
-    const [chan] = await db
-      .select({
-        emailFromName: schema.notificationChannels.emailFromName,
-        emailFromAddress: schema.notificationChannels.emailFromAddress,
-        emailReplyTo: schema.notificationChannels.emailReplyTo,
-      })
-      .from(schema.notificationChannels)
-      .where(eq(schema.notificationChannels.companyId, companyId))
-      .limit(1);
-    if (!chan?.emailFromAddress?.trim()) return {};
-    const domain = chan.emailFromAddress.split("@")[1]?.toLowerCase() || "";
-    if (!domain) return {};
-    const displayName = (chan.emailFromName || "").trim() || domain;
-    return {
-      from: `${displayName} <${chan.emailFromAddress.trim()}>`,
-      replyTo: chan.emailReplyTo?.trim() || undefined,
-    };
+    const [[chan], verified] = await Promise.all([
+      db
+        .select({
+          emailFromName: schema.notificationChannels.emailFromName,
+          emailFromAddress: schema.notificationChannels.emailFromAddress,
+          emailReplyTo: schema.notificationChannels.emailReplyTo,
+        })
+        .from(schema.notificationChannels)
+        .where(eq(schema.notificationChannels.companyId, companyId))
+        .limit(1),
+      verifiedDomainsForCompany(companyId).catch((): string[] => []),
+    ]);
+    if (!chan) return {};
+    return pickSender(chan, verified);
   } catch (e) {
     console.error("resolveFromAddress failed", e);
     return {};
@@ -235,20 +249,61 @@ interface BookingEmailData {
   invoiceNumber?: string;
 }
 
-const fmt = (d: Date) =>
-  new Date(d).toLocaleString("en-US", {
+/**
+ * Appointment times in email render on the COMPANY's clock, never the server's.
+ * This used to be a bare toLocaleString: on a UTC host, a Winnipeg tenant's
+ * 8pm job printed as the next calendar day. Unlike the in-app screens we cannot
+ * know the reader's zone here, so the zone name is always shown, and so is the
+ * year — an email outlives the day it was sent.
+ */
+const fmt = (d: Date, tz?: string | null) =>
+  fmtInZone(d, tz, {
     weekday: "short",
     month: "short",
     day: "numeric",
+    year: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZoneName: "short",
   });
 
+/**
+ * Currency, with the symbol. The Total and Amount rows were interpolating a
+ * bare `price.toFixed(2)`, so a receipt read "Amount 149.00" while the matching
+ * SMS read "$149.00".
+ */
+export function money(n: number, currency = "USD"): string {
+  const v = Number.isFinite(n) ? n : 0;
+  try {
+    return v.toLocaleString("en-US", { style: "currency", currency });
+  } catch {
+    return "$" + v.toFixed(2);
+  }
+}
+
+/**
+ * Join an origin and a path with exactly one slash. The old code did
+ * `${appUrl}track/${id}`, which only produced a valid URL because the local
+ * .env happened to end WEBSITE_URL in a slash — in an environment without one
+ * every CTA button in every email pointed at "https://uberize.aitrack/...".
+ */
+export function emailLink(origin: string, path: string): string {
+  const base = (origin || "").replace(/\/+$/, "");
+  const rest = String(path || "").replace(/^\/+/, "");
+  if (!base || base === "#") return "#";
+  return rest ? `${base}/${rest}` : base;
+}
+
 const appUrl = process.env.WEBSITE_URL || "#";
+const link = (path: string) => emailLink(appUrl, path);
 
 /** Build an "Add to calendar" row with Google + Outlook + .ics links. */
 function addToCalendar(d: BookingEmailData, brand: TenantEmailBrand = FALLBACK_BRAND, durationMins = 60) {
   const start = new Date(d.scheduledAt);
+  // An unusable scheduledAt used to throw here (toISOString on Invalid Date),
+  // which took the whole confirmation email down rather than just dropping the
+  // calendar row. Degrade instead: no buttons, email still sends.
+  if (Number.isNaN(start.getTime())) return "";
   const end = new Date(start.getTime() + durationMins * 60_000);
   const pad = (n: number) => String(n).padStart(2, "0");
   const z = (dt: Date) =>
@@ -280,7 +335,7 @@ function addToCalendar(d: BookingEmailData, brand: TenantEmailBrand = FALLBACK_B
  * the NVC360 default — but callers should always pass one (see loadEmailBrand).
  */
 export const emailTemplates = {
-  passwordReset(d: { name?: string; url: string }, brand: TenantEmailBrand = FALLBACK_BRAND) {
+  passwordReset(d: { name?: string; url: string }, brand: TenantEmailBrand = FALLBACK_BRAND, _tz?: string | null) {
     const co = brand.company || "your";
     const body = `<p>Hi ${d.name || "there"}, we received a request to reset the password for your ${esc(co)} account.</p>
       <p style="margin-top:12px">Click the button below to choose a new password. This link expires in <b>1 hour</b>.</p>
@@ -290,76 +345,76 @@ export const emailTemplates = {
       html: shell("Password Reset", body, { label: "Reset password", url: d.url }, brand),
     };
   },
-  bookingConfirmed(d: BookingEmailData, brand: TenantEmailBrand = FALLBACK_BRAND) {
+  bookingConfirmed(d: BookingEmailData, brand: TenantEmailBrand = FALLBACK_BRAND, tz?: string | null) {
     const body = `<p>Hi ${d.customerName}, your booking is <b style="color:#16a34a">confirmed</b>! 🎉</p>
       <table style="width:100%;border-collapse:collapse;margin-top:14px;font-size:14px">
         ${detailRow("Service", d.serviceName)}
-        ${detailRow("When", fmt(d.scheduledAt))}
+        ${detailRow("When", fmt(d.scheduledAt, tz))}
         ${detailRow("Address", d.address)}
-        ${detailRow("Total", `${d.price.toFixed(2)}`)}
+        ${detailRow("Total", money(d.price))}
       </table>
       <p style="margin-top:16px">We'll notify you the moment a professional is on the way.</p>
       ${addToCalendar(d, brand)}`;
     return {
       subject: `Booking confirmed — ${d.serviceName}`,
-      html: shell("Booking Confirmed", body, { label: "View booking", url: `${appUrl}track/${d.bookingId}` }, brand),
+      html: shell("Booking Confirmed", body, { label: "View booking", url: link(`track/${d.bookingId}`) }, brand),
     };
   },
-  riderAssigned(d: BookingEmailData, brand: TenantEmailBrand = FALLBACK_BRAND) {
+  riderAssigned(d: BookingEmailData, brand: TenantEmailBrand = FALLBACK_BRAND, tz?: string | null) {
     const body = `<p>Hi ${d.customerName}, <b>${d.riderName}</b> has been assigned to your ${d.serviceName} appointment and is on the way.</p>
       <table style="width:100%;border-collapse:collapse;margin-top:14px;font-size:14px">
         ${detailRow("Professional", d.riderName || "")}
         ${detailRow("Service", d.serviceName)}
-        ${detailRow("When", fmt(d.scheduledAt))}
+        ${detailRow("When", fmt(d.scheduledAt, tz))}
       </table>
       <p style="margin-top:16px">Track their arrival live on the map.</p>`;
     return {
       subject: `${d.riderName} is on the way`,
-      html: shell("Your Pro is On the Way", body, { label: "Track live", url: `${appUrl}track/${d.bookingId}` }, brand),
+      html: shell("Your Pro is On the Way", body, { label: "Track live", url: link(`track/${d.bookingId}`) }, brand),
     };
   },
-  riderArrived(d: BookingEmailData, brand: TenantEmailBrand = FALLBACK_BRAND) {
+  riderArrived(d: BookingEmailData, brand: TenantEmailBrand = FALLBACK_BRAND, _tz?: string | null) {
     const body = `<p>Hi ${d.customerName}, <b>${d.riderName}</b> has <b style="color:#0ea5e9">arrived</b> at your location for your ${d.serviceName} appointment.</p>`;
     return {
       subject: `${d.riderName} has arrived`,
-      html: shell("Your Pro Has Arrived", body, { label: "View booking", url: `${appUrl}track/${d.bookingId}` }, brand),
+      html: shell("Your Pro Has Arrived", body, { label: "View booking", url: link(`track/${d.bookingId}`) }, brand),
     };
   },
-  jobCompleted(d: BookingEmailData, brand: TenantEmailBrand = FALLBACK_BRAND) {
+  jobCompleted(d: BookingEmailData, brand: TenantEmailBrand = FALLBACK_BRAND, _tz?: string | null) {
     const co = brand.company || "NVC360";
     const body = `<p>Hi ${d.customerName}, your ${d.serviceName} appointment is <b style="color:#16a34a">complete</b>. Thank you for choosing ${esc(co)}!</p>
       <p style="margin-top:12px">We'd love your feedback — rate your experience in the app.</p>`;
     return {
       subject: `Job completed — ${d.serviceName}`,
-      html: shell("Service Completed", body, { label: "Leave a review", url: `${appUrl}bookings` }, brand),
+      html: shell("Service Completed", body, { label: "Leave a review", url: link("bookings") }, brand),
     };
   },
-  reminder(d: BookingEmailData, brand: TenantEmailBrand = FALLBACK_BRAND) {
+  reminder(d: BookingEmailData, brand: TenantEmailBrand = FALLBACK_BRAND, tz?: string | null) {
     const body = `<p>Hi ${d.customerName}, this is a friendly reminder about your upcoming appointment.</p>
       <table style="width:100%;border-collapse:collapse;margin-top:14px;font-size:14px">
         ${detailRow("Service", d.serviceName)}
-        ${detailRow("When", fmt(d.scheduledAt))}
+        ${detailRow("When", fmt(d.scheduledAt, tz))}
         ${detailRow("Address", d.address)}
       </table>
       ${addToCalendar(d, brand)}`;
     return {
       subject: `Reminder: ${d.serviceName} appointment`,
-      html: shell("Upcoming Appointment", body, { label: "View details", url: `${appUrl}track/${d.bookingId}` }, brand),
+      html: shell("Upcoming Appointment", body, { label: "View details", url: link(`track/${d.bookingId}`) }, brand),
     };
   },
-  receipt(d: BookingEmailData, brand: TenantEmailBrand = FALLBACK_BRAND) {
+  receipt(d: BookingEmailData, brand: TenantEmailBrand = FALLBACK_BRAND, _tz?: string | null) {
     const co = brand.company || "NVC360";
     const body = `<p>Hi ${d.customerName}, here's your receipt for ${d.serviceName}.</p>
       <table style="width:100%;border-collapse:collapse;margin-top:14px;font-size:14px">
         ${detailRow("Invoice", d.invoiceNumber || "")}
         ${detailRow("Service", d.serviceName)}
-        ${detailRow("Amount", `${d.price.toFixed(2)}`)}
+        ${detailRow("Amount", money(d.price))}
         ${detailRow("Status", "PAID ✓")}
       </table>
       <p style="margin-top:16px;color:#16a34a;font-weight:600">Payment received. Thank you!</p>`;
     return {
       subject: `Receipt ${d.invoiceNumber} — ${co}`,
-      html: shell("Payment Receipt", body, { label: "View invoice", url: `${appUrl}bookings` }, brand),
+      html: shell("Payment Receipt", body, { label: "View invoice", url: link("bookings") }, brand),
     };
   },
 };

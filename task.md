@@ -145,3 +145,66 @@ BUG 2 — the running-late notice can text a customer twice.
 
 NOT live-verified (no safe way without sending real mail): the intake recipient email's
 "preferred date" line. Covered by fmtInZone tests + a one-line call site.
+
+---
+
+## IN FLIGHT — customer-facing copy review + per-tenant send-from test
+
+Tenants for the live test (Dan controls both domains, sends authorised by him):
+  default       "NVC 360"       contact@nvc360.com        domain nvc360.com     verified
+  bmd-materials "BMD Materials" contact@bmdmaterials.com  domain bmdmaterials.com verified
+  Control case: allco-electrical has careers@allcoelectrical.com set with NO verified domain row.
+
+Findings from the read-through (to be proven with tests before any fix):
+- [x] P0 resolveFromAddress() in services/email.ts skips the verified-domain guard that
+      dispatch.ts applies. Its own docblock claims the guard exists. Reachable on the
+      Stripe receipt email (notify.ts) and the password-reset email (api/auth.ts), so an
+      unverified/unowned tenant domain can be used as the envelope From.
+- [x] P0 emailTemplates fmt() has no timeZone — same UTC leak class as fd8d497, missed
+      because it lives in email.ts not a route. Also no year.
+- [x] P0 Total / Amount rows render the number with no currency symbol ("120.00").
+      The receipt SMS says "$149.00"; the receipt EMAIL says "149.00".
+- [x] P1 `${appUrl}track/` — WEBSITE_URL only works because the local .env happens to end
+      in "/". Production without one yields https://uberize.aitrack/xxx.
+- [x] P1 ics attachment description hardcodes "NVC360 service appointment" for every tenant.
+- [x] P1 sendEmail's unverified-domain retry compares the global FROM instead of the actual
+      sender, and drops replyTo on the retry.
+- [x] review-only: no "Reply STOP to opt out" on any client SMS; SMS segment lengths unmeasured.
+
+Found while testing, not from the read-through:
+- [x] P0 nvc360.com had gone "failed" in Resend (DKIM TXT drift) while our table still
+      said "verified" from a Jul 2026 check. Cause: rowsNeedingPoll() only ever returned
+      "pending"/"verifying" rows, so a settled row was NEVER re-checked and a regression was
+      permanently invisible. needsPoll() now re-checks verified AND failed rows every
+      RECHECK_MS (6h), and syncStatus() logs loudly on a verified -> not-verified regression.
+      Live: the poller flipped the row to "failed" and verifiedDomainsForCompany("default")
+      went from ["nvc360.com"] to []. DNS repair itself is Dan's action.
+- [x] P0 addToCalendar() threw on an unusable scheduledAt (toISOString on Invalid Date),
+      which killed the ENTIRE confirmation email instead of dropping the calendar row.
+- [x] P0 every client SMS containing an em dash was billed as UCS-2: 160-char segments
+      collapse to 70 the moment one character leaves GSM-7. Measured: "—" in 17 of the
+      built-in messages, "·" in 1, nothing else. toGsm7() at the send boundary (so
+      tenant-authored templates and company names are covered too) takes the default copy
+      from 66 segments to 50 across all 45 messages — 24% fewer. Two 145-char notices went
+      from 3 segments to 1.
+- [x] P1 the unverified-domain retry compared sender STRINGS, so a tenant on nvc360.com with
+      EMAIL_FROM also on nvc360.com retried on the same broken domain — a guaranteed second
+      failure. pickRetrySender() compares DOMAINS. Verified live: one hop, not two.
+
+- [x] 32 new tests (12 sender/retry, 12 email copy, 8 domain poll, 11 sms encoding), all
+      confirmed red first
+- [x] 12-mutation sabotage battery, every one caught by a named test, all restored
+- [x] LIVE per-tenant send-from test on real Turso + real Resend:
+      bmd-materials sent as "BMD Materials <contact@bmdmaterials.com>", reply-to
+      contact@bmdmaterials.com, Resend last_event "delivered" to danrosenblat@gmail.com.
+      allco-electrical (custom address, NO verified domain) was refused the custom From
+      before and after — proven by running the probe with the guard sabotaged, which
+      produced "Allco Electrical <careers@allcoelectrical.com>".
+- [x] full gate set: 543 tests / tsc 159 / oxlint 0 / vite build ok / crash-sweep ALL CLEAN
+      (26) / a11y PASS (26 x 2) / customer-sweep PASS (12 x 2)
+- [ ] needs a web Publish from the Runable UI (Dan)
+- [ ] DAN'S ACTION: fix the DKIM TXT record for nvc360.com (see the report) — until then the
+      NVC360 tenant cannot send email at all.
+- [ ] OPEN DECISION for Dan: no client SMS carries "Reply STOP to opt out". Twilio honours
+      STOP at the carrier level so opt-out works, but the disclosure is missing.
+      NOT live-verified: the SMS normalisation itself (no phone number authorised to text).

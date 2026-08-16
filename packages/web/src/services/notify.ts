@@ -4,6 +4,7 @@ import { tdb } from "../api/database/tenant";
 import { sendEmail, emailTemplates, loadEmailBrand, resolveFromAddress } from "./email";
 import { buildSingleEventIcs } from "./ics";
 import { sendPush } from "./push";
+import { companyTimeZone } from "./company-tz";
 
 type EventType =
   | "booking_confirmed"
@@ -45,11 +46,13 @@ export async function notify(args: NotifyArgs) {
 
   if (args.emailKind && args.email && args.emailData) {
     // Brand every outbound email with this tenant's logo + name.
-    const [brand, identity] = await Promise.all([
+    const [brand, identity, tz] = await Promise.all([
       loadEmailBrand(args.companyId),
       resolveFromAddress(args.companyId),
+      companyTimeZone(args.companyId),
     ]);
-    const tpl = emailTemplates[args.emailKind](args.emailData, brand);
+    // Appointment times render on the tenant's clock, not the server's UTC.
+    const tpl = emailTemplates[args.emailKind](args.emailData, brand, tz);
     // Attach a calendar invite for appointment confirmations & reminders.
     let attachments;
     if (args.emailKind === "bookingConfirmed" || args.emailKind === "reminder") {
@@ -59,7 +62,9 @@ export async function notify(args: NotifyArgs) {
         const ics = buildSingleEventIcs({
           uid: `booking-${d.bookingId}@nvc360`,
           title: `${d.serviceName} appointment`,
-          description: `NVC360 service appointment${d.riderName ? ` with ${d.riderName}` : ""}.`,
+          // White-label: the invite a customer files in their calendar names
+          // THEIR contractor, not the platform.
+          description: `${brand.company} service appointment${d.riderName ? ` with ${d.riderName}` : ""}.`,
           location: d.address,
           start,
           end: new Date(start.getTime() + 60 * 60_000),
