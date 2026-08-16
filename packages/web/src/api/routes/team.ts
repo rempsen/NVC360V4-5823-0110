@@ -12,6 +12,7 @@ import {
 } from "../middleware/auth";
 import { attachMembership, isMember, findUserByEmail, detachMembership } from "../lib/memberships";
 import { sendJoinCompanyInvite } from "../lib/join-invite";
+import { audit } from "../lib/audit";
 import { z } from "zod";
 import { parseBody, shortText, optText, email as emailField, phone as phoneField, money, id as idField, longText } from "../lib/validate";
 import {
@@ -27,7 +28,7 @@ import {
   SUPERADMIN_DOMAINS,
 } from "../lib/permissions";
 
-type SessionUser = { id: string; role?: string };
+type SessionUser = { id: string; role?: string; name?: string; email?: string };
 
 const INTERNAL = [
   "superadmin",
@@ -414,6 +415,29 @@ export const teamRoutes = new Hono()
       const legacy = { ...membershipUpdates };
       delete legacy.updatedAt;
       await db.update(schema.user).set(legacy).where(eq(schema.user.id, id));
+    }
+
+    // Who granted whom admin/superadmin, and when. This is the first entry an
+    // incident review looks for, and it used to not exist: a promotion all the
+    // way to cross-tenant superadmin left no trace anywhere. Only an actual
+    // CHANGE is logged (re-saving the same role is a no-op) so the trail stays
+    // readable. Failures are swallowed inside audit() — logging must never be
+    // able to undo a role change that already committed.
+    if (updates.role !== undefined && updates.role !== targetRole) {
+      await audit({
+        companyId: cid,
+        actorId: me.id,
+        actorName: me.name ?? me.email ?? "",
+        action: "role_change",
+        entityType: "user",
+        entityId: id,
+        summary: `Changed ${identityUpdates.name ?? target.name}'s role from ${targetRole} to ${updates.role}`,
+        meta: {
+          from: targetRole,
+          to: updates.role,
+          email: (identityUpdates.email as string | undefined) ?? target.email,
+        },
+      });
     }
     return c.json({ ok: true });
   })

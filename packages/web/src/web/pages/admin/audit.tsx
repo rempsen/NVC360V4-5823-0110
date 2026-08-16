@@ -4,7 +4,7 @@ import { api } from "../../lib/api";
 import { FullLoader } from "../../components/loader";
 import { PageWrap } from "../../components/brand";
 import { PageHead } from "./shell";
-import { Plus, Pencil, Trash2, UserCheck, Wallet, ScrollText } from "lucide-react";
+import { Plus, Pencil, Trash2, UserCheck, Wallet, ScrollText, ShieldAlert } from "lucide-react";
 
 const ACTION_META: Record<string, { icon: any; color: string }> = {
   create: { icon: Plus, color: "#22c55e" },
@@ -12,6 +12,9 @@ const ACTION_META: Record<string, { icon: any; color: string }> = {
   delete: { icon: Trash2, color: "#ef4444" },
   assign: { icon: UserCheck, color: "#a855f7" },
   payout: { icon: Wallet, color: "#f59e0b" },
+  // Permission changes are the highest-stakes entry in the log — give them
+  // their own icon/colour so they stand out from routine edits.
+  role_change: { icon: ShieldAlert, color: "#f43f5e" },
 };
 
 const fmt = (d: string) =>
