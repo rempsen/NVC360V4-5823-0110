@@ -26,6 +26,8 @@ import { authHeaders } from "../../lib/auth";
 import { C, R } from "../../lib/theme";
 import { FullLoader } from "../../components/ui";
 import { NOTIFY_SUMMARY_KEY } from "../../lib/notify-summary";
+import { useActiveCompanyName } from "../../lib/my-companies";
+import { dispatchLabels } from "../../lib/company-name";
 import { useLiveMessageSignal } from "../../lib/live-messages";
 
 const API = ((Constants.expoConfig?.extra?.apiUrl as string) ?? "").replace(/\/$/, "");
@@ -43,6 +45,11 @@ export default function Messages() {
   const router = useRouter();
   const qc = useQueryClient();
   
+  // Which employer's dispatcher is on the other end of this thread. A tech on
+  // two rosters could not tell before, and asked in the thread itself.
+  const companyName = useActiveCompanyName();
+  const labels = dispatchLabels(companyName);
+
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<ScrollView>(null);
 
@@ -137,7 +144,12 @@ export default function Messages() {
           <Headset color={C.cyan} size={22} weight="fill" />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={s.title}>Dispatch</Text>
+          {/* The company leads the title: on a shared phone with two rosters,
+              "who is this" is the first thing the tech needs, and it was the
+              one thing this screen never said. */}
+          <Text style={s.title} numberOfLines={1}>
+            {labels.title}
+          </Text>
           <Text style={s.sub}>Direct line to your dispatcher</Text>
         </View>
       </View>
@@ -211,7 +223,7 @@ export default function Messages() {
                 <Headset color={C.muted} size={40} />
                 <Text style={s.emptyTxt}>No messages yet</Text>
                 <Text style={s.emptySub}>
-                  Message dispatch anytime — they'll reply here.
+                  Message {labels.emptyTarget} anytime — they'll reply here.
                 </Text>
               </View>
             ) : (
@@ -223,7 +235,12 @@ export default function Messages() {
                     style={[s.bubble, mine ? s.bubbleMine : s.bubbleThem]}
                   >
                     {!mine && (
-                      <Text style={s.bubbleName}>{m.senderName || "Dispatch"}</Text>
+                      // Name the person if the office sent one, otherwise at
+                      // least name the company, so an incoming message is never
+                      // just an anonymous "Dispatch".
+                      <Text style={s.bubbleName}>
+                        {m.senderName || labels.senderFallback}
+                      </Text>
                     )}
                     <Text style={[s.bubbleTxt, mine && { color: "#04121c" }]}>
                       {m.body}
@@ -246,11 +263,11 @@ export default function Messages() {
           <TextInput
             value={draft}
             onChangeText={setDraft}
-            placeholder="Message dispatch…"
+            placeholder={labels.placeholder}
             placeholderTextColor={C.muted}
             style={s.input}
             multiline
-            accessibilityLabel="Message to dispatch"
+            accessibilityLabel={labels.inputLabel}
           />
           <Pressable
             onPress={() => draft.trim() && send.mutate(draft.trim())}

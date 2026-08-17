@@ -15,7 +15,8 @@ import Constants from "expo-constants";
 import { C, R } from "../../lib/theme";
 import { Avatar, Card, Button, FullLoader, Row } from "../../components/ui";
 import { isBiometricAvailable, getLockPreference, setLockPreference, clearUnlockStamp } from "../../lib/biometric-lock";
-import { clearActiveCompany, getActiveCompany, setActiveCompany, type CompanyOption } from "../../lib/active-company";
+import { clearActiveCompany, getActiveCompany, setActiveCompany } from "../../lib/active-company";
+import { useMyCompanies } from "../../lib/my-companies";
 import { useNotifySummary, companyCount } from "../../lib/notify-summary";
 import { CompanyBadge, CompanyAlertLine, companyAlertText } from "../../components/company-alert";
 
@@ -47,16 +48,11 @@ export default function Profile() {
   // after a switch instead of showing the old company until the next render.
   const [activeCompany, setActiveCompanyState] = useState(getActiveCompany());
 
-  const companies = useQuery({
-    queryKey: ["my-companies"],
-    queryFn: async () => {
-      const res = await fetch(`${API}/api/me/companies`, { headers: authHeaders() });
-      if (!res.ok) throw new Error("Failed");
-      const json = (await res.json()) as { companies?: CompanyOption[] };
-      return json.companies ?? [];
-    },
-    staleTime: 5 * 60_000,
-  });
+  // Shared with the Dispatch header via lib/my-companies.ts — one query, one
+  // cache entry, so the company named on the messages screen can never
+  // disagree with the one marked "Current shift" here.
+  const myCompanies = useMyCompanies();
+  const companies = { data: myCompanies.data?.companies };
 
   // Per-company pending work, so the switcher shows WHICH employer is waiting
   // instead of making the tech switch into each one to find out.
