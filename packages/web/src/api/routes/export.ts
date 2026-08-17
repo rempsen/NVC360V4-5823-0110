@@ -10,6 +10,7 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { slugifyName, fetchRouteBasemap, fetchSiteBasemap, type JobRoutePoint } from "../lib/export-map";
 import { companyTimeZone } from "../../services/company-tz";
 import { fmtInZone } from "../../shared/tz";
+import type { AppEnv } from "../env";
 
 export { slugifyName, fetchRouteBasemap, fetchSiteBasemap };
 export type { JobRoutePoint };
@@ -553,7 +554,9 @@ export async function loadDataset(dataset: string, t: TenantDb): Promise<Record<
 }
 
 export function fileResponse(buf: Buffer | string, name: string, mime: string) {
-  return new Response(buf, {
+  // Buffer is a valid BodyInit at runtime; TS 5.7's generic Uint8Array isn't in
+  // the DOM BodyInit union.
+  return new Response(buf as unknown as BodyInit, {
     status: 200,
     headers: {
       "Content-Type": mime,
@@ -562,7 +565,7 @@ export function fileResponse(buf: Buffer | string, name: string, mime: string) {
   });
 }
 
-export const exportRoutes = new Hono()
+export const exportRoutes = new Hono<AppEnv>()
   // generic report export: client posts the already-computed report rows/columns.
   // POST /api/export/report?format=csv|xlsx|pdf  body: { title, subtitle, rows, columns }
   .post("/report", requireAuth, async (c) => {

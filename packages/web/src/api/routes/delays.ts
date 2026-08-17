@@ -1,3 +1,4 @@
+import type { AppEnv } from "../env";
 /**
  * Dispatcher's running-late board.
  *
@@ -8,7 +9,7 @@
  */
 import { Hono } from "hono";
 import { requireAdmin, tenantId } from "../middleware/auth";
-import { parseBody } from "../lib/validate";
+import { jsonBody } from "../lib/validate";
 import { audit } from "../lib/audit";
 import { z } from "zod";
 import { db } from "../database";
@@ -27,7 +28,7 @@ type SessionUser = { id: string; name?: string };
 
 const MuteBody = z.object({ muted: z.boolean().default(true) });
 
-export const delaysRoutes = new Hono()
+export const delaysRoutes = new Hono<AppEnv>()
   .get("/", requireAdmin, async (c) => {
     const co = tenantId(c);
     const [delays, pendingCount, policy] = await Promise.all([
@@ -98,11 +99,11 @@ export const delaysRoutes = new Hono()
     });
     return c.json({ ok: true, notifiedMins: r.notifiedMins }, 200);
   })
-  .post("/:bookingId/mute", requireAdmin, async (c) => {
+  .post("/:bookingId/mute", requireAdmin, jsonBody(MuteBody), async (c) => {
     const co = tenantId(c);
     const u = c.get("user") as SessionUser;
     const bookingId = c.req.param("bookingId");
-    const { muted } = await parseBody(c, MuteBody);
+    const { muted } = c.req.valid("json");
     const [b] = await db
       .select()
       .from(schema.bookings)

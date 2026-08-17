@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, apiHeaders } from "../../lib/api";
+import { ok } from "../../lib/api-ok";
 import { useAuth } from "../../hooks/use-auth";
 import { FullLoader } from "../../components/loader";
 import { PageWrap } from "../../components/brand";
@@ -23,15 +24,15 @@ export default function IntegrationsPage() {
 
   const list = useQuery({
     queryKey: ["integrations"],
-    queryFn: async () => (await api.integrations.$get()).json(),
+    queryFn: async () => ok(await api.integrations.$get()),
   });
 
   const disconnect = useMutation({
-    mutationFn: async (id: string) => (await api.integrations[":id"].disconnect.$post({ param: { id }, json: {} })).json(),
+    mutationFn: async (id: string) => ok(await api.integrations[":id"].disconnect.$post({ param: { id } })),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["integrations"] }),
   });
   const sync = useMutation({
-    mutationFn: async (id: string) => (await api.integrations[":id"].sync.$post({ param: { id }, json: {} })).json(),
+    mutationFn: async (id: string) => ok(await api.integrations[":id"].sync.$post({ param: { id } })),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["integrations"] }),
   });
 

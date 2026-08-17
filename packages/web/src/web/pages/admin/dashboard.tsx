@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { api } from "../../lib/api";
+import { ok } from "../../lib/api-ok";
 import { FullLoader } from "../../components/loader";
 import { StatusBadge, PageWrap } from "../../components/brand";
 import { PageHead } from "./shell";
@@ -138,17 +139,17 @@ export default function AdminDashboard() {
       if (range.from != null) query.from = String(range.from);
       if (range.to != null) query.to = String(range.to);
       if (hasRange) query.basis = basis;
-      return (await api.admin.stats.$get({ query })).json();
+      return ok(await api.admin.stats.$get({ query }));
     },
     refetchInterval: 10000,
   });
   const bookings = useQuery({
     queryKey: ["bookings"],
-    queryFn: async () => (await api.bookings.$get()).json(),
+    queryFn: async () => ok(await api.bookings.$get()),
   });
   const fleet = useQuery({
     queryKey: ["fleet"],
-    queryFn: async () => (await api.fleet.$get()).json(),
+    queryFn: async () => ok(await api.fleet.$get()),
     refetchInterval: 8000,
   });
 
@@ -491,7 +492,7 @@ export default function AdminDashboard() {
                   >
                     <span
                       className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-xs font-bold text-ink"
-                      style={{ background: t.color }}
+                      style={{ background: t.color ?? "#334155" }}
                     >
                       {t.name
                         .split(" ")

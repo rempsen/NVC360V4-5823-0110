@@ -18,6 +18,7 @@ import { and, eq, inArray, isNull, notInArray } from "drizzle-orm";
 import { requireAuth, loadMemberships } from "../middleware/auth";
 import { isSuperadmin } from "../lib/permissions";
 import { detachMembership } from "../lib/memberships";
+import type { AppEnv } from "../env";
 
 type SessionUser = { id: string; role?: string; companyId?: string };
 
@@ -114,7 +115,7 @@ async function countsForCompany(
   };
 }
 
-export const meRoutes = new Hono()
+export const meRoutes = new Hono<AppEnv>()
   /**
    * Every company this person can act as, with the role they hold at each and
    * a display name for the picker.

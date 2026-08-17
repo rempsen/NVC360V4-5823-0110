@@ -26,6 +26,7 @@ import {
   MapPin,
 } from "lucide-react";
 import { apiHeaders } from "../lib/api";
+import { ok } from "../lib/api-ok";
 import { useWorkerNoun, useCustomerNoun } from "../lib/use-brand";
 import { api } from "../lib/api";
 import { Modal, Field, inputCls, BtnGhost, BtnPrimary, ConfirmModal } from "./modal";
@@ -462,7 +463,7 @@ export function WorkOrderModal({
 
   const catalog = useQuery({
     queryKey: ["catalog"],
-    queryFn: async () => (await api.catalog.$get({ query: {} })).json(),
+    queryFn: async () => ok(await api.catalog.$get({ query: {} })),
     enabled: open,
   });
   const catalogItems = useMemo<CatalogItem[]>(
@@ -476,22 +477,22 @@ export function WorkOrderModal({
 
   const users = useQuery({
     queryKey: ["admin-users"],
-    queryFn: async () => (await api.admin.users.$get()).json(),
+    queryFn: async () => ok(await api.admin.users.$get()),
     enabled: open,
   });
   const services = useQuery({
     queryKey: ["services"],
-    queryFn: async () => (await api.services.$get()).json(),
+    queryFn: async () => ok(await api.services.$get()),
     enabled: open,
   });
   const templates = useQuery({
     queryKey: ["templates"],
-    queryFn: async () => (await api.templates.$get()).json(),
+    queryFn: async () => ok(await api.templates.$get()),
     enabled: open,
   });
   const riders = useQuery({
     queryKey: ["riders"],
-    queryFn: async () => (await api.riders.$get()).json(),
+    queryFn: async () => ok(await api.riders.$get()),
     enabled: open,
   });
 

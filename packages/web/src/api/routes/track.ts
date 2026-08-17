@@ -12,6 +12,12 @@ import { jobTimeline } from "../../services/job-events";
 import { reviewRouting, alertLowRating } from "../../services/reviews";
 import { propertyUrl } from "../../services/properties";
 import { safeTimeZone } from "../../shared/tz";
+import type { AppEnv } from "../env";
+import { jsonBody } from "../lib/validate";
+import { z } from "zod";
+
+/** See the comment on POST /:token/messages — type-level only, not validation. */
+const TrackMessageBody = z.object({ body: z.unknown(), senderName: z.unknown() });
 
 // Resolve a booking by its public token, enforcing expiry. Returns null when
 // the token is unknown OR has expired (PII link safety).
@@ -294,7 +300,7 @@ async function buildSnapshot(b: typeof schema.bookings.$inferSelect) {
  * PUBLIC tracking — accessed via SMS link /t/:token, no auth required.
  * Exposes only what a client needs to track + contact their technician.
  */
-export const trackRoutes = new Hono()
+export const trackRoutes = new Hono<AppEnv>()
   // public live tracking by token (snapshot — also used as SSE fallback)
   .get("/:token", trackLimiter, async (c) => {
     const token = c.req.param("token");
@@ -434,10 +440,13 @@ export const trackRoutes = new Hono()
     return c.json({ review: rev, publicReviewUrl: publicUrl }, 201);
   })
   // client posts a message from the public tracking page
-  .post("/:token/messages", trackWriteLimiter, async (c) => {
+  // `jsonBody` here is purely so the RPC client type knows this route accepts a
+  // body — the real validation stays in `readText` below, which owns the
+  // customer-facing wording. The schema is deliberately permissive (`unknown`)
+  // so hostile values still reach `readText` and get its exact 400 message.
+  .post("/:token/messages", trackWriteLimiter, jsonBody(TrackMessageBody), async (c) => {
     const token = c.req.param("token");
-    const json = await safeJson(c);
-    if (!json) return c.json({ message: "Invalid request body" }, 400);
+    const json = c.req.valid("json");
     const parsed = readText(json.body, MAX_MESSAGE_CHARS);
     if (!parsed.ok)
       return c.json(

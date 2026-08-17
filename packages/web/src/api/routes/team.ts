@@ -1,3 +1,4 @@
+import type { AppEnv } from "../env";
 import { Hono } from "hono";
 import { db } from "../database";
 import * as schema from "../database/schema";
@@ -14,7 +15,7 @@ import { attachMembership, isMember, findUserByEmail, detachMembership } from ".
 import { sendJoinCompanyInvite } from "../lib/join-invite";
 import { audit } from "../lib/audit";
 import { z } from "zod";
-import { parseBody, shortText, optText, email as emailField, phone as phoneField, money, id as idField, longText } from "../lib/validate";
+import { jsonBody, shortText, optText, email as emailField, phone as phoneField, money, id as idField, longText } from "../lib/validate";
 import {
   PERMISSION_CATALOG,
   ALL_PERMISSIONS,
@@ -107,7 +108,7 @@ function sanitizePerms(input: unknown): string[] {
   );
 }
 
-export const teamRoutes = new Hono()
+export const teamRoutes = new Hono<AppEnv>()
   // ---- catalog + role defaults (drives the UI matrix) -------------------
   .get("/catalog", requirePermission("techs:view"), async (c) => {
     const roleDefaults = await loadRoleDefaults();
@@ -172,8 +173,8 @@ export const teamRoutes = new Hono()
   })
 
   // ---- create an internal employee of any role --------------------------
-  .post("/", requirePermission("techs:create"), async (c) => {
-    const b = await parseBody(c, TeamCreate);
+  .post("/", requirePermission("techs:create"), jsonBody(TeamCreate), async (c) => {
+    const b = c.req.valid("json");
     const me = c.get("user") as SessionUser;
     const { name, email, password, phone, role, staffType, managerId } = b;
     // Only a superadmin can mint admin-tier employees.
@@ -309,9 +310,9 @@ export const teamRoutes = new Hono()
   })
 
   // ---- update an employee (role / type / manager / basics) --------------
-  .patch("/:id", requirePermission("techs:edit"), async (c) => {
+  .patch("/:id", requirePermission("techs:edit"), jsonBody(TeamPatch), async (c) => {
     const id = c.req.param("id");
-    const b = await parseBody(c, TeamPatch);
+    const b = c.req.valid("json");
     const me = c.get("user") as SessionUser;
     const [target] = await db
       .select()
@@ -553,9 +554,9 @@ export const teamRoutes = new Hono()
   })
 
   // ---- per-person permission override -----------------------------------
-  .put("/:id/permissions", requirePermission("permissions:manage"), async (c) => {
+  .put("/:id/permissions", requirePermission("permissions:manage"), jsonBody(PermissionsBody), async (c) => {
     const id = c.req.param("id");
-    const b = await parseBody(c, PermissionsBody);
+    const b = c.req.valid("json");
     const [target] = await db
       .select()
       .from(schema.user)
@@ -579,11 +580,11 @@ export const teamRoutes = new Hono()
   })
 
   // ---- update ROLE default permissions ----------------------------------
-  .put("/roles/:role/permissions", requirePermission("permissions:manage"), async (c) => {
+  .put("/roles/:role/permissions", requirePermission("permissions:manage"), jsonBody(PermissionsBody), async (c) => {
     const role = c.req.param("role");
     if (!INTERNAL_ROLES.includes(role as any) || isAdminRole(role))
       return c.json({ message: "Cannot edit this role" }, 400);
-    const b = await parseBody(c, PermissionsBody);
+    const b = c.req.valid("json");
     const perms = sanitizePerms(b.permissions);
     const now = new Date();
     const [existing] = await db

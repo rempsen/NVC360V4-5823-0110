@@ -69,12 +69,6 @@ export default function AdminZones() {
     queryKey: ["settings"],
     queryFn: async () => (await api.settings.$get()).json(),
   });
-  const _companyCenter: LatLng = useMemo(() => {
-    const s = (settingsQ.data as any)?.settings;
-    if (s?.lat && s?.lng && Math.abs(s.lat) > 0.001) return [s.lat, s.lng];
-    return FALLBACK_CENTER;
-  }, [settingsQ.data]);
-
   const zonesQ = useQuery({
     queryKey: ["zones"],
     queryFn: async () => (await api.zones.$get()).json(),

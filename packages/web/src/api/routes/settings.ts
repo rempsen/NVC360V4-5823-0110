@@ -4,6 +4,7 @@ import * as schema from "../database/schema";
 import { db } from "../database";
 import { requireAuth, requireAdmin, tx, tenantId } from "../middleware/auth";
 import { audit } from "../lib/audit";
+import type { AppEnv } from "../env";
 
 type SessionUser = { id: string; name?: string };
 
@@ -23,7 +24,7 @@ async function getOrInit(c: any) {
   return row;
 }
 
-export const settingsRoutes = new Hono()
+export const settingsRoutes = new Hono<AppEnv>()
   .get("/", requireAuth, async (c) => {
     const settings = await getOrInit(c);
     // surface the tenant's Primary Industry (ICP) + free-text "other"

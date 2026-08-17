@@ -7,6 +7,7 @@ import { resolveApiKey, scopeAllows, type ApiKeyContext } from "../middleware/au
 import { audit } from "../lib/audit";
 import { attachMembership } from "../lib/memberships";
 import { user as userTable } from "../database/auth-schema";
+import type { AppEnv } from "../env";
 
 /**
  * Remote MCP server (streamable HTTP / JSON-RPC 2.0).
@@ -607,7 +608,7 @@ async function handleRpc(req: RpcReq, key: ApiKeyContext) {
 // HTTP route (streamable). POST = JSON-RPC. GET = info/SSE noop.
 // ---------------------------------------------------------------------------
 
-export const mcpRoutes = new Hono()
+export const mcpRoutes = new Hono<AppEnv>()
   .get("/", (c) =>
     c.json({
       server: SERVER_INFO,

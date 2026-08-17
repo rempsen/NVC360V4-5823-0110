@@ -3,6 +3,7 @@ import { DialogPanel } from "../../components/dialog-panel";
 import { useConfirm } from "../../components/confirm-dialog";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
+import { ok } from "../../lib/api-ok";
 import { FullLoader } from "../../components/loader";
 import { PageWrap } from "../../components/brand";
 import { PageHead } from "./shell";
@@ -65,7 +66,7 @@ export default function AutomationPage() {
 
   const rules = useQuery({
     queryKey: ["automation"],
-    queryFn: async () => (await api.automation.$get()).json(),
+    queryFn: async () => ok(await api.automation.$get()),
   });
 
   const isTimeTrigger =
@@ -111,13 +112,13 @@ export default function AutomationPage() {
 
   const toggle = useMutation({
     mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }) =>
-      (await api.automation[":id"].$patch({ param: { id }, json: { enabled } })).json(),
+      ok(await api.automation[":id"].$patch({ param: { id }, json: { enabled } })),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["automation"] }),
   });
 
   const del = useMutation({
     mutationFn: async (id: string) =>
-      (await api.automation[":id"].$delete({ param: { id } })).json(),
+      ok(await api.automation[":id"].$delete({ param: { id } })),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["automation"] }),
   });
 

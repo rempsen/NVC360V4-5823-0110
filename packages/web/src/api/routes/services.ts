@@ -3,7 +3,8 @@ import { z } from "zod";
 import * as schema from "../database/schema";
 import { eq } from "drizzle-orm";
 import { requireAdmin, tx } from "../middleware/auth";
-import { parseBody, money, durationMins, shortText, longText } from "../lib/validate";
+import { jsonBody, money, durationMins, shortText, longText } from "../lib/validate";
+import type { AppEnv } from "../env";
 
 /**
  * Service catalog.
@@ -48,7 +49,7 @@ const ServiceUpdate = z
 
 const serializeRateModel = (v: unknown) => (typeof v === "string" ? v : JSON.stringify(v));
 
-export const servicesRoutes = new Hono()
+export const servicesRoutes = new Hono<AppEnv>()
   .get("/", async (c) => {
     const t = tx(c);
     const list = (await t.select(schema.services, eq(schema.services.active, true)))
@@ -60,8 +61,8 @@ export const servicesRoutes = new Hono()
     if (!svc) return c.json({ message: "Not found" }, 404);
     return c.json({ service: svc }, 200);
   })
-  .post("/", requireAdmin, async (c) => {
-    const body = await parseBody(c, ServiceCreate);
+  .post("/", requireAdmin, jsonBody(ServiceCreate), async (c) => {
+    const body = c.req.valid("json");
 
     const [svc] = await tx(c).insert(schema.services, {
       name: body.name,
@@ -75,8 +76,8 @@ export const servicesRoutes = new Hono()
     });
     return c.json({ service: svc }, 201);
   })
-  .patch("/:id", requireAdmin, async (c) => {
-    const body = await parseBody(c, ServiceUpdate);
+  .patch("/:id", requireAdmin, jsonBody(ServiceUpdate), async (c) => {
+    const body = c.req.valid("json");
 
     // Only ever write validated, known keys. This also closes the
     // mass-assignment surface that `{ ...body }` used to leave open (id,

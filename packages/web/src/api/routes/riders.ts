@@ -1,3 +1,4 @@
+import type { AppEnv } from "../env";
 import { Hono } from "hono";
 import { db } from "../database";
 import * as schema from "../database/schema";
@@ -9,8 +10,7 @@ import { attachMembership, isMember, findUserByEmail } from "../lib/memberships"
 import { sendJoinCompanyInvite } from "../lib/join-invite";
 import { putObject, deleteObject } from "../lib/storage";
 import { z } from "zod";
-import {
-  parseBody,
+import { jsonBody,
   shortText,
   optText,
   longText,
@@ -85,7 +85,7 @@ const RiderPatch = z
 
 type SessionUser = { id: string; role?: string };
 
-export const ridersRoutes = new Hono()
+export const ridersRoutes = new Hono<AppEnv>()
   // ── Self-service routes (rider acting on own profile) ────────────────────
   // IMPORTANT: these MUST be registered BEFORE /:id routes so Hono matches
   // /me literally and doesn't capture it as /:id → requireAdmin → 403.
@@ -105,9 +105,9 @@ export const ridersRoutes = new Hono()
     return c.json({ rider: r }, 200);
   })
   // update rider status / location
-  .patch("/me", requireAuth, async (c) => {
+  .patch("/me", requireAuth, jsonBody(RiderSelfPatch), async (c) => {
     const u = c.get("user") as SessionUser;
-    const body = await parseBody(c, RiderSelfPatch);
+    const body = c.req.valid("json");
     const t = tx(c);
     let r = await t.selectOne(schema.riders, eq(schema.riders.userId, u.id));
     if (!r) return c.json({ message: "Not found" }, 404);
@@ -211,8 +211,8 @@ export const ridersRoutes = new Hono()
     return c.json({ riders: enriched }, 200);
   })
   // create a technician (admin): user(role=rider) + rider profile
-  .post("/", requireAdmin, async (c) => {
-    const body = await parseBody(c, RiderCreate);
+  .post("/", requireAdmin, jsonBody(RiderCreate), async (c) => {
+    const body = c.req.valid("json");
     const { name, email, password, phone, skillClass, vehicle, color, licensePlate, licenseNumber, address, notes, skills, payRatePerHour, tags } = body;
 
     const cid = tenantId(c);
@@ -320,9 +320,9 @@ export const ridersRoutes = new Hono()
     return c.json({ rider: { ...r, name, email, phone } }, 201);
   })
   // update a technician's profile (admin)
-  .patch("/:id", requireAdmin, async (c) => {
+  .patch("/:id", requireAdmin, jsonBody(RiderPatch), async (c) => {
     const id = c.req.param("id");
-    const b = await parseBody(c, RiderPatch);
+    const b = c.req.valid("json");
     const patch: Record<string, unknown> = {};
     for (const k of ["vehicle", "skillClass", "color", "photoUrl", "phone", "licensePlate", "licenseNumber", "address", "notes", "status", "skills", "payRatePerHour"] as const) {
       if (k in b) patch[k] = (b as Record<string, unknown>)[k];

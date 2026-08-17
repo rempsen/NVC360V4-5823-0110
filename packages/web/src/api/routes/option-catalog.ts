@@ -1,3 +1,4 @@
+import type { AppEnv } from "../env";
 // ─── Options/Tier Catalog — admin CRUD ────────────────────────────────────
 // Generalized options/tier quote engine (Phase 3 cross-ICP synthesis #1
 // build priority). Admins build reusable "option categories" (e.g.
@@ -9,8 +10,7 @@ import * as schema from "../database/schema";
 import { eq, and } from "drizzle-orm";
 import { requireAdmin, tx } from "../middleware/auth";
 import { z } from "zod";
-import {
-  parseBody,
+import { jsonBody,
   shortText,
   longText,
   money,
@@ -82,7 +82,7 @@ function sortByOrder<T extends { sortOrder: number; name?: string }>(rows: T[]):
   return [...rows].sort((a, b) => a.sortOrder - b.sortOrder || (a.name ?? "").localeCompare(b.name ?? ""));
 }
 
-export const optionCatalogRoutes = new Hono()
+export const optionCatalogRoutes = new Hono<AppEnv>()
   // ── Categories (with nested items) ───────────────────────────────────
   .get("/categories", requireAdmin, async (c) => {
     const t = tx(c);
@@ -100,9 +100,9 @@ export const optionCatalogRoutes = new Hono()
     }));
     return c.json({ categories: result }, 200);
   })
-  .post("/categories", requireAdmin, async (c) => {
+  .post("/categories", requireAdmin, jsonBody(CategoryCreate), async (c) => {
     const t = tx(c);
-    const b = await parseBody(c, CategoryCreate);
+    const b = c.req.valid("json");
     const existing = await t.select(schema.optionCategories);
     const maxOrder = existing.reduce((m, r) => Math.max(m, r.sortOrder), -1);
     const [row] = await t.insert(schema.optionCategories, {
@@ -112,10 +112,10 @@ export const optionCatalogRoutes = new Hono()
     });
     return c.json({ category: { ...row, items: [] } }, 201);
   })
-  .patch("/categories/:id", requireAdmin, async (c) => {
+  .patch("/categories/:id", requireAdmin, jsonBody(CategoryPatch), async (c) => {
     const t = tx(c);
     const id = c.req.param("id");
-    const b = await parseBody(c, CategoryPatch);
+    const b = c.req.valid("json");
     const [row] = await t.update(schema.optionCategories, b, eq(schema.optionCategories.id, id));
     if (!row) return c.json({ message: "Not found" }, 404);
     return c.json({ category: row }, 200);
@@ -130,12 +130,12 @@ export const optionCatalogRoutes = new Hono()
     return c.json({ ok: true }, 200);
   })
   // ── Tier items within a category ──────────────────────────────────────
-  .post("/categories/:id/items", requireAdmin, async (c) => {
+  .post("/categories/:id/items", requireAdmin, jsonBody(ItemCreate), async (c) => {
     const t = tx(c);
     const categoryId = c.req.param("id");
     const cat = await t.selectOne(schema.optionCategories, eq(schema.optionCategories.id, categoryId));
     if (!cat) return c.json({ message: "Category not found" }, 404);
-    const b = await parseBody(c, ItemCreate);
+    const b = c.req.valid("json");
     const existing = await t.select(schema.optionCategoryItems, eq(schema.optionCategoryItems.categoryId, categoryId));
     const maxOrder = existing.reduce((m, r) => Math.max(m, r.sortOrder), -1);
     // only one default tier per category — clear any existing default if this one is marked default
@@ -159,11 +159,11 @@ export const optionCatalogRoutes = new Hono()
     });
     return c.json({ item: row }, 201);
   })
-  .patch("/categories/:id/items/:itemId", requireAdmin, async (c) => {
+  .patch("/categories/:id/items/:itemId", requireAdmin, jsonBody(ItemPatch), async (c) => {
     const t = tx(c);
     const categoryId = c.req.param("id");
     const itemId = c.req.param("itemId");
-    const b = await parseBody(c, ItemPatch);
+    const b = c.req.valid("json");
     if (b.isDefault) {
       const siblings = await t.select(schema.optionCategoryItems, eq(schema.optionCategoryItems.categoryId, categoryId));
       for (const it of siblings) {

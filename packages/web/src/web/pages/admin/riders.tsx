@@ -3,6 +3,7 @@ import { DialogPanel } from "../../components/dialog-panel";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, apiHeaders } from "../../lib/api";
+import { ok } from "../../lib/api-ok";
 import { FullLoader } from "../../components/loader";
 import { PageWrap } from "../../components/brand";
 import { PageHead } from "./shell";
@@ -92,7 +93,7 @@ function FieldStaffTab() {
 
   const riders = useQuery({
     queryKey: ["riders"],
-    queryFn: async () => (await api.riders.$get()).json(),
+    queryFn: async () => ok(await api.riders.$get()),
     refetchInterval: 8000,
   });
 
@@ -414,7 +415,7 @@ function TechDrawer({ riderId, onClose }: { riderId: string | null; onClose: () 
   const detail = useQuery({
     queryKey: ["riders"],
     enabled: !!riderId,
-    queryFn: async () => (await api.riders.$get()).json(),
+    queryFn: async () => ok(await api.riders.$get()),
   });
 
   const rider = ((detail.data as any)?.riders ?? []).find((r: any) => r.id === riderId) || null;
@@ -422,7 +423,7 @@ function TechDrawer({ riderId, onClose }: { riderId: string | null; onClose: () 
   const bookingsQ = useQuery({
     queryKey: ["admin-bookings"],
     enabled: tab === "jobs" && !!riderId,
-    queryFn: async () => (await api.bookings.$get()).json(),
+    queryFn: async () => ok(await api.bookings.$get()),
   });
   const techJobs = (() => {
     const d: any = bookingsQ.data;

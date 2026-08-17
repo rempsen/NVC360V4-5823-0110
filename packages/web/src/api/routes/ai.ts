@@ -12,8 +12,9 @@ import {
   typicalDurationMins,
 } from "../../services/ai-dispatch";
 import { companyTimeZone } from "../../services/company-tz";
+import type { AppEnv } from "../env";
 
-export const aiRoutes = new Hono()
+export const aiRoutes = new Hono<AppEnv>()
   // suggest the best technician for a work order (nearest + skill match + availability)
   // suggest the best technician for a work order.
   // Model-ranked with plain-English rationale (services/ai-dispatch.ts), with

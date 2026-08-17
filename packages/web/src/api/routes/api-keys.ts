@@ -5,7 +5,8 @@ import { requireAdmin, tx } from "../middleware/auth";
 import { generateApiKey, generatePublicKey } from "../middleware/auth";
 import { audit } from "../lib/audit";
 import { z } from "zod";
-import { parseBody, shortText } from "../lib/validate";
+import { jsonBody, shortText } from "../lib/validate";
+import type { AppEnv } from "../env";
 
 /**
  * The label went in as any string of any length and expiresInDays was coerced
@@ -63,11 +64,11 @@ function mask(row: typeof schema.apiKeys.$inferSelect) {
     expiresAt: row.expiresAt,
     revokedAt: row.revokedAt,
     createdAt: row.createdAt,
-    active: !row.revokedAt && (!row.expiresAt || row.expiresAt > Date.now()),
+    active: !row.revokedAt && (!row.expiresAt || row.expiresAt.getTime() > Date.now()),
   };
 }
 
-export const apiKeysRoutes = new Hono()
+export const apiKeysRoutes = new Hono<AppEnv>()
   // available scopes for the create UI
   .get("/scopes", requireAdmin, (c) => c.json({ scopes: SCOPE_CATALOG }, 200))
 
@@ -95,9 +96,9 @@ export const apiKeysRoutes = new Hono()
   //  - PUBLIC (publishable) keys: any tenant admin can mint these — they're
   //    browser-safe and only authorize the intake-form submit surface.
   //  - SECRET keys: SUPERADMIN ONLY (full REST/MCP access across the platform).
-  .post("/", requireAdmin, async (c) => {
+  .post("/", requireAdmin, jsonBody(KeyCreate), async (c) => {
     const me = c.get("user") as SessionUser & { role?: string };
-    const b = await parseBody(c, KeyCreate);
+    const b = c.req.valid("json");
     const label = b.label;
 
     const keyType: "secret" | "public" = b.keyType === "public" ? "public" : "secret";
@@ -112,7 +113,7 @@ export const apiKeysRoutes = new Hono()
 
     if (keyType === "secret") {
       scopes = Array.isArray(b.scopes) ? b.scopes : [];
-      const valid = new Set(SCOPE_CATALOG.map((s) => s.id));
+      const valid = new Set<string>(SCOPE_CATALOG.map((s) => s.id));
       scopes = scopes.filter((s) => s === "*" || valid.has(s));
       if (scopes.length === 0)
         return c.json({ message: "select at least one scope" }, 400);

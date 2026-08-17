@@ -3,6 +3,8 @@ import { DialogPanel } from "../../components/dialog-panel";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
+import type { InferRequestType } from "hono/client";
+import { ok } from "../../lib/api-ok";
 import { FullLoader } from "../../components/loader";
 import { PageWrap } from "../../components/brand";
 import { PageHead } from "./shell";
@@ -43,7 +45,10 @@ const ROLE_TINT: Record<string, string> = {
  * an ongoing account) — it is NOT the role; the role comes from the tab you
  * opened the modal from.
  */
-const EMPTY_ADD_FORM = {
+/** Exactly what POST /admin/users accepts — a bad role can no longer compile. */
+type NewUserForm = InferRequestType<typeof api.admin.users.$post>["json"];
+
+const EMPTY_ADD_FORM: NewUserForm = {
   firstName: "",
   lastName: "",
   email: "",
@@ -77,7 +82,7 @@ export default function AdminClients() {
 
   const users = useQuery({
     queryKey: ["admin-users"],
-    queryFn: async () => (await api.admin.users.$get()).json(),
+    queryFn: async () => ok(await api.admin.users.$get()),
   });
 
   const create = useMutation({
@@ -316,7 +321,7 @@ export default function AdminClients() {
             {form.role === "customer" ? (
               <Field label="Account type">
                 <select aria-label="Account type" className={inputCls} value={form.customerType}
-                  onChange={(e) => setForm({ ...form, customerType: e.target.value })}>
+                  onChange={(e) => setForm({ ...form, customerType: e.target.value as NewUserForm["customerType"] })}>
                   <option value="one_time">One-time client</option>
                   <option value="repeat">Repeat customer</option>
                 </select>
@@ -343,7 +348,7 @@ export default function AdminClients() {
               </div>
               <Field label="Company address">
                 <AddressAutocomplete
-                  value={form.address}
+                  value={form.address ?? ""}
                   placeholder="123 Main St, Toronto, ON"
                   onResolve={({ address }) =>
                     setForm((f) => ({ ...f, ...applyAddressParts(f, address) }))
@@ -516,7 +521,7 @@ function ClientDrawer({ user, onClose }: { user: any; onClose: () => void }) {
   const bookings = useQuery({
     queryKey: ["admin-bookings"],
     enabled: !!user,
-    queryFn: async () => (await api.bookings.$get()).json(),
+    queryFn: async () => ok(await api.bookings.$get()),
   });
 
   if (!user) return null;

@@ -4,8 +4,9 @@ import { parseRateModel, computeSubtotal, EMPTY_RATE_MODEL, type RateModel } fro
 import { lookupTax, taxRegionOptions, regionFromAddress } from "../../shared/tax";
 import { round2 } from "../../shared/catalog";
 import { quoteBooking, resolveRegion } from "../../services/billing";
-import { parseBody, jsonBlob } from "../lib/validate";
+import { jsonBody, jsonBlob } from "../lib/validate";
 import { z } from "zod";
+import type { AppEnv } from "../env";
 
 /** Non-negative, finite, and capped — this feeds computeSubtotal(). */
 const qty = z.number().finite().min(0).max(1_000_000).optional();
@@ -31,14 +32,14 @@ function coerceRateModel(input: any): RateModel {
   return { ...EMPTY_RATE_MODEL, ...input };
 }
 
-export const pricingRoutes = new Hono()
+export const pricingRoutes = new Hono<AppEnv>()
   // tax region dropdown options (CA provinces + US states)
   .get("/regions", requireAuth, async (c) => {
     return c.json({ regions: taxRegionOptions() }, 200);
   })
   // live preview: given a rate model + region + actuals, return the breakdown w/ tax
-  .post("/quote", requireAuth, async (c) => {
-    const body = await parseBody(c, QuoteBody);
+  .post("/quote", requireAuth, jsonBody(QuoteBody), async (c) => {
+    const body = c.req.valid("json");
     const rm = coerceRateModel(body.rateModel);
     const actualMinutes = body.actualMinutes ?? body.minutes ?? 0;
     const actualKm = body.actualKm ?? body.km ?? 0;
@@ -69,8 +70,8 @@ export const pricingRoutes = new Hono()
    * the invoice cannot drift — including the "address doesn't resolve, fall back
    * to this tenant's default region" case, which the browser can't know.
    */
-  .post("/tax-preview", requireAuth, async (c) => {
-    const body = await parseBody(c, TaxPreviewBody);
+  .post("/tax-preview", requireAuth, jsonBody(TaxPreviewBody), async (c) => {
+    const body = c.req.valid("json");
     // resolveRegion reads only .region and .address off the booking row; pass a
     // stub with no explicit region so it follows address -> company default.
     const region = await resolveRegion(tenantId(c), {

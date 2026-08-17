@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
+import { ok } from "../lib/api-ok";
 import { Bell, CheckCheck } from "lucide-react";
 import { fmtDate, dismiss } from "../lib/utils";
 
@@ -9,7 +10,7 @@ export function NotifBell() {
   const qc = useQueryClient();
   const notifs = useQuery({
     queryKey: ["notifications"],
-    queryFn: async () => (await api.notifications.$get()).json(),
+    queryFn: async () => ok(await api.notifications.$get()),
     refetchInterval: 10000,
   });
   const items = notifs.data?.notifications ?? [];

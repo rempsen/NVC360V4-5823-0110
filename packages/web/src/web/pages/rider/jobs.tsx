@@ -2,6 +2,11 @@ import { useState } from "react";
 import { Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
+import type { InferRequestType } from "hono/client";
+
+/** The exact status values the API accepts — sourced from the route itself. */
+type RiderStatus = InferRequestType<typeof api.riders.me.$patch>["json"]["status"];
+import { ok } from "../../lib/api-ok";
 import { StatusBadge } from "../../components/brand";
 import { FullLoader, Loader } from "../../components/loader";
 import { StoredImage } from "../../components/stored-image";
@@ -14,15 +19,15 @@ export default function RiderJobs() {
 
   const me = useQuery({
     queryKey: ["rider-me"],
-    queryFn: async () => (await api.riders.me.$get()).json(),
+    queryFn: async () => ok(await api.riders.me.$get()),
   });
   const bookings = useQuery({
     queryKey: ["bookings"],
-    queryFn: async () => (await api.bookings.$get()).json(),
+    queryFn: async () => ok(await api.bookings.$get()),
   });
 
   const toggle = useMutation({
-    mutationFn: async (status: string) => {
+    mutationFn: async (status: RiderStatus) => {
       const res = await api.riders.me.$patch({ json: { status } });
       if (!res.ok) throw new Error(`Status ${res.status}`);
     },

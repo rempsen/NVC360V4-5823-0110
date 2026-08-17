@@ -41,7 +41,7 @@ function MoneyInput({ label, val, onSet, placeholder }: {
   );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+// @ts-expect-error kept for the upcoming free-text rate field; not wired up yet
 function _TextInput({ label, val, onSet, placeholder }: {
   label: string; val: string; onSet: (s: string) => void; placeholder?: string;
 }) {

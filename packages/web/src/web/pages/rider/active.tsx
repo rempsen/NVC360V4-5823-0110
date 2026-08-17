@@ -2,8 +2,12 @@ import { useParams, Link, useLocation } from "wouter";
 import { UserFacingError } from "../../lib/api-error";
 import { DialogPanel } from "../../components/dialog-panel";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { InferRequestType } from "hono/client";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../lib/api";
+
+/** The job statuses the status route accepts — sourced from the route itself. */
+type JobStatus = InferRequestType<typeof api.bookings[":id"]["status"]["$post"]>["json"]["status"];
 import { LiveMap } from "../../components/live-map";
 import { StatusBadge } from "../../components/brand";
 import { FullLoader, Loader } from "../../components/loader";
@@ -27,7 +31,7 @@ const RELEASE_REASONS: { key: string; label: string }[] = [
 const RELEASABLE = new Set(["assigned", "confirmed", "enroute", "arrived", "onsite", "in_progress", "paused"]);
 
 // status flow buttons for the rider
-const FLOW: Record<string, { next: string; label: string; icon: any }> = {
+const FLOW: Record<string, { next: JobStatus; label: string; icon: any }> = {
   assigned: { next: "enroute", label: "Start driving", icon: Play },
   enroute: { next: "arrived", label: "I've arrived", icon: Flag },
   arrived: { next: "in_progress", label: "Begin service", icon: Play },
@@ -62,7 +66,7 @@ export default function RiderActive() {
   });
 
   const setStatus = useMutation({
-    mutationFn: async (status: string) => {
+    mutationFn: async (status: JobStatus) => {
       await api.bookings[":id"].status.$post({ param: { id }, json: { status } });
     },
     onSuccess: () => {

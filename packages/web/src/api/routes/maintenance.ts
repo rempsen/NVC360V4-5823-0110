@@ -1,3 +1,4 @@
+import type { AppEnv } from "../env";
 /**
  * Maintenance plans (recurring service agreements) — admin CRUD.
  *
@@ -20,7 +21,7 @@ function dateOrNull(v: unknown): Date | null {
   return isNaN(d.getTime()) ? null : d;
 }
 
-export const maintenanceRoutes = new Hono()
+export const maintenanceRoutes = new Hono<AppEnv>()
   .get("/", requireAuth, async (c) => {
     const rows = await tx(c).select(schema.maintenancePlans);
     rows.sort(

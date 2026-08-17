@@ -10,7 +10,8 @@ import { sendSms, trackingUrl } from "../../services/sms";
 import { sendPush } from "../../services/push";
 import { publishMsg, subscribeMsg } from "../../services/realtime";
 import { z } from "zod";
-import { parseBody, shortText, longText, id as idField } from "../lib/validate";
+import { jsonBody, shortText, longText, id as idField } from "../lib/validate";
+import type { AppEnv } from "../env";
 
 type SessionUser = { id: string; role?: string; name: string };
 
@@ -86,7 +87,7 @@ const BroadcastBody = z.object({
   }, { error: "A broadcast target is required" }),
 });
 
-export const messagesRoutes = new Hono()
+export const messagesRoutes = new Hono<AppEnv>()
   // ── Direct dispatcher<->tech thread ──────────────────────────────────────
   // GET /api/messages/direct — rider fetches their own direct thread with dispatch
   .get("/direct", requireAuth, async (c) => {
@@ -153,7 +154,7 @@ export const messagesRoutes = new Hono()
   })
 
   // POST /api/messages/direct — rider posts to their direct dispatch thread
-  .post("/direct", requireAuth, async (c) => {
+  .post("/direct", requireAuth, jsonBody(DirectBody), async (c) => {
     const u = c.get("user") as SessionUser;
     if (u.role !== "rider") return c.json({ message: "Forbidden" }, 403);
     // `co` was never declared in this handler — it only existed in the
@@ -168,7 +169,7 @@ export const messagesRoutes = new Hono()
     const rider = await t.selectOne(schema.riders, eq(schema.riders.userId, u.id));
     if (!rider) return c.json({ message: "Rider not found" }, 404);
 
-    const { body } = await parseBody(c, DirectBody);
+    const { body } = c.req.valid("json");
 
     const [m] = await t.insert(schema.messages, {
       riderId: rider.id,
@@ -334,7 +335,7 @@ export const messagesRoutes = new Hono()
   })
 
   // POST /api/messages/dispatch/:techId — dispatcher messages a tech
-  .post("/dispatch/:techId", requireAdmin, async (c) => {
+  .post("/dispatch/:techId", requireAdmin, jsonBody(DirectBody), async (c) => {
     const u = c.get("user") as SessionUser;
     const techId = c.req.param("techId");
     const co = tenantId(c);
@@ -342,7 +343,7 @@ export const messagesRoutes = new Hono()
     const rider = await t.selectOne(schema.riders, eq(schema.riders.id, techId));
     if (!rider) return c.json({ message: "Tech not found" }, 404);
 
-    const { body } = await parseBody(c, DirectBody);
+    const { body } = c.req.valid("json");
 
     const [m] = await t.insert(schema.messages, {
       riderId: techId,
@@ -379,12 +380,12 @@ export const messagesRoutes = new Hono()
 
   // ── Broadcast: send to all drivers, available drivers, or by tag ──────────
   // POST /api/messages/broadcast
-  .post("/broadcast", requireAdmin, async (c) => {
+  .post("/broadcast", requireAdmin, jsonBody(BroadcastBody), async (c) => {
     const u = c.get("user") as SessionUser;
     const t = tx(c);
     const cId = tenantId(c);
 
-    const { body, target } = await parseBody(c, BroadcastBody);
+    const { body, target } = c.req.valid("json");
 
     // get all riders
     let riders = await t.select(schema.riders);
@@ -763,9 +764,9 @@ export const messagesRoutes = new Hono()
   })
 
   // POST /api/messages/:bookingId — tech, dispatch, or client posts to job thread
-  .post("/:bookingId", requireAuth, async (c) => {
+  .post("/:bookingId", requireAuth, jsonBody(DirectBody), async (c) => {
     const u = c.get("user") as SessionUser;
-    const { body } = await parseBody(c, DirectBody);
+    const { body } = c.req.valid("json");
     const bookingId = c.req.param("bookingId");
     const t = tx(c);
 

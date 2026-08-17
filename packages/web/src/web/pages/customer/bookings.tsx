@@ -2,6 +2,7 @@ import { Link } from "wouter";
 import { StoredImage } from "../../components/stored-image";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../lib/api";
+import { ok } from "../../lib/api-ok";
 import { StatusBadge } from "../../components/brand";
 import { FullLoader } from "../../components/loader";
 import { money } from "../../lib/utils";
@@ -14,7 +15,7 @@ export default function CustomerBookings() {
   const brand = useBrand();
   const bookings = useQuery({
     queryKey: ["bookings"],
-    queryFn: async () => (await api.bookings.$get()).json(),
+    queryFn: async () => ok(await api.bookings.$get()),
   });
 
   if (bookings.isLoading) return <FullLoader label="Loading bookings…" />;

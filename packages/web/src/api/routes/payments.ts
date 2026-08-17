@@ -10,8 +10,9 @@ import { AppError, Err } from "../lib/errors";
 import { log } from "../lib/logger";
 import { capture } from "../lib/analytics";
 import { incr } from "../lib/metrics";
-import { parseBody, money } from "../lib/validate";
+import { jsonBody, money } from "../lib/validate";
 import { z } from "zod";
+import type { AppEnv } from "../env";
 
 const RefundBody = z.object({
   amount: money("Refund amount").positive("Refund amount must be greater than zero").optional(),
@@ -135,7 +136,7 @@ async function syncInvoiceFromIntent(pi: {
   return { inv, status };
 }
 
-export const paymentsRoutes = new Hono()
+export const paymentsRoutes = new Hono<AppEnv>()
   // publishable key + capability flag for the browser
   .get("/config", (c) =>
     c.json({ enabled: stripeEnabled, publishableKey: STRIPE_PUBLISHABLE_KEY }, 200),
@@ -232,13 +233,15 @@ export const paymentsRoutes = new Hono()
     if (!inv?.stripePaymentIntentId) throw Err.notFound("No payment in progress");
 
     const pi = await getStripe().paymentIntents.retrieve(inv.stripePaymentIntentId);
-    await syncInvoiceFromIntent(pi);
+    // `retrieve` resolves to Stripe's Response<PaymentIntent> wrapper (the intent
+    // plus `lastResponse`); the syncer only reads intent fields.
+    await syncInvoiceFromIntent(pi as unknown as Parameters<typeof syncInvoiceFromIntent>[0]);
     const fresh = await t.selectOne(schema.invoices, eq(schema.invoices.id, inv.id));
     return c.json({ invoice: fresh }, 200);
   })
 
   // Refund (full or partial). Writes a negative ledger entry.
-  .post("/refund/:bookingId", requireAuth, async (c) => {
+  .post("/refund/:bookingId", requireAuth, jsonBody(RefundBody), async (c) => {
     if (!stripeEnabled) throw new AppError(503, "payments_disabled", "Payments are not configured");
     const u = c.get("user") as SessionUser & { role?: string };
     if (u.role && !(isAdminRole(u.role) || ["owner", "dispatcher"].includes(u.role))) {
@@ -249,7 +252,7 @@ export const paymentsRoutes = new Hono()
     // `amount <= 0` guard (both comparisons are false with NaN), so a NaN
     // refund reached the Stripe API. `reason` was unbounded and goes into
     // Stripe metadata, which rejects values over 500 chars.
-    const body = await parseBody(c, RefundBody);
+    const body = c.req.valid("json");
 
     const t = tx(c);
     const inv = await t.selectOne(schema.invoices, eq(schema.invoices.bookingId, bookingId));

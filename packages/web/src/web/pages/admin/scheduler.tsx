@@ -3,6 +3,7 @@ import { useConfirm } from "../../components/confirm-dialog";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
+import { ok } from "../../lib/api-ok";
 import { FullLoader } from "../../components/loader";
 import { PageWrap, StatusBadge } from "../../components/brand";
 import { PageHead } from "./shell";
@@ -73,12 +74,12 @@ export default function SchedulerPage() {
 
   const bookings = useQuery({
     queryKey: ["bookings"],
-    queryFn: async () => (await api.bookings.$get()).json(),
+    queryFn: async () => ok(await api.bookings.$get()),
     refetchInterval: 8000,
   });
   const riders = useQuery({
     queryKey: ["riders"],
-    queryFn: async () => (await api.riders.$get()).json(),
+    queryFn: async () => ok(await api.riders.$get()),
   });
 
   const skillClassesQ = useQuery({
@@ -89,10 +90,10 @@ export default function SchedulerPage() {
 
   const assign = useMutation({
     mutationFn: async ({ id, riderId }: { id: string; riderId: string }) =>
-      (await api.bookings[":id"].assign.$post({
+      ok(await api.bookings[":id"].assign.$post({
         param: { id },
         json: { riderId },
-      })).json(),
+      })),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["bookings"] });
       qc.invalidateQueries({ queryKey: ["fleet"] });
@@ -102,15 +103,15 @@ export default function SchedulerPage() {
   // jobs projected to run late (live tech position + this tenant's own history)
   const risk = useQuery({
     queryKey: ["delay-risk"],
-    queryFn: async () => (await api.ai["delay-risk"].$get()).json(),
+    queryFn: async () => ok(await api.ai["delay-risk"].$get()),
     refetchInterval: 60_000,
   });
 
   const suggest = useMutation({
     mutationFn: async (bookingId: string) =>
-      (await api.ai["suggest-tech"][":bookingId"].$post({
+      ok(await api.ai["suggest-tech"][":bookingId"].$post({
         param: { bookingId },
-      })).json(),
+      })),
   });
 
   const del = useMutation({
@@ -134,10 +135,10 @@ export default function SchedulerPage() {
 
   const reschedule = useMutation({
     mutationFn: async ({ id, scheduledAt }: { id: string; scheduledAt: string }) =>
-      (await api.bookings[":id"].schedule.$post({
+      ok(await api.bookings[":id"].schedule.$post({
         param: { id },
         json: { scheduledAt },
-      })).json(),
+      })),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["bookings"] }),
   });
 

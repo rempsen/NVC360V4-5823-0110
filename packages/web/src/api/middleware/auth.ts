@@ -308,7 +308,7 @@ export async function resolvePublicKey(rawToken: string | undefined | null): Pro
     .limit(1);
   if (!row || row.keyType !== "public") return null;
   if (row.revokedAt) return null;
-  if (row.expiresAt && row.expiresAt < Date.now()) return null;
+  if (row.expiresAt && row.expiresAt.getTime() < Date.now()) return null;
   db.update(schema.apiKeys)
     .set({ lastUsedAt: new Date() })
     .where(eq(schema.apiKeys.id, row.id))
@@ -358,7 +358,7 @@ export async function resolveApiKey(c: {
     .limit(1);
   if (!row || row.keyType === "public") return null;
   if (row.revokedAt) return null;
-  if (row.expiresAt && row.expiresAt < Date.now()) return null;
+  if (row.expiresAt && row.expiresAt.getTime() < Date.now()) return null;
   // touch lastUsedAt (fire and forget)
   db.update(schema.apiKeys)
     .set({ lastUsedAt: new Date() })

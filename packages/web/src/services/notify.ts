@@ -22,10 +22,24 @@ interface NotifyArgs {
   bookingId: string;
   title: string;
   body: string;
-  emailKind?: keyof typeof emailTemplates;
+  emailKind?: BookingEmailKind;
   email?: string;
   emailData?: Parameters<(typeof emailTemplates)["bookingConfirmed"]>[0];
 }
+
+/**
+ * The subset of templates that take booking data. `emailTemplates` also holds
+ * `passwordReset`, which takes `{ name, url }` — indexing the whole object by a
+ * union produced an intersection of both parameter shapes, which nothing could
+ * satisfy.
+ */
+type BookingEmailData = Parameters<(typeof emailTemplates)["bookingConfirmed"]>[0];
+type BookingEmailKind = Exclude<keyof typeof emailTemplates, "passwordReset">;
+type BookingTemplate = (
+  d: BookingEmailData,
+  brand?: Parameters<(typeof emailTemplates)["bookingConfirmed"]>[1],
+  tz?: string | null,
+) => ReturnType<(typeof emailTemplates)["bookingConfirmed"]>;
 
 /** Create an in-app notification and optionally fire an email. */
 export async function notify(args: NotifyArgs) {
@@ -52,7 +66,7 @@ export async function notify(args: NotifyArgs) {
       companyTimeZone(args.companyId),
     ]);
     // Appointment times render on the tenant's clock, not the server's UTC.
-    const tpl = emailTemplates[args.emailKind](args.emailData, brand, tz);
+    const tpl = (emailTemplates[args.emailKind] as BookingTemplate)(args.emailData, brand, tz);
     // Attach a calendar invite for appointment confirmations & reminders.
     let attachments;
     if (args.emailKind === "bookingConfirmed" || args.emailKind === "reminder") {

@@ -35,9 +35,7 @@ function makeJwt(privateKey: string): string {
   const now = Math.floor(Date.now() / 1000);
   const header = Buffer.from(JSON.stringify({ alg: "ES256", kid: KEY_ID })).toString("base64url");
   const payload = Buffer.from(JSON.stringify({ iss: TEAM_ID, iat: now })).toString("base64url");
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const _sign = crypto.createSign("sha256WithRSAEncryption");
-  // APNs uses EC key, so we use createSign with ECDSA
+  // APNs uses an EC (ES256) key, so the signer is created with ECDSA.
   const ecSign = crypto.createSign("SHA256");
   ecSign.update(`${header}.${payload}`);
   const sig = ecSign.sign({ key: privateKey, dsaEncoding: "ieee-p1363" }, "base64url");
@@ -114,18 +112,48 @@ export async function sendLiveActivityUpdate(
 }
 
 /**
+ * Live Activity push tokens for a booking, read out of `bookings.field_data`.
+ *
+ * `field_data` is a JSON *text* column shared with the work-order template
+ * fields, so this parses defensively: a corrupt or empty blob must degrade to
+ * "no token registered", never throw on the status-change path.
+ */
+export function readLiveActivityTokens(
+  fieldData: string | null | undefined,
+): { start?: string; update?: string } {
+  if (!fieldData) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fieldData);
+  } catch {
+    return {};
+  }
+  if (!parsed || typeof parsed !== "object") return {};
+  const o = parsed as Record<string, unknown>;
+  const pick = (v: unknown) => (typeof v === "string" && v ? v : undefined);
+  return { start: pick(o.__la_push_start_token), update: pick(o.__la_push_update_token) };
+}
+
+/** Key under which each token lives inside `bookings.field_data`. */
+export const LA_TOKEN_KEYS = {
+  start: "__la_push_start_token",
+  update: "__la_push_update_token",
+} as const;
+
+/**
  * Helper: push a job status update to the driver's Live Activity.
- * Reads __la_push_update_token from booking.customFields.
+ * Reads __la_push_update_token out of the booking's raw `fieldData` JSON.
  */
 export async function pushLiveActivityJobUpdate(booking: {
   id: string;
-  customFields?: Record<string, any> | null;
+  /** Raw `bookings.field_data` JSON text. */
+  fieldData?: string | null;
   status: string;
   etaMins?: number | null;
   customerName?: string | null;
   address?: string | null;
 }) {
-  const token = (booking.customFields as any)?.__la_push_update_token;
+  const token = readLiveActivityTokens(booking.fieldData).update;
   if (!token) return; // no token registered for this booking
 
   const STATUS_LABELS: Record<string, string> = {

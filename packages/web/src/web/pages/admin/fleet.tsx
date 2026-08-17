@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { api } from "../../lib/api";
+import { ok } from "../../lib/api-ok";
 import { TechAvatar } from "../../components/tech-avatar";
 import { FleetMap } from "../../components/fleet-map";
 import { WorkOrderModal } from "../../components/work-order-modal";
@@ -52,7 +53,7 @@ export default function FleetPage() {
 
   const fleet = useQuery({
     queryKey: ["fleet"],
-    queryFn: async () => (await api.fleet.$get()).json(),
+    queryFn: async () => ok(await api.fleet.$get()),
     refetchInterval: 5000,
   });
 
@@ -137,7 +138,7 @@ export default function FleetPage() {
   const unreadQuery = useQuery({
     queryKey: ["fleet-unread", selected],
     queryFn: async () =>
-      (await api.fleet[":techId"].unread.$get({ param: { techId: selected! } })).json(),
+      ok(await api.fleet[":techId"].unread.$get({ param: { techId: selected! } })),
     enabled: !!selected,
     refetchInterval: 5000,
   });
@@ -145,7 +146,7 @@ export default function FleetPage() {
 
   const optimize = useMutation({
     mutationFn: async (techId: string) =>
-      (await api.ai["optimize-route"][":techId"].$get({ param: { techId } })).json(),
+      ok(await api.ai["optimize-route"][":techId"].$get({ param: { techId } })),
   });
 
   const counts = techs.reduce<Record<string, number>>((a, t) => {

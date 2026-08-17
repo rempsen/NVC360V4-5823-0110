@@ -4,6 +4,7 @@ import { auth } from "./auth";
 import { authMiddleware } from "./middleware/auth";
 import { AppError } from "./lib/errors";
 import { captureException, requestLogger } from "./lib/logger";
+import type { Variables } from "./env";
 import { recordError } from "./lib/alerts";
 import { apiLimiter, authSurfaceLimiter } from "./lib/rate-limit";
 import { recordHttp, renderProm, renderJson, templatePath } from "./lib/metrics";
@@ -55,31 +56,6 @@ import { superadminRoutes } from "./routes/superadmin";
 import { formsRoutes } from "./routes/forms";
 import { publicFormsRoutes } from "./routes/public-forms";
 
-type Variables = {
-  user: {
-    id: string;
-    role?: string;
-    email: string;
-    name: string;
-    companyId?: string;
-    permissions?: string | null;
-    staffType?: string | null;
-    managerId?: string | null;
-  } | null;
-  session: unknown;
-  companyId: string;
-  /** Every active company this person can act as (see middleware/auth.ts). */
-  memberships: {
-    companyId: string;
-    role: string;
-    permissions: string | null;
-    staffType: string | null;
-    managerId: string | null;
-  }[];
-  apiKey?: { id: string; label: string; scopes: string[] };
-  requestId: string;
-  log: ReturnType<typeof requestLogger>;
-};
 
 // CORS allowlist: comma-separated origins in CORS_ORIGINS. "*" allows all
 // (dev only). Credentials are only echoed for explicitly-allowed origins.
@@ -200,7 +176,10 @@ const app = new Hono<{ Variables: Variables }>()
     // even though GET returned the full body. That 0-length HEAD response is
     // exactly why tenant header logos were intermittently rendering as broken
     // images in real inboxes despite looking fine in the in-app preview.
-    return new Response(c.req.method === "HEAD" ? null : obj.body, {
+    // `obj.body` is a Uint8Array. Since TS 5.7 that carries an ArrayBufferLike
+    // type argument the DOM `BodyInit` union doesn't accept, though the runtime
+    // accepts it fine — hence the cast rather than a copy.
+    return new Response(c.req.method === "HEAD" ? null : (obj.body as unknown as BodyInit), {
       headers: {
         "Content-Type": obj.contentType,
         "Content-Length": String(obj.body.byteLength),

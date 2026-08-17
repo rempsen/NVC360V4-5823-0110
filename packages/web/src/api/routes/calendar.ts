@@ -6,6 +6,7 @@ import { eq, and, gte, lte } from "drizzle-orm";
 import { requireAuth, loadMemberships } from "../middleware/auth";
 import { isAdminRole } from "../lib/permissions";
 import { buildCalendar, type CalEvent } from "../../services/ics";
+import type { AppEnv } from "../env";
 
 type SessionUser = { id: string; role?: string; email: string; name: string };
 
@@ -82,7 +83,7 @@ async function eventFor(
   };
 }
 
-export const calendarRoutes = new Hono()
+export const calendarRoutes = new Hono<AppEnv>()
   // Return (creating if needed) the current user's personal feed URLs.
   .get("/feed", requireAuth, async (c) => {
     const u = c.get("user") as SessionUser;

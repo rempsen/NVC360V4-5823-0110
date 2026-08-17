@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { requireAdmin, tx } from "../middleware/auth";
 import { audit } from "../lib/audit";
 import { putObject } from "../lib/storage";
+import type { AppEnv } from "../env";
 
 type SessionUser = { id: string; name?: string };
 
@@ -69,7 +70,7 @@ function normalizeFields(raw: any): any[] {
       required: !!f.required,
       sectionId: f.sectionId || "",
       width: f.width === "half" ? "half" : "full",
-      fixed: !!fixedDef?.fixed || !!f.fixed,
+      fixed: (!!fixedDef && "fixed" in fixedDef && !!fixedDef.fixed) || !!f.fixed,
       core: !!fixedDef, // maps to a built-in pipeline field
     };
   });
@@ -110,7 +111,7 @@ function mask(row: typeof schema.intakeForms.$inferSelect) {
   };
 }
 
-export const formsRoutes = new Hono()
+export const formsRoutes = new Hono<AppEnv>()
   // field catalog for the builder UI
   .get("/field-catalog", requireAdmin, (c) => c.json({ fields: INTAKE_FIELD_CATALOG }, 200))
 

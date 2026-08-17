@@ -8,7 +8,8 @@ import { requireAdmin, tenantId, tx } from "../middleware/auth";
 import { auth } from "../auth";
 import { isAdminRole, isSuperadmin, canBeSuperadmin, SUPERADMIN_DOMAINS } from "../lib/permissions";
 import { z } from "zod";
-import { parseBody, shortText, longText, email as emailField, phone as phoneField } from "../lib/validate";
+import { jsonBody, shortText, longText, email as emailField, phone as phoneField } from "../lib/validate";
+import type { AppEnv } from "../env";
 
 type SessionUser = { id: string; role?: string };
 
@@ -132,7 +133,7 @@ const ChangePassword = z.object({
   newPassword: password,
 });
 
-export const adminRoutes = new Hono()
+export const adminRoutes = new Hono<AppEnv>()
   .get("/stats", requireAdmin, async (c) => {
     const t = tx(c);
     const cid = tenantId(c);
@@ -245,9 +246,9 @@ export const adminRoutes = new Hono()
     );
   })
   // create a user account (admin) — clients or dispatchers
-  .post("/users", requireAdmin, async (c) => {
+  .post("/users", requireAdmin, jsonBody(UserCreate), async (c) => {
     const me = c.get("user") as SessionUser;
-    const body = await parseBody(c, UserCreate);
+    const body = c.req.valid("json");
     const { email, password: pw, phone, role } = body;
     // Display name is composed from first + last when the caller sends the
     // structured pair; a caller that still sends a single `name` wins.
@@ -353,9 +354,9 @@ export const adminRoutes = new Hono()
     );
   })
   // update a user account (admin) — full CRM-style client record
-  .patch("/users/:id", requireAdmin, async (c) => {
+  .patch("/users/:id", requireAdmin, jsonBody(UserPatch), async (c) => {
     const id = c.req.param("id");
-    const b = await parseBody(c, UserPatch);
+    const b = c.req.valid("json");
     const me = c.get("user") as SessionUser;
     const [target] = await db.select().from(schema.user).where(eq(schema.user.id, id));
     // Membership, not user.companyId: a client shared with another company is
@@ -402,10 +403,10 @@ export const adminRoutes = new Hono()
   // Reset a staff member's password (admin action). Sets a new credential
   // password via better-auth's own hasher so the stored format always matches
   // what the sign-in flow expects. Admin-tier targets require superadmin.
-  .post("/users/:id/reset-password", requireAdmin, async (c) => {
+  .post("/users/:id/reset-password", requireAdmin, jsonBody(ResetPassword), async (c) => {
     const id = c.req.param("id");
     const me = c.get("user") as SessionUser;
-    const { password: newPw } = await parseBody(c, ResetPassword);
+    const { password: newPw } = c.req.valid("json");
     const [target] = await db.select().from(schema.user).where(eq(schema.user.id, id));
     if (!target || !(await isMember(id, tenantId(c))))
       return c.json({ message: "Not found" }, 404);
@@ -454,9 +455,9 @@ export const adminRoutes = new Hono()
   })
   // Self-service: change my own password. Requires the current password to
   // verify identity before swapping in the new one.
-  .post("/me/change-password", requireAdmin, async (c) => {
+  .post("/me/change-password", requireAdmin, jsonBody(ChangePassword), async (c) => {
     const me = c.get("user") as SessionUser;
-    const { currentPassword, newPassword } = await parseBody(c, ChangePassword);
+    const { currentPassword, newPassword } = c.req.valid("json");
     const ctx = await auth.$context;
     const [cred] = await db
       .select()

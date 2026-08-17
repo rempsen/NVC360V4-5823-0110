@@ -144,7 +144,7 @@ export async function applyBookingStatus(
   // push Live Activity update to driver's Dynamic Island / lock screen (iOS)
   void pushLiveActivityJobUpdate({
     id: b.id,
-    customFields: b.customFields as any,
+    fieldData: b.fieldData,
     status,
     etaMins: b.etaMins ?? null,
     customerName: (b as any).customerName ?? null,

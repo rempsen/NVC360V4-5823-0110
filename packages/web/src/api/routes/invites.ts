@@ -10,7 +10,8 @@ import { sendEmail, loadEmailBrand, resolveLogo } from "../../services/email";
 import { sendSms } from "../../services/sms";
 
 import { z } from "zod";
-import { parseBody, shortText, optText, email as emailField, phone as phoneField } from "../lib/validate";
+import { jsonBody, shortText, optText, email as emailField, phone as phoneField } from "../lib/validate";
+import type { AppEnv } from "../env";
 
 type SessionUser = { id: string; name?: string };
 
@@ -62,7 +63,7 @@ async function companyBrand(companyId: string): Promise<{ name: string; workerNo
   return { name: co?.name || "NVC360", workerNoun: co?.workerNoun || "Technician" };
 }
 
-export const invitesRoutes = new Hono()
+export const invitesRoutes = new Hono<AppEnv>()
   // list invites (admin)
   .get("/", requireAdmin, async (c) => {
     const rows = await tx(c).select(schema.techInvites);
@@ -70,9 +71,9 @@ export const invitesRoutes = new Hono()
     return c.json({ invites: rows }, 200);
   })
   // create + send an invite (admin)
-  .post("/", requireAdmin, async (c) => {
+  .post("/", requireAdmin, jsonBody(InviteCreate), async (c) => {
     const u = c.get("user") as SessionUser;
-    const b = await parseBody(c, InviteCreate);
+    const b = c.req.valid("json");
     const [exists] = await db.select().from(schema.user).where(eq(schema.user.email, b.email));
     if (exists) {
       // They already have an NVC360 login — probably a contract technician who
@@ -174,9 +175,9 @@ export const invitesRoutes = new Hono()
     return c.json({ invite: { email: inv.email, name: inv.name, skillClass: inv.skillClass }, company: brand.name, workerNoun: brand.workerNoun }, 200);
   })
   // ---- PUBLIC: accept an invite -> create user(role=rider) + active rider profile ----
-  .post("/accept/:token", async (c) => {
+  .post("/accept/:token", jsonBody(InviteAccept), async (c) => {
     const token = c.req.param("token");
-    const { name, password, phone } = await parseBody(c, InviteAccept);
+    const { name, password, phone } = c.req.valid("json");
     const [inv] = await db.select().from(schema.techInvites).where(eq(schema.techInvites.token, token));
     if (!inv || inv.status !== "pending") return c.json({ message: "Invite not found or already used" }, 404);
 

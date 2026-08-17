@@ -4,10 +4,20 @@ import * as schema from "../database/schema";
 import { eq } from "drizzle-orm";
 import { requireAuth, requireAdmin, tx, tenantId } from "../middleware/auth";
 import { audit } from "../lib/audit";
+import { z } from "zod";
+import { jsonBody, longText } from "../lib/validate";
+import type { AppEnv } from "../env";
 
 type SessionUser = { id: string; name?: string };
 
-export const reviewsRoutes = new Hono()
+/** Moderation is the only thing an admin may change on a review. */
+const ReviewModeration = z.object({
+  hidden: z.boolean().optional(),
+  featured: z.boolean().optional(),
+  reply: longText(2_000).optional(),
+});
+
+export const reviewsRoutes = new Hono<AppEnv>()
   // admin list (with customer + rider names)
   .get("/", requireAuth, async (c) => {
     const t = tx(c);
@@ -34,12 +44,13 @@ export const reviewsRoutes = new Hono()
       .sort((a, b) => (b.featured ? 1 : 0) - (a.featured ? 1 : 0));
     return c.json({ reviews: visible }, 200);
   })
-  .patch("/:id", requireAdmin, async (c) => {
+  .patch("/:id", requireAdmin, jsonBody(ReviewModeration), async (c) => {
     const me = c.get("user") as SessionUser;
     const id = c.req.param("id");
-    const b = await c.req.json();
+    const b = c.req.valid("json");
     const patch: Record<string, unknown> = {};
-    for (const k of ["hidden", "featured", "reply"]) if (k in b) patch[k] = b[k];
+    for (const k of ["hidden", "featured", "reply"] as const)
+      if (b[k] !== undefined) patch[k] = b[k];
     const [row] = await tx(c).update(
       schema.reviews,
       patch as Partial<typeof schema.reviews.$inferInsert>,

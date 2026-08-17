@@ -4,18 +4,62 @@ import * as schema from "../database/schema";
 import { eq, and, inArray, isNull } from "drizzle-orm";
 import { requireAuth, requireAdmin, tx } from "../middleware/auth";
 import { sendSms } from "../../services/sms";
+import { z } from "zod";
+import { jsonBody, shortText } from "../lib/validate";
+import type { AppEnv } from "../env";
+
+/** A dispatcher-authored message to a technician (SMS or in-app thread). */
+const MessageBody = z.object({ body: shortText("Message", 1_000) });
 
 type SessionUser = { id: string; role?: string; name: string };
 
 const ACTIVE_STATUSES = ["assigned", "enroute", "arrived", "in_progress"];
 
-export const fleetRoutes = new Hono()
+/**
+ * The live-map payload shapes, spelled out on purpose.
+ *
+ * These used to be `any` (`let task: any`, `PromiseFulfilledResult<any>`), which
+ * made the RPC response type collapse to `ClientResponse<never, 200>` — so the
+ * fleet map AND the admin dashboard were reading `data.fleet` off `never` and
+ * every `.map((t) => ...)` callback inside them was implicitly `any`. Naming the
+ * shape here is what restores type-checking on both screens.
+ */
+type FleetTask = {
+  id: string;
+  title: string;
+  status: string;
+  address: string;
+  priority: string;
+  etaMins: number | null;
+  destLat: number | null;
+  destLng: number | null;
+};
+
+type FleetTech = {
+  id: string;
+  userId: string;
+  name: string;
+  phone: string;
+  vehicle: string | null;
+  skillClass: string | null;
+  color: string | null;
+  photoUrl: string | null;
+  status: string;
+  rating: number | null;
+  completedJobs: number | null;
+  lat: number | null;
+  lng: number | null;
+  locationUpdatedAt: Date | string | null;
+  task: FleetTask | null;
+};
+
+export const fleetRoutes = new Hono<AppEnv>()
   // full fleet snapshot for the live map: every tech + their current task
   .get("/", requireAuth, async (c) => {
     const t = tx(c);
     const techs = await t.select(schema.riders);
     const result = (await Promise.allSettled(
-      techs.map(async (r) => {
+      techs.map(async (r): Promise<FleetTech> => {
         const [ru] = await db
           .select()
           .from(schema.user)
@@ -31,7 +75,7 @@ export const fleetRoutes = new Hono()
         ).catch(() => []);
         activeAll.sort((a, b) => Number(b.createdAt) - Number(a.createdAt));
         const active = activeAll.slice(0, 1);
-        let task: any = null;
+        let task: FleetTask | null = null;
         if (active[0]) {
           // guard: serviceId may be null if service was deleted
           const svc = active[0].serviceId
@@ -66,7 +110,7 @@ export const fleetRoutes = new Hono()
           task,
         };
       }),
-    )).filter((s) => s.status === "fulfilled").map((s) => (s as PromiseFulfilledResult<any>).value);
+    )).filter((s) => s.status === "fulfilled").map((s) => (s as PromiseFulfilledResult<FleetTech>).value);
     return c.json({ fleet: result }, 200);
   })
   // unassigned / pending work orders (for dispatch + auto-assign)
@@ -78,10 +122,9 @@ export const fleetRoutes = new Hono()
     return c.json({ pending: rows }, 200);
   })
   // send a real SMS to a technician (admin -> Twilio)
-  .post("/:techId/sms", requireAdmin, async (c) => {
+  .post("/:techId/sms", requireAdmin, jsonBody(MessageBody), async (c) => {
     const techId = c.req.param("techId");
-    const { body } = await c.req.json();
-    if (!body?.trim()) return c.json({ message: "Message is required" }, 400);
+    const { body } = c.req.valid("json");
     const r = await tx(c).selectOne(schema.riders, eq(schema.riders.id, techId));
     if (!r) return c.json({ message: "Technician not found" }, 404);
     const [ru] = await db
@@ -167,11 +210,10 @@ export const fleetRoutes = new Hono()
   })
 
   // post into the direct dispatcher<->tech thread
-  .post("/:techId/thread", requireAdmin, async (c) => {
+  .post("/:techId/thread", requireAdmin, jsonBody(MessageBody), async (c) => {
     const techId = c.req.param("techId");
     const u = c.get("user") as SessionUser;
-    const { body } = await c.req.json();
-    if (!body?.trim()) return c.json({ message: "Message is required" }, 400);
+    const { body } = c.req.valid("json");
     const t = tx(c);
     const r = await t.selectOne(schema.riders, eq(schema.riders.id, techId));
     if (!r) return c.json({ message: "Technician not found" }, 404);

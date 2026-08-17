@@ -1,3 +1,4 @@
+import type { AppEnv } from "../env";
 import { Hono } from "hono";
 import * as schema from "../database/schema";
 import { eq } from "drizzle-orm";
@@ -7,7 +8,7 @@ import { starterDesigns, type EmailBlock } from "../../services/email-render";
 import { putObject } from "../lib/storage";
 import { resendAvailable, triggerVerify, removeDomain } from "../../services/email-domains";
 import { z } from "zod";
-import {
+import { jsonBody,
   parseBody,
   shortText,
   longText,
@@ -164,7 +165,7 @@ async function getOrCreateChannels(c: any) {
   return row;
 }
 
-export const notifConfigRoutes = new Hono()
+export const notifConfigRoutes = new Hono<AppEnv>()
   // full rule matrix (seeds defaults on first call)
   .get("/rules", requireAdmin, async (c) => {
     await seedNotificationRules(tenantId(c));
@@ -185,9 +186,9 @@ export const notifConfigRoutes = new Hono()
     return c.json({ rules: all, events: meta, recipients: RECIPIENTS }, 200);
   })
   // update one rule (toggle a channel etc.)
-  .patch("/rules/:id", requireAdmin, async (c) => {
+  .patch("/rules/:id", requireAdmin, jsonBody(RulePatch), async (c) => {
     const ruleId = c.req.param("id");
-    const body = await parseBody(c, RulePatch);
+    const body = c.req.valid("json");
     const t = tx(c);
     const existing = await t.selectOne(schema.notificationRules, eq(schema.notificationRules.id, ruleId));
     if (!existing) return c.json({ message: "Notification rule not found" }, 404);
@@ -198,8 +199,8 @@ export const notifConfigRoutes = new Hono()
     return c.json({ rule: r }, 200);
   })
   // bulk set a whole column for an event row (convenience)
-  .post("/rules/bulk", requireAdmin, async (c) => {
-    const { event, channel, value } = await parseBody(c, BulkBody);
+  .post("/rules/bulk", requireAdmin, jsonBody(BulkBody), async (c) => {
+    const { event, channel, value } = c.req.valid("json");
     await tx(c).update(
       schema.notificationRules,
       { [channel]: value, updatedAt: new Date() } as any,
@@ -230,23 +231,23 @@ export const notifConfigRoutes = new Hono()
   })
 
   // ---- template preview (interpolate {{vars}} against sample data) ----
-  .post("/preview", requireAdmin, async (c) => {
-    const { template } = await parseBody(c, PreviewBody);
+  .post("/preview", requireAdmin, jsonBody(PreviewBody), async (c) => {
+    const { template } = c.req.valid("json");
     const channels = await tx(c).selectOne(schema.notificationChannels);
     return c.json({ rendered: interpolateSample(template || "", channels?.emailFromName) }, 200);
   })
 
   // ---- render a full branded HTML email from a block design (live editor preview) ----
-  .post("/email/render", requireAdmin, async (c) => {
-    const { design, footer } = await parseBody(c, RenderBody);
+  .post("/email/render", requireAdmin, jsonBody(RenderBody), async (c) => {
+    const { design, footer } = c.req.valid("json");
     const origin = new URL(c.req.url).origin;
     const html = await renderDesignPreview(tenantId(c), Array.isArray(design) ? (design as EmailBlock[]) : [], { footer, origin });
     return c.json({ html }, 200);
   })
 
   // ---- send a test email rendered from a block design ----
-  .post("/email/test", requireAdmin, async (c) => {
-    const { to, subject, design } = await parseBody(c, TestEmailBody);
+  .post("/email/test", requireAdmin, jsonBody(TestEmailBody), async (c) => {
+    const { to, subject, design } = c.req.valid("json");
     const origin = new URL(c.req.url).origin;
     const r = await sendDesignTest(tenantId(c), to, subject || "", Array.isArray(design) ? (design as EmailBlock[]) : [], origin);
     return c.json(r, 200);
@@ -269,8 +270,8 @@ export const notifConfigRoutes = new Hono()
     );
     return c.json({ templates: rows }, 200);
   })
-  .post("/email/templates", requireAdmin, async (c) => {
-    const b = await parseBody(c, TemplateCreate);
+  .post("/email/templates", requireAdmin, jsonBody(TemplateCreate), async (c) => {
+    const b = c.req.valid("json");
     const [t] = await tx(c).insert(schema.emailTemplates, {
       name: b.name || "Untitled template",
       description: b.description || "",
@@ -280,9 +281,9 @@ export const notifConfigRoutes = new Hono()
     });
     return c.json({ template: t }, 201);
   })
-  .patch("/email/templates/:id", requireAdmin, async (c) => {
+  .patch("/email/templates/:id", requireAdmin, jsonBody(TemplatePatch), async (c) => {
     const templateId = c.req.param("id");
-    const b = await parseBody(c, TemplatePatch);
+    const b = c.req.valid("json");
     const t = tx(c);
     const existing = await t.selectOne(schema.emailTemplates, eq(schema.emailTemplates.id, templateId));
     if (!existing) return c.json({ message: "Template not found" }, 404);
@@ -328,8 +329,8 @@ export const notifConfigRoutes = new Hono()
     const row = await getOrCreateChannels(c);
     return c.json({ channels: row }, 200);
   })
-  .patch("/channels", requireAdmin, async (c) => {
-    const b = await parseBody(c, ChannelsPatch);
+  .patch("/channels", requireAdmin, jsonBody(ChannelsPatch), async (c) => {
+    const b = c.req.valid("json");
     const patch: Record<string, unknown> = { ...b, updatedAt: new Date() };
     const existing = await getOrCreateChannels(c);
     const [row] = await tx(c).update(schema.notificationChannels, patch as any, eq(schema.notificationChannels.id, existing.id));
@@ -342,8 +343,8 @@ export const notifConfigRoutes = new Hono()
     rows.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     return c.json({ webhooks: rows }, 200);
   })
-  .post("/webhooks", requireAdmin, async (c) => {
-    const b = await parseBody(c, WebhookCreate);
+  .post("/webhooks", requireAdmin, jsonBody(WebhookCreate), async (c) => {
+    const b = c.req.valid("json");
     const [w] = await tx(c).insert(schema.webhookEndpoints, {
       label: b.label || "",
       url: b.url,
@@ -353,9 +354,9 @@ export const notifConfigRoutes = new Hono()
     });
     return c.json({ webhook: w }, 201);
   })
-  .patch("/webhooks/:id", requireAdmin, async (c) => {
+  .patch("/webhooks/:id", requireAdmin, jsonBody(WebhookPatch), async (c) => {
     const hookId = c.req.param("id");
-    const b = await parseBody(c, WebhookPatch);
+    const b = c.req.valid("json");
     const t = tx(c);
     const existing = await t.selectOne(schema.webhookEndpoints, eq(schema.webhookEndpoints.id, hookId));
     if (!existing) return c.json({ message: "Webhook not found" }, 404);
@@ -394,10 +395,10 @@ export const notifConfigRoutes = new Hono()
   })
 
   // ---- fire a test event against a real booking ----
-  .post("/test/:event", requireAdmin, async (c) => {
+  .post("/test/:event", requireAdmin, jsonBody(TestEventBody), async (c) => {
     const event = c.req.param("event") as NvcEvent;
     if (!EVENT_META[event]) return c.json({ message: "unknown event" }, 404);
-    const { bookingId } = await parseBody(c, TestEventBody);
+    const { bookingId } = c.req.valid("json");
     let bid: string | undefined = bookingId;
     if (!bid) {
       const rows = await tx(c).select(schema.bookings);

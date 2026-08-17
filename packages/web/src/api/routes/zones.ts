@@ -4,7 +4,8 @@ import * as schema from "../database/schema";
 import { eq } from "drizzle-orm";
 import { requireAuth, requireAdmin, tx } from "../middleware/auth";
 import { audit } from "../lib/audit";
-import { parseBody, shortText } from "../lib/validate";
+import { jsonBody, shortText } from "../lib/validate";
+import type { AppEnv } from "../env";
 
 type SessionUser = { id: string; name?: string };
 
@@ -45,14 +46,14 @@ const ZoneUpdate = z
   })
   .refine((v) => Object.keys(v).length > 0, { message: "No fields to update" });
 
-export const zonesRoutes = new Hono()
+export const zonesRoutes = new Hono<AppEnv>()
   .get("/", requireAuth, async (c) => {
     const rows = await tx(c).select(schema.serviceZones);
     return c.json({ zones: rows.map((z) => ({ ...z, polygon: safeParse(z.polygon) })) }, 200);
   })
-  .post("/", requireAdmin, async (c) => {
+  .post("/", requireAdmin, jsonBody(ZoneCreate), async (c) => {
     const me = c.get("user") as SessionUser;
-    const b = await parseBody(c, ZoneCreate);
+    const b = c.req.valid("json");
 
     const [zone] = await tx(c).insert(schema.serviceZones, {
       name: b.name,
@@ -64,10 +65,10 @@ export const zonesRoutes = new Hono()
     await audit({ actorId: me?.id, actorName: me?.name, action: "create", entityType: "service_zone", entityId: zone.id, summary: `Created zone "${b.name}"` });
     return c.json({ zone: { ...zone, polygon: safeParse(zone.polygon) } }, 201);
   })
-  .put("/:id", requireAdmin, async (c) => {
+  .put("/:id", requireAdmin, jsonBody(ZoneUpdate), async (c) => {
     const me = c.get("user") as SessionUser;
     const id = c.req.param("id");
-    const b = await parseBody(c, ZoneUpdate);
+    const b = c.req.valid("json");
 
     const patch: Partial<typeof schema.serviceZones.$inferInsert> = {};
     if (b.name !== undefined) patch.name = b.name;

@@ -3,8 +3,9 @@ import { db } from "../database";
 import * as schema from "../database/schema";
 import { desc } from "drizzle-orm";
 import { requireAdmin, tx } from "../middleware/auth";
+import type { AppEnv } from "../env";
 
-export const auditRoutes = new Hono()
+export const auditRoutes = new Hono<AppEnv>()
   .get("/", requireAdmin, async (c) => {
     const limit = Math.min(Number(c.req.query("limit") || 200), 500);
     // Scope to the acting tenant — never leak another company's audit trail.

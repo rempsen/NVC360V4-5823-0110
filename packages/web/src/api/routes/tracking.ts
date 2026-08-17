@@ -9,6 +9,10 @@ import { applyBookingStatus, pauseClock, resumeClock } from "../../services/book
 import { pingLimiter } from "../lib/rate-limit";
 import { publishTrack } from "../../services/realtime";
 import { isAdminRole } from "../lib/permissions";
+import { LA_TOKEN_KEYS } from "../../services/apns";
+import { z } from "zod";
+import { jsonBody, latitude, longitude } from "../lib/validate";
+import type { AppEnv } from "../env";
 
 // throttle ETA recomputation per booking (avoid hammering Distance Matrix)
 const ETA_THROTTLE_MS = 30_000;
@@ -32,11 +36,14 @@ async function cachedAuthRoute(id: string, oLat: number, oLng: number, dLat: num
   return route;
 }
 
-export const trackingRoutes = new Hono()
+/** A live GPS ping from a technician's device. */
+const PingBody = z.object({ lat: latitude, lng: longitude });
+
+export const trackingRoutes = new Hono<AppEnv>()
   // rider posts a live location ping for a booking
-  .post("/:bookingId/ping", pingLimiter, requireAuth, async (c) => {
+  .post("/:bookingId/ping", pingLimiter, requireAuth, jsonBody(PingBody), async (c) => {
     const bookingId = c.req.param("bookingId");
-    const { lat, lng } = await c.req.json();
+    const { lat, lng } = c.req.valid("json");
     const t = tx(c);
 
     // ping = tech's live location. The booking's lat/lng is the JOB destination
@@ -135,17 +142,24 @@ export const trackingRoutes = new Hono()
     const { token, type } = await c.req.json<{ token: string; type: "update" | "start" }>();
     if (!token) return c.json({ ok: false }, 400);
     const t = tx(c);
-    // Store on the booking row (live_activity_token + push_to_start_token columns)
-    // We use JSON extra field pattern (stored in bookings.customFields) to avoid migration
+    // Stored inside the existing `bookings.field_data` JSON blob so no migration
+    // is needed. This previously read/wrote `bookings.customFields`, a column
+    // that does not exist — every token was silently discarded.
     const b = await t.selectOne(schema.bookings, eq(schema.bookings.id, bookingId));
     if (!b) return c.json({ ok: false, message: "Not found" }, 404);
-    const cf = (b.customFields as Record<string, any>) ?? {};
-    if (type === "start") {
-      cf.__la_push_start_token = token;
-    } else {
-      cf.__la_push_update_token = token;
+    let fd: Record<string, unknown> = {};
+    try {
+      const parsed = JSON.parse(b.fieldData || "{}");
+      if (parsed && typeof parsed === "object") fd = parsed as Record<string, unknown>;
+    } catch {
+      // corrupt blob — start clean rather than 500 on a driver's device
     }
-    await t.update(schema.bookings, eq(schema.bookings.id, bookingId), { customFields: cf });
+    fd[type === "start" ? LA_TOKEN_KEYS.start : LA_TOKEN_KEYS.update] = token;
+    await t.update(
+      schema.bookings,
+      { fieldData: JSON.stringify(fd) },
+      eq(schema.bookings.id, bookingId),
+    );
     return c.json({ ok: true });
   })
   // customer fetches latest rider location for a booking

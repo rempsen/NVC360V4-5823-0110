@@ -1,3 +1,4 @@
+import type { AppEnv } from "../env";
 import { Hono } from "hono";
 import { db } from "../database";
 import { tdb } from "../database/tenant";
@@ -28,8 +29,7 @@ import {
 import { companyTimeZone } from "../../services/company-tz";
 import { zonedDayBounds, fmtInZone } from "../../shared/tz";
 import { z } from "zod";
-import {
-  parseBody,
+import { jsonBody,
   id as idField,
   isoDate,
   latitude,
@@ -378,7 +378,7 @@ const RELEASABLE_STATUSES = [
   "paused",
 ] as const;
 
-export const bookingsRoutes = new Hono()
+export const bookingsRoutes = new Hono<AppEnv>()
   // list for current user (customer sees own, rider sees assigned, admin sees all)
   /**
    * List bookings for the current user (customer sees own, rider sees assigned,
@@ -518,11 +518,11 @@ export const bookingsRoutes = new Hono()
     return c.json({ booking: await enrich(b) }, 200);
   })
   // create a booking (customer)
-  .post("/", requireAuth, async (c) => {
+  .post("/", requireAuth, jsonBody(BookingCreate), async (c) => {
     const u = c.get("user") as SessionUser;
     const co = tenantId(c);
     const t = tx(c);
-    const body = await parseBody(c, BookingCreate);
+    const body = c.req.valid("json");
     const svc = await t.selectOne(schema.services, eq(schema.services.id, body.serviceId));
     if (!svc) return c.json({ message: "Service not found" }, 404);
 
@@ -603,10 +603,10 @@ export const bookingsRoutes = new Hono()
     return c.json({ booking: await enrichById(co, b.id) }, 201);
   })
   // admin creates a work order on behalf of a client
-  .post("/admin", requireAuth, async (c) => {
+  .post("/admin", requireAuth, jsonBody(BookingAdminCreate), async (c) => {
     const u = c.get("user") as SessionUser;
     if (!isAdminRole(u.role)) return c.json({ message: "Forbidden" }, 403);
-    const body = await parseBody(c, BookingAdminCreate);
+    const body = c.req.valid("json");
 
     const co = tenantId(c);
     const t = tx(c);
@@ -732,11 +732,11 @@ export const bookingsRoutes = new Hono()
     return c.json({ booking: await enrichById(co, b.id) }, 201);
   })
   // reschedule a work order (admin) -> set scheduledAt (drag onto a calendar day)
-  .post("/:id/schedule", requireAuth, async (c) => {
+  .post("/:id/schedule", requireAuth, jsonBody(ScheduleBody), async (c) => {
     const u = c.get("user") as SessionUser;
     if (!isAdminRole(u.role)) return c.json({ message: "Forbidden" }, 403);
     const id = c.req.param("id");
-    const { scheduledAt } = await parseBody(c, ScheduleBody);
+    const { scheduledAt } = c.req.valid("json");
     const t = tx(c);
     const prev = await t.selectOne(schema.bookings, eq(schema.bookings.id, id));
     if (!prev) return c.json({ message: "Not found" }, 404);
@@ -745,13 +745,13 @@ export const bookingsRoutes = new Hono()
     return c.json({ booking: await enrich(b) }, 200);
   })
   // admin edits any field on a work order (address, schedule, service, pricing, etc.)
-  .patch("/:id", requireAuth, async (c) => {
+  .patch("/:id", requireAuth, jsonBody(BookingPatch), async (c) => {
     const u = c.get("user") as SessionUser;
     if (!isAdminRole(u.role)) return c.json({ message: "Forbidden" }, 403);
     const id = c.req.param("id");
     const co = tenantId(c);
     const t = tx(c);
-    const body = await parseBody(c, BookingPatch);
+    const body = c.req.valid("json");
     const prev = await t.selectOne(schema.bookings, eq(schema.bookings.id, id));
     if (!prev) return c.json({ message: "Not found" }, 404);
 
@@ -855,9 +855,9 @@ export const bookingsRoutes = new Hono()
     return c.json({ booking: await enrichById(co, id) }, 200);
   })
   // assign a rider (admin) -> offers the job; tech must accept before en route
-  .post("/:id/assign", requireAuth, async (c) => {
+  .post("/:id/assign", requireAuth, jsonBody(AssignBody), async (c) => {
     const co = tenantId(c);
-    const { riderId } = await parseBody(c, AssignBody);
+    const { riderId } = c.req.valid("json");
     const id = c.req.param("id");
     // Tenant check: without this an admin could assign a technician belonging to
     // another company by passing their id — the booking update itself is
@@ -891,9 +891,9 @@ export const bookingsRoutes = new Hono()
     return c.json({ booking: await enrich(b) }, 200);
   })
   // tech declines an offered job -> back to dispatch queue, notify office
-  .post("/:id/decline", requireAuth, async (c) => {
+  .post("/:id/decline", requireAuth, jsonBody(DeclineBody), async (c) => {
     const id = c.req.param("id");
-    const { reason } = await parseBody(c, DeclineBody);
+    const { reason } = c.req.valid("json");
     const t = tx(c);
     const cur = await t.selectOne(schema.bookings, eq(schema.bookings.id, id));
     // Only an OFFERED job can be declined. Guards against a stale tap after the
@@ -917,9 +917,9 @@ export const bookingsRoutes = new Hono()
     return c.json({ booking: await enrich(b) }, 200);
   })
   // update status (rider/admin) -> triggers notifications + emails
-  .post("/:id/status", requireAuth, async (c) => {
+  .post("/:id/status", requireAuth, jsonBody(StatusBody), async (c) => {
     const co = tenantId(c);
-    const { status } = await parseBody(c, StatusBody);
+    const { status } = c.req.valid("json");
     const id = c.req.param("id");
     const b = await applyBookingStatus(co, id, status);
     if (!b) return c.json({ error: "not found" }, 404);
@@ -931,11 +931,11 @@ export const bookingsRoutes = new Hono()
    * re-dispatch it — it is NOT cancelled, and the customer is told nothing here
    * (office owns that conversation).
    */
-  .post("/:id/release", requireAuth, async (c) => {
+  .post("/:id/release", requireAuth, jsonBody(ReleaseBody), async (c) => {
     const co = tenantId(c);
     const u = c.get("user") as SessionUser;
     const id = c.req.param("id");
-    const { reason, note } = await parseBody(c, ReleaseBody);
+    const { reason, note } = c.req.valid("json");
     const t = tx(c);
     const cur = await t.selectOne(schema.bookings, eq(schema.bookings.id, id));
     if (!cur) return c.json({ message: "Not found" }, 404);
@@ -1052,11 +1052,11 @@ export const bookingsRoutes = new Hono()
    * applied immediately; inside it, it becomes a request the office approves.
    * services/change-requests.ts owns both paths so the audit trail is identical.
    */
-  .post("/:id/reschedule", requireAuth, async (c) => {
+  .post("/:id/reschedule", requireAuth, jsonBody(RescheduleRequestBody), async (c) => {
     const co = tenantId(c);
     const u = c.get("user") as SessionUser;
     const id = c.req.param("id");
-    const body = await parseBody(c, RescheduleRequestBody);
+    const body = c.req.valid("json");
     const b = await tx(c).selectOne(schema.bookings, eq(schema.bookings.id, id));
     if (!b) return c.json({ message: "Not found" }, 404);
     if (!isAdminRole(u.role) && b.customerId !== u.id)
@@ -1085,11 +1085,11 @@ export const bookingsRoutes = new Hono()
    * Customer ASKS to cancel. Never cancels anything — it files a pending request
    * for the office. See the /:id/cancel guard above for why.
    */
-  .post("/:id/cancel-request", requireAuth, async (c) => {
+  .post("/:id/cancel-request", requireAuth, jsonBody(CancelRequestBody), async (c) => {
     const co = tenantId(c);
     const u = c.get("user") as SessionUser;
     const id = c.req.param("id");
-    const body = await parseBody(c, CancelRequestBody);
+    const body = c.req.valid("json");
     const b = await tx(c).selectOne(schema.bookings, eq(schema.bookings.id, id));
     if (!b) return c.json({ message: "Not found" }, 404);
     if (!isAdminRole(u.role) && b.customerId !== u.id)
@@ -1106,10 +1106,10 @@ export const bookingsRoutes = new Hono()
     return c.json({ mode: "requested", request: r.request }, 201);
   })
   // review
-  .post("/:id/review", requireAuth, async (c) => {
+  .post("/:id/review", requireAuth, jsonBody(ReviewBody), async (c) => {
     const u = c.get("user") as SessionUser;
     const id = c.req.param("id");
-    const { rating, comment } = await parseBody(c, ReviewBody);
+    const { rating, comment } = c.req.valid("json");
     const t = tx(c);
     const b = await t.selectOne(schema.bookings, eq(schema.bookings.id, id));
     if (!b) return c.json({ message: "Not found" }, 404);
@@ -1215,13 +1215,13 @@ export const bookingsRoutes = new Hono()
   // Strokes are rendered to an SVG server-side and stored like any other job
   // asset. Drawing is sent as points rather than a rasterised image so the
   // mobile app needs no native canvas/webview dependency (ships over-the-air).
-  .post("/:id/signature", requireAuth, async (c) => {
+  .post("/:id/signature", requireAuth, jsonBody(SignatureBody), async (c) => {
     const id = c.req.param("id");
     const t = tx(c);
     const b = await t.selectOne(schema.bookings, eq(schema.bookings.id, id));
     if (!b) return c.json({ message: "Not found" }, 404);
 
-    const body = await parseBody(c, SignatureBody);
+    const body = c.req.valid("json");
     const strokes = body.strokes;
     const name = body.name;
     // guard against a runaway payload
@@ -1335,9 +1335,9 @@ export const bookingsRoutes = new Hono()
   // ── Checklist toggle (tech) ──────────────────────────────────────────────
   // PATCH /api/bookings/:id/checklist { index: number, done: boolean }
   // Tech can check/uncheck individual items. Stored in bookings.checklistState JSON.
-  .patch("/:id/checklist", requireAuth, async (c) => {
+  .patch("/:id/checklist", requireAuth, jsonBody(ChecklistBody), async (c) => {
     const id = c.req.param("id");
-    const { index, done } = await parseBody(c, ChecklistBody);
+    const { index, done } = c.req.valid("json");
     const t = tx(c);
     const b = await t.selectOne(schema.bookings, eq(schema.bookings.id, id));
     if (!b) return c.json({ message: "Not found" }, 404);
@@ -1350,12 +1350,12 @@ export const bookingsRoutes = new Hono()
     return c.json({ checklist }, 200);
   })
   // Tech saves a field note to the booking record (visible to office/dispatch)
-  .patch("/:id/driver-notes", requireAuth, async (c) => {
+  .patch("/:id/driver-notes", requireAuth, jsonBody(DriverNotesBody), async (c) => {
     const id = c.req.param("id");
     const t = tx(c);
     const b = await t.selectOne(schema.bookings, eq(schema.bookings.id, id));
     if (!b) return c.json({ message: "Not found" }, 404);
-    const { notes } = await parseBody(c, DriverNotesBody);
+    const { notes } = c.req.valid("json");
     await t.update(schema.bookings, { driverNotes: notes ?? "" }, eq(schema.bookings.id, id));
     return c.json({ ok: true }, 200);
   });

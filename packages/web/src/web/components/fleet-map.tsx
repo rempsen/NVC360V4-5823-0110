@@ -253,7 +253,7 @@ export function FleetMap({
         delete markers.current[id];
       }
     }
-    if (pts.length && !mapRef.current!._loaded_once) {
+    if (pts.length && !(mapRef.current as unknown as { _loaded_once?: boolean })._loaded_once) {
       map.fitBounds(L.latLngBounds(pts).pad(0.25));
       (mapRef.current as any)._loaded_once = true;
     }

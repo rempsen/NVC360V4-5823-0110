@@ -9,6 +9,7 @@ import { isAdminRole } from "../lib/permissions";
 import { toCsv, toPdf, buildJobPdf, fileResponse, tenantFilePrefix, type JobUnitLine, type JobPhoto } from "./export";
 import { companyTimeZone } from "../../services/company-tz";
 import { fmtInZone } from "../../shared/tz";
+import type { AppEnv } from "../env";
 
 type SessionUser = { id: string; role?: string; email: string; name: string };
 
@@ -245,7 +246,7 @@ async function logExport(cid: string, actor: SessionUser, format: string, count:
 /* -------------------------------------------------------------------------- */
 /*  Routes                                                                    */
 /* -------------------------------------------------------------------------- */
-export const jobSearchRoutes = new Hono()
+export const jobSearchRoutes = new Hono<AppEnv>()
   // facet options for the filter UI (services, technicians, statuses, regions, tags)
   .get("/facets", requireAuth, async (c) => {
     const u = c.get("user") as SessionUser;

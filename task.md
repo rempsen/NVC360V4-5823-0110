@@ -208,3 +208,15 @@ Found while testing, not from the read-through:
 - [ ] OPEN DECISION for Dan: no client SMS carries "Reply STOP to opt out". Twilio honours
       STOP at the carrier level so opt-out works, but the disclosure is missing.
       NOT live-verified: the SMS normalisation itself (no phone number authorised to text).
+
+## Housekeeping pass (Aug 17, 2026)
+Baseline: 264 `error TS` (tsconfig.app.json). TS2769 105, TS2339 58, TS7006 51, TS2353 30.
+- HYPOTHESIS REJECTED: Hono chain length / inference blowup. Splitting bookings.ts into 3
+  sub-chains changed the count by exactly 0. Reverted.
+- REAL ROOT CAUSE (Family A): every sub-router was `new Hono()` with no Variables generic, so
+  `c.get("user")` hit the `(key: never)` overload -> 105 bogus TS2769. Fixed by extracting the
+  `Variables` type out of api/index.ts into `src/api/env.ts` (+ `AppEnv`) and making all 47
+  routers `new Hono<AppEnv>()`. 264 -> 156 errors (all 105 TS2769 gone).
+- Remaining: TS2353 30 + TS2339 58 + TS7006 51 = Family B (web call sites, `apiFetch` union).
+- CSS backlog item CLOSED as non-issue: 128 kB raw / 19.5 kB gzipped, Tailwind v4 (no content globs).
+- Still TODO: mobile card layouts for work-orders + scheduler under `sm`; full gate set; commit.

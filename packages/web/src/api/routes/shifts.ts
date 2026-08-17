@@ -2,8 +2,9 @@ import { Hono } from "hono";
 import * as schema from "../database/schema";
 import { eq, and, gte, lte } from "drizzle-orm";
 import { requireAuth, requireAdmin, tx } from "../middleware/auth";
+import type { AppEnv } from "../env";
 
-export const shiftsRoutes = new Hono()
+export const shiftsRoutes = new Hono<AppEnv>()
   // list shifts/time-off, optional ?riderId & ?from & ?to (ms)
   .get("/", requireAuth, async (c) => {
     const riderId = c.req.query("riderId");

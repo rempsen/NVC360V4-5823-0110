@@ -17,6 +17,7 @@
  *   stripped instead, which also removes the mass-assignment surface.
  */
 import type { Context } from "hono";
+import type { Env, MiddlewareHandler } from "hono";
 import { z } from "zod";
 import { AppError } from "./errors";
 
@@ -349,3 +350,50 @@ export const idList = (label: string, max = 200) =>
   z
     .array(id(`${label} id`), { error: `${label} must be a list of ids` })
     .max(max, `${label} can't have more than ${max} entries`);
+
+/* -------------------------------------------------------------------------- */
+/*  Typed body middleware                                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Validate a JSON body AS MIDDLEWARE, so the route's RPC type knows it takes one.
+ *
+ * `parseBody(c, Schema)` validates correctly but is invisible to the type
+ * system: Hono infers a route's input from its middleware, so a route parsed
+ * this way is typed as accepting `{ param: ... }` only. Every client call then
+ * failed with "'json' does not exist in type '{ param: ... }'" — 30 real type
+ * errors sitting on routes that genuinely do accept a body.
+ *
+ * Behaviour is identical to `parseBody`: same zod schema, same `ValidationError`
+ * (so the global `onError` in src/api/index.ts produces the same 400 envelope
+ * with the same `fields` map), unknown keys still stripped. The one difference
+ * is a body that isn't valid JSON at all — Hono's validator answers that with
+ * its own 400 before the callback runs, instead of our `_: "Request body must be
+ * valid JSON"` field. Read the result with `c.req.valid("json")`.
+ */
+export const jsonBody = <S extends z.ZodTypeAny>(
+  schema: S,
+): MiddlewareHandler<Env, string, { in: { json: z.input<S> }; out: { json: z.output<S> } }> =>
+  async (c, next) => {
+    // Parsed and validated here rather than via hono's own `validator()` helper:
+    // that helper types the CLIENT's request body as the schema's OUTPUT, so an
+    // `isoDate()` field (accepts string | number, transforms to Date) would
+    // demand a `Date` in JSON. Declaring `in`/`out` separately keeps callers on
+    // the input type and handlers on the parsed output type.
+    let raw: unknown;
+    try {
+      raw = await c.req.json();
+    } catch {
+      throw new ValidationError(
+        { _: "Request body must be valid JSON" },
+        "Request body must be valid JSON",
+      );
+    }
+    const result = schema.safeParse(raw);
+    if (!result.success) {
+      const fields = toFieldMap(result.error);
+      throw new ValidationError(fields, summarize(fields));
+    }
+    c.req.addValidatedData("json", result.data as Record<string, unknown>);
+    await next();
+  };

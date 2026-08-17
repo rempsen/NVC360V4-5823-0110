@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
+import { ok } from "../../lib/api-ok";
 import { useAuth } from "../../hooks/use-auth";
 import { FullLoader } from "../../components/loader";
 import {
@@ -86,7 +87,7 @@ const ACTION_LABEL: Record<string, string> = {
 function useCatalog() {
   return useQuery({
     queryKey: ["team-catalog"],
-    queryFn: async () => (await api.team.catalog.$get()).json(),
+    queryFn: async () => ok(await api.team.catalog.$get()),
   });
 }
 
@@ -115,7 +116,7 @@ export function InternalTeamTab() {
 
   const team = useQuery({
     queryKey: ["team"],
-    queryFn: async () => (await api.team.$get()).json(),
+    queryFn: async () => ok(await api.team.$get()),
   });
 
   const create = useMutation({

@@ -5,6 +5,7 @@ import { DialogPanel } from "../../components/dialog-panel";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, apiHeaders } from "../../lib/api";
+import { ok } from "../../lib/api-ok";
 import { StatusBadge, PageWrap } from "../../components/brand";
 import { PageHead } from "./shell";
 import { fmtDate, money, PRIORITY_META, dismiss } from "../../lib/utils";
@@ -131,7 +132,7 @@ export default function AdminWorkOrders() {
 
   const facets = useQuery({
     queryKey: ["jobFacets"],
-    queryFn: async () => (await api.jobs.facets.$get()).json() as Promise<any>,
+    queryFn: async () => ok(await api.jobs.facets.$get()) as Promise<any>,
     staleTime: 60_000,
   });
 
@@ -1205,14 +1206,14 @@ function AssignModal({ booking, onClose, onDone }: any) {
   const { noun, nounPlural } = useWorkerNoun();
   const riders = useQuery({
     queryKey: ["riders"],
-    queryFn: async () => (await api.riders.$get()).json(),
+    queryFn: async () => ok(await api.riders.$get()),
   });
   const suggest = useQuery({
     queryKey: ["suggest", booking.id],
     queryFn: async () =>
-      (await api.ai["suggest-tech"][":bookingId"].$post({
+      ok(await api.ai["suggest-tech"][":bookingId"].$post({
         param: { bookingId: booking.id },
-      })).json(),
+      })),
   });
   const assign = useMutation({
     mutationFn: async (riderId: string) =>

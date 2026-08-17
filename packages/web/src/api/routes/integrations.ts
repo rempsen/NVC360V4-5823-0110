@@ -12,7 +12,8 @@ import { uploadToDrive, DEFAULT_BACKUP_FOLDER } from "../../services/google-driv
 import { loadDataset, toCsv, toXlsx, DATASET_COLUMNS } from "./export";
 import { audit } from "../lib/audit";
 import { z } from "zod";
-import { parseBody, shortText, longText, bool } from "../lib/validate";
+import { jsonBody, shortText, longText, bool } from "../lib/validate";
+import type { AppEnv } from "../env";
 
 /* -------------------------------------------------------------------------- */
 /*  Request bodies                                                            */
@@ -85,7 +86,7 @@ const popupResult = (ok: boolean, msg: string) => `<!doctype html><html><head><m
 <body><div class="card"><div class="ico">${ok ? "✅" : "⚠️"}</div><h1>${ok ? "Connected" : "Couldn’t connect"}</h1><p>${msg}</p></div>
 <script>try{window.opener&&window.opener.postMessage({type:"oauth",ok:${ok}},"*")}catch(e){}setTimeout(()=>window.close(),1400)</script></body></html>`;
 
-export const integrationsRoutes = new Hono()
+export const integrationsRoutes = new Hono<AppEnv>()
   .get("/", requireAuth, async (c) => {
     const rows = await tx(c).select(schema.integrations);
     const enriched = await Promise.all(rows.map(async (r) => ({
@@ -139,12 +140,12 @@ export const integrationsRoutes = new Hono()
 
   // Owner-only: save (upsert) an OAuth app's client id/secret for a provider.
   // Goes live immediately — no server restart needed.
-  .put("/app-credentials/:provider", requireAuth, async (c) => {
+  .put("/app-credentials/:provider", requireAuth, jsonBody(AppCredentialsBody), async (c) => {
     const u = c.get("user") as any;
     if (!isSuperadmin(u?.role)) return c.json({ message: "Forbidden" }, 403);
     const provider = c.req.param("provider") as ProviderId;
     if (!PROVIDERS[provider]) return c.json({ message: "Unsupported provider" }, 400);
-    const body = await parseBody(c, AppCredentialsBody);
+    const body = c.req.valid("json");
     const clientId = body.clientId;
     const clientSecretRaw = body.clientSecret;
     const enabled = body.enabled === undefined ? true : body.enabled;
@@ -236,9 +237,9 @@ export const integrationsRoutes = new Hono()
   // dataset ∈ work-orders | technicians | clients | invoices ; format ∈ csv | xlsx
   // Tenant-scoped end to end: the data comes from tx(c) (this company only) and
   // lands in the company's own connected Google Drive ("NVC360 Backups" folder).
-  .post("/drive/export", requireAuth, async (c) => {
+  .post("/drive/export", requireAuth, jsonBody(DriveExportBody), async (c) => {
     const t = tx(c);
-    const body = await parseBody(c, DriveExportBody);
+    const body = c.req.valid("json");
     const dataset = body.dataset;
     const format: "csv" | "xlsx" = body.format ?? "csv";
 
@@ -346,14 +347,14 @@ export const integrationsRoutes = new Hono()
   })
 
   // Update the Drive export folder settings (folder name + subfolder toggles).
-  .put("/drive/settings", requireAuth, async (c) => {
+  .put("/drive/settings", requireAuth, jsonBody(DriveSettingsBody), async (c) => {
     const t = tx(c);
     const drive = await t.selectOne(
       schema.integrations,
       eq(schema.integrations.provider, "google_drive"),
     );
     if (!drive) return c.json({ message: "Google Drive is not connected." }, 412);
-    const body = await parseBody(c, DriveSettingsBody);
+    const body = c.req.valid("json");
     let cfg: any = {};
     try { cfg = JSON.parse(drive.config || "{}"); } catch { cfg = {}; }
 

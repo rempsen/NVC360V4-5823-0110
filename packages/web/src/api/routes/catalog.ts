@@ -1,3 +1,4 @@
+import type { AppEnv } from "../env";
 import { Hono } from "hono";
 import * as schema from "../database/schema";
 import { eq } from "drizzle-orm";
@@ -7,7 +8,7 @@ import { audit } from "../lib/audit";
 import { putObject } from "../lib/storage";
 import { getIndustryPreset } from "../../services/industry-presets";
 import { z } from "zod";
-import { parseBody, money, shortText, longText, optText, id as idField } from "../lib/validate";
+import { jsonBody, money, shortText, longText, optText, id as idField } from "../lib/validate";
 
 /**
  * Catalog item shape. `PATCH /:id` previously did `set = { ...body }` with a
@@ -103,7 +104,7 @@ function normComponents(v: unknown): string {
   return "[]";
 }
 
-export const catalogRoutes = new Hono()
+export const catalogRoutes = new Hono<AppEnv>()
   // list (optionally filter by kind + search)
   .get("/", async (c) => {
     const kind = c.req.query("kind");
@@ -154,9 +155,9 @@ export const catalogRoutes = new Hono()
     rows.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
     return c.json({ categories: rows }, 200);
   })
-  .post("/categories", requireAdmin, async (c) => {
+  .post("/categories", requireAdmin, jsonBody(CategoryCreate), async (c) => {
     const t = tx(c);
-    const { name } = await parseBody(c, CategoryCreate);
+    const { name } = c.req.valid("json");
     const existing = await t.select(schema.formCategories);
     if (existing.some((r) => r.name.toLowerCase() === name.toLowerCase()))
       return c.json({ message: "A category with this name already exists." }, 409);
@@ -164,10 +165,10 @@ export const catalogRoutes = new Hono()
     const [row] = await t.insert(schema.formCategories, { name, sortOrder: maxOrder + 1 });
     return c.json({ category: row }, 201);
   })
-  .patch("/categories/:id", requireAdmin, async (c) => {
+  .patch("/categories/:id", requireAdmin, jsonBody(CategoryPatch), async (c) => {
     const t = tx(c);
     const id = c.req.param("id");
-    const body = await parseBody(c, CategoryPatch);
+    const body = c.req.valid("json");
     const patch: Record<string, unknown> = {};
     if (body.name) patch.name = body.name;
     if (body.sortOrder !== undefined) patch.sortOrder = body.sortOrder;
@@ -213,8 +214,8 @@ export const catalogRoutes = new Hono()
     return c.json({ item: dec }, 200);
   })
   // create
-  .post("/", requireAdmin, async (c) => {
-    const b = await parseBody(c, CatalogCreate);
+  .post("/", requireAdmin, jsonBody(CatalogCreate), async (c) => {
+    const b = c.req.valid("json");
     const [row] = await tx(c).insert(schema.catalogItems, {
       kind: b.kind ?? "product",
       name: b.name,
@@ -236,8 +237,8 @@ export const catalogRoutes = new Hono()
     return c.json({ item: dec }, 201);
   })
   // update
-  .patch("/:id", requireAdmin, async (c) => {
-    const b = await parseBody(c, CatalogPatch);
+  .patch("/:id", requireAdmin, jsonBody(CatalogPatch), async (c) => {
+    const b = c.req.valid("json");
     // The schema strips unknown keys, so the old delete-list is gone: id,
     // companyId, createdAt and the derived resolved* fields simply can't
     // arrive any more.

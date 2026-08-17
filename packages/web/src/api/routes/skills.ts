@@ -3,10 +3,11 @@ import * as schema from "../database/schema";
 import { eq } from "drizzle-orm";
 import { requireAuth, tx } from "../middleware/auth";
 import { isAdminRole } from "../lib/permissions";
+import type { AppEnv } from "../env";
 
 type SessionUser = { id: string; role?: string; email: string; name: string };
 
-export const skillsRoutes = new Hono()
+export const skillsRoutes = new Hono<AppEnv>()
   // list all skills in the company's library
   .get("/", requireAuth, async (c) => {
     const rows = await tx(c).select(schema.skillLibrary);

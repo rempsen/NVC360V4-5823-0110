@@ -1,3 +1,4 @@
+import type { AppEnv } from "../env";
 import { Hono } from "hono";
 import { db } from "../database";
 import { tdb } from "../database/tenant";
@@ -203,7 +204,7 @@ async function loadForm(companyId: string, slug: string) {
   return row || null;
 }
 
-export const publicFormsRoutes = new Hono()
+export const publicFormsRoutes = new Hono<AppEnv>()
   // ---- address autocomplete (no auth, rate-limited) ----
   // Mirrors /geo/autocomplete but available to unauthenticated public forms so
   // every address field on a public intake page can still auto-populate.
@@ -448,7 +449,7 @@ export const publicFormsRoutes = new Hono()
     if (ct.includes("multipart/form-data")) {
       const fd = await c.req.formData();
       for (const [k, v] of fd.entries()) {
-        if (v instanceof File) { if (k === "photo") photoFile = v; }
+        if (typeof v === "object" && v !== null) { if (k === "photo") photoFile = v as File; }
         else body[k] = v;
       }
     } else {
@@ -741,7 +742,7 @@ async function notifyRecipient(
   },
 ) {
   const esc = (s: string) => String(s || "").replace(/[<>&]/g, (m) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[m]!));
-  const rows: Array<[string, string]> = [
+  const rows: Array<[string, string]> = ([
     ["Name", d.name],
     ["Email", d.email],
     ["Phone", d.phone],
@@ -750,7 +751,7 @@ async function notifyRecipient(
     ["Preferred date", d.preferredAt],
     ["Notes", d.notes],
     ...d.custom.filter((c) => c.value).map((c) => [c.label, c.value] as [string, string]),
-  ].filter(([, v]) => v);
+  ] as Array<[string, string]>).filter(([, v]) => v);
   if (d.photoUrl) rows.push(["Photo", `<a href="${esc(d.photoUrl)}">${esc(d.photoUrl)}</a>`]);
 
   const brand = form.brandColor || "#06b6d4";

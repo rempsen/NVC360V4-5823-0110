@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { requireAuth } from "../middleware/auth";
 import { forwardGeocode } from "../../services/geocode";
+import type { AppEnv } from "../env";
 
 const KEY = process.env.GOOGLE_MAPS_API_KEY;
 
@@ -171,7 +172,7 @@ function decodePolyline(encoded: string): [number, number][] {
  * Server-side proxy for Google Places so the API key never reaches the browser.
  * Falls back to OpenStreetMap Nominatim if no key is configured.
  */
-export const geoRoutes = new Hono()
+export const geoRoutes = new Hono<AppEnv>()
   // autocomplete: ?q=423 main
   .get("/autocomplete", requireAuth, async (c) => {
     const q = c.req.query("q")?.trim();

@@ -1,3 +1,4 @@
+import type { AppEnv } from "../env";
 /**
  * Office queue for customer-initiated appointment changes.
  *
@@ -7,7 +8,7 @@
  */
 import { Hono } from "hono";
 import { requireAdmin, tenantId } from "../middleware/auth";
-import { parseBody, longText } from "../lib/validate";
+import { jsonBody, longText } from "../lib/validate";
 import { audit } from "../lib/audit";
 import { z } from "zod";
 import {
@@ -22,7 +23,7 @@ type SessionUser = { id: string; name?: string };
 const DecisionBody = z.object({ note: longText(2_000).optional().default("") });
 const STATUSES = ["pending", "approved", "declined", "applied", "withdrawn"] as const;
 
-export const changeRequestsRoutes = new Hono()
+export const changeRequestsRoutes = new Hono<AppEnv>()
   .get("/", requireAdmin, async (c) => {
     const raw = (c.req.query("status") || "").trim();
     // An unknown status silently returning everything looks like a broken filter;
@@ -39,10 +40,10 @@ export const changeRequestsRoutes = new Hono()
   .get("/count", requireAdmin, async (c) => {
     return c.json({ pendingCount: await pendingRequestCount(tenantId(c)) }, 200);
   })
-  .post("/:id/approve", requireAdmin, async (c) => {
+  .post("/:id/approve", requireAdmin, jsonBody(DecisionBody), async (c) => {
     const co = tenantId(c);
     const u = c.get("user") as SessionUser;
-    const { note } = await parseBody(c, DecisionBody);
+    const { note } = c.req.valid("json");
     const r = await approveRequest({
       companyId: co,
       requestId: c.req.param("id"),
@@ -67,10 +68,10 @@ export const changeRequestsRoutes = new Hono()
     });
     return c.json({ request: r.request }, 200);
   })
-  .post("/:id/decline", requireAdmin, async (c) => {
+  .post("/:id/decline", requireAdmin, jsonBody(DecisionBody), async (c) => {
     const co = tenantId(c);
     const u = c.get("user") as SessionUser;
-    const { note } = await parseBody(c, DecisionBody);
+    const { note } = c.req.valid("json");
     const r = await declineRequest({
       companyId: co,
       requestId: c.req.param("id"),

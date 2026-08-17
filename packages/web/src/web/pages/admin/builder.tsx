@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
+import { ok } from "../../lib/api-ok";
 import { FullLoader } from "../../components/loader";
 import { PageWrap } from "../../components/brand";
 import { PageHead } from "./shell";
@@ -65,7 +66,7 @@ export default function BuilderPage() {
   // add/rename/remove categories in one place and see it everywhere.
   const categoriesQ = useQuery({
     queryKey: ["form-categories"],
-    queryFn: async () => (await api.catalog.categories.$get()).json(),
+    queryFn: async () => ok(await api.catalog.categories.$get()),
   });
   const categoryOptions: string[] = ((categoriesQ.data as any)?.categories ?? []).map((c: any) => c.name);
   const defaultCategory = categoryOptions[0] ?? "General";
@@ -81,7 +82,7 @@ export default function BuilderPage() {
 
   const templates = useQuery({
     queryKey: ["templates"],
-    queryFn: async () => (await api.templates.$get()).json(),
+    queryFn: async () => ok(await api.templates.$get()),
   });
 
   // Once the shared category list resolves, adopt its default for a fresh
@@ -138,9 +139,9 @@ export default function BuilderPage() {
         })),
       };
       if (editingId) {
-        return (await api.templates[":id"].$patch({ param: { id: editingId }, json: payload })).json();
+        return ok(await api.templates[":id"].$patch({ param: { id: editingId }, json: payload }));
       }
-      return (await api.templates.$post({ json: payload })).json();
+      return ok(await api.templates.$post({ json: payload }));
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["templates"] });
@@ -150,7 +151,7 @@ export default function BuilderPage() {
 
   const del = useMutation({
     mutationFn: async (id: string) =>
-      (await api.templates[":id"].$delete({ param: { id } })).json(),
+      ok(await api.templates[":id"].$delete({ param: { id } })),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["templates"] });
       setDelId(null);

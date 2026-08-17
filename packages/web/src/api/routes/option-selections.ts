@@ -13,7 +13,8 @@ import { eq } from "drizzle-orm";
 import { buildUnitLineItem, parseLineItems } from "../../shared/catalog";
 import { recomputeBooking } from "../../services/billing";
 import { z } from "zod";
-import { parseBody, id as idField, shortText } from "../lib/validate";
+import { jsonBody, id as idField, shortText } from "../lib/validate";
+import type { AppEnv } from "../env";
 
 /**
  * PUBLIC, token-only body. Prices are already resolved server-side from the
@@ -40,7 +41,7 @@ async function resolveByToken(token: string) {
     .from(schema.bookings)
     .where(eq(schema.bookings.publicToken, token));
   if (!b) return null;
-  if (b.tokenExpiresAt && b.tokenExpiresAt < Date.now()) return null;
+  if (b.tokenExpiresAt && b.tokenExpiresAt.getTime() < Date.now()) return null;
   return b;
 }
 
@@ -52,7 +53,7 @@ function sortByOrder<T extends { sortOrder: number; name?: string }>(rows: T[]):
  *  resubmit can cleanly replace the prior set without touching other lines. */
 const OPT_LINE_PREFIX = "opt_";
 
-export const optionSelectionsRoutes = new Hono()
+export const optionSelectionsRoutes = new Hono<AppEnv>()
   .get("/:token", async (c) => {
     const token = c.req.param("token");
     const b = await resolveByToken(token);
@@ -101,12 +102,12 @@ export const optionSelectionsRoutes = new Hono()
       locked: existing.length > 0 && existing.every((s) => !!s.signatureName),
     }, 200);
   })
-  .post("/:token", async (c) => {
+  .post("/:token", jsonBody(SubmitBody), async (c) => {
     const token = c.req.param("token");
     const b = await resolveByToken(token);
     if (!b) return c.json({ message: "Not found" }, 404);
 
-    const { selections, signatureName } = await parseBody(c, SubmitBody);
+    const { selections, signatureName } = c.req.valid("json");
 
     const t = tdb(b.companyId);
     const cats = new Map((await t.select(schema.optionCategories)).map((x) => [x.id, x]));

@@ -4,7 +4,8 @@ import { eq, and, inArray } from "drizzle-orm";
 import { requireAuth, requireAdmin, tx } from "../middleware/auth";
 import { audit } from "../lib/audit";
 import { z } from "zod";
-import { parseBody, shortText, longText, sortOrder, bool, stringList } from "../lib/validate";
+import { jsonBody, shortText, longText, sortOrder, bool, stringList } from "../lib/validate";
+import type { AppEnv } from "../env";
 
 type SessionUser = { id: string; name?: string };
 
@@ -77,7 +78,7 @@ const ValuesBody = z.object({
   ),
 });
 
-export const customFieldsRoutes = new Hono()
+export const customFieldsRoutes = new Hono<AppEnv>()
   // list field definitions for an entity type: client | tech | work_order
   .get("/", requireAuth, async (c) => {
     const entityQ = c.req.query("entity");
@@ -86,9 +87,9 @@ export const customFieldsRoutes = new Hono()
     if (entityQ) rows = rows.filter((f) => f.entity === entityQ);
     return c.json({ fields: rows }, 200);
   })
-  .post("/", requireAdmin, async (c) => {
+  .post("/", requireAdmin, jsonBody(FieldCreate), async (c) => {
     const me = c.get("user") as SessionUser;
-    const b = await parseBody(c, FieldCreate);
+    const b = c.req.valid("json");
     const existing = await tx(c).select(
       schema.customFields,
       eq(schema.customFields.entity, b.entity),
@@ -106,9 +107,9 @@ export const customFieldsRoutes = new Hono()
     await audit({ actorId: me?.id, actorName: me?.name, action: "create", entityType: "custom_field", entityId: field.id, summary: `Added field "${b.label}" to ${b.entity}` });
     return c.json({ field }, 201);
   })
-  .put("/:id", requireAdmin, async (c) => {
+  .put("/:id", requireAdmin, jsonBody(FieldPatch), async (c) => {
     const id = c.req.param("id");
-    const b = await parseBody(c, FieldPatch);
+    const b = c.req.valid("json");
     const { options, ...rest } = b;
     const patch: Record<string, unknown> = { ...rest };
     if (options !== undefined) patch.options = JSON.stringify(options);
@@ -148,10 +149,10 @@ export const customFieldsRoutes = new Hono()
     return c.json({ values: map }, 200);
   })
   // upsert values for an entity instance
-  .put("/values/:type/:id", requireAuth, async (c) => {
+  .put("/values/:type/:id", requireAuth, jsonBody(ValuesBody), async (c) => {
     const entityTypeParam = c.req.param("type");
     const entityId = c.req.param("id");
-    const { values } = await parseBody(c, ValuesBody);
+    const { values } = c.req.valid("json");
     const fieldIds = Object.keys(values);
     if (fieldIds.length > 200)
       return c.json({ message: "Too many fields in one save", fields: { values: "Too many fields" } }, 400);

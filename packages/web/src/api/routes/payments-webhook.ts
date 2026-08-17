@@ -6,13 +6,14 @@ import { getStripe, stripeEnabled, STRIPE_WEBHOOK_SECRET, fromMinor } from "../.
 import { syncInvoiceFromIntent, ledger } from "./payments";
 import { log } from "../lib/logger";
 import type Stripe from "stripe";
+import type { AppEnv } from "../env";
 
 /**
  * Stripe webhook — mounted BEFORE json parsing/auth in api/index.ts so we can
  * read the raw request body for signature verification. Replay-safe via the
  * idempotency_keys table (keyed on the Stripe event id).
  */
-export const paymentsWebhookRoutes = new Hono().post("/", async (c) => {
+export const paymentsWebhookRoutes = new Hono<AppEnv>().post("/", async (c) => {
   if (!stripeEnabled) return c.json({ received: false, reason: "stripe disabled" }, 200);
 
   const sig = c.req.header("stripe-signature");

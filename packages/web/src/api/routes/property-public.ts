@@ -17,6 +17,7 @@ import * as schema from "../database/schema";
 import { eq, and } from "drizzle-orm";
 import { trackLimiter } from "../lib/rate-limit";
 import { trackingUrl } from "../../services/sms";
+import type { AppEnv } from "../env";
 
 async function resolvePropertyByToken(token: string) {
   const [p] = await db
@@ -26,7 +27,7 @@ async function resolvePropertyByToken(token: string) {
   return p ?? null;
 }
 
-export const propertyPublicRoutes = new Hono()
+export const propertyPublicRoutes = new Hono<AppEnv>()
   /**
    * GET /api/property/:token
    * Full service history for one property.

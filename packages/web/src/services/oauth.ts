@@ -68,7 +68,7 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
     id: "quickbooks", name: "QuickBooks", category: "Accounting", envPrefix: "QUICKBOOKS",
     authUrl: "https://appcenter.intuit.com/connect/oauth2", tokenUrl: "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
     scopes: ["com.intuit.quickbooks.accounting", "openid", "email"], basicAuth: true,
-    accountInfo: async (t, raw) => ({ label: "QuickBooks Company", externalId: raw?.realmId ?? "" }),
+    accountInfo: async (_t, raw) => ({ label: "QuickBooks Company", externalId: raw?.realmId ?? "" }),
   },
   xero: {
     id: "xero", name: "Xero", category: "Accounting", envPrefix: "XERO",

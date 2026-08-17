@@ -1,6 +1,12 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
+import type { InferRequestType } from "hono/client";
+
+/** Form shapes sourced from the routes, so a bad scope/entity can't compile. */
+type TagForm = InferRequestType<typeof api.tags.$post>["json"];
+type FieldEntity = InferRequestType<typeof api["custom-fields"]["$post"]>["json"]["entity"];
+type FieldType = NonNullable<InferRequestType<typeof api["custom-fields"]["$post"]>["json"]["type"]>;
 import { FullLoader } from "../../components/loader";
 import { PageWrap } from "../../components/brand";
 import { PageHead } from "./shell";
@@ -8,13 +14,13 @@ import { Modal, Field, inputCls, BtnPrimary, BtnGhost, ConfirmModal } from "../.
 import { Plus, Trash2, Tag as TagIcon, ListPlus, GripVertical } from "lucide-react";
 import { useWorkerNoun, useCustomerNoun, useJobNoun } from "../../lib/use-brand";
 
-const SCOPES = ["both", "client", "tech"];
-const ENTITIES = [
+const SCOPES: Array<NonNullable<TagForm["scope"]>> = ["both", "client", "tech"];
+const ENTITIES: Array<{ id: FieldEntity; label: string }> = [
   { id: "client", label: "Clients" },
   { id: "tech", label: "Technicians" },
   { id: "work_order", label: "Work Orders" },
 ];
-const FIELD_TYPES = [
+const FIELD_TYPES: FieldType[] = [
   "text", "textarea", "number", "date", "select", "checkbox", "file", "signature", "payment", "note",
 ];
 
@@ -25,12 +31,20 @@ export default function AdminTags() {
   const { nounPlural: jobNounPlural } = useJobNoun();
   const entityLabel = (id: string) => (id === "tech" ? nounPlural : id === "client" ? customerNounPlural : id === "work_order" ? jobNounPlural : ENTITIES.find((e) => e.id === id)?.label ?? id);
   const [tagModal, setTagModal] = useState(false);
-  const [tagForm, setTagForm] = useState({ label: "", color: "#06B6D4", scope: "both" });
+  const [tagForm, setTagForm] = useState<TagForm>({ label: "", color: "#06B6D4", scope: "both" });
   const [delTag, setDelTag] = useState<string | null>(null);
 
-  const [entity, setEntity] = useState("client");
+  const [entity, setEntity] = useState<FieldEntity>("client");
   const [fieldModal, setFieldModal] = useState(false);
-  const [fieldForm, setFieldForm] = useState({
+  const [fieldForm, setFieldForm] = useState<{
+    label: string;
+    type: FieldType;
+    section: string;
+    placeholder: string;
+    required: boolean;
+    /** Comma-separated in the form; split into an array before submit. */
+    options: string;
+  }>({
     label: "", type: "text", section: "General", placeholder: "", required: false, options: "",
   });
   const [delField, setDelField] = useState<string | null>(null);
@@ -159,7 +173,7 @@ export default function AdminTags() {
               </div>
             </Field>
             <Field label="Applies to">
-              <select className={inputCls} value={tagForm.scope} onChange={(e) => setTagForm({ ...tagForm, scope: e.target.value })}>
+              <select className={inputCls} value={tagForm.scope} onChange={(e) => setTagForm({ ...tagForm, scope: e.target.value as TagForm["scope"] })}>
                 {SCOPES.map((s) => <option key={s} value={s}>{s === "both" ? "Both" : s === "client" ? customerNounPlural : nounPlural}</option>)}
               </select>
             </Field>
@@ -176,7 +190,7 @@ export default function AdminTags() {
           <Field label="Field label"><input aria-label="Gate code, Allergy notes…" className={inputCls} value={fieldForm.label} onChange={(e) => setFieldForm({ ...fieldForm, label: e.target.value })} placeholder="Gate code, Allergy notes…" /></Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Type">
-              <select className={inputCls} value={fieldForm.type} onChange={(e) => setFieldForm({ ...fieldForm, type: e.target.value })}>
+              <select className={inputCls} value={fieldForm.type} onChange={(e) => setFieldForm({ ...fieldForm, type: e.target.value as FieldType })}>
                 {FIELD_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
             </Field>

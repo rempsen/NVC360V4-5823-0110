@@ -6,6 +6,7 @@ import { tdb, type TenantDb } from "../database/tenant";
 import { inPoly } from "../../shared/zone-utils";
 import { companyTimeZone } from "../../services/company-tz";
 import { namedDayBounds, zonedDayKey } from "../../shared/tz";
+import type { AppEnv } from "../env";
 
 /* ---------------------------------------------------------------------------
  * Reports engine — aggregated, date-range + filter aware.
@@ -83,7 +84,7 @@ async function techNameMap(t: TenantDb) {
   return { map, riders, users, uById };
 }
 
-export const reportsRoutes = new Hono()
+export const reportsRoutes = new Hono<AppEnv>()
   // dropdown options for the report filter bar
   .get("/meta/filters", requireAuth, async (c) => {
     const t = tdb(tenantId(c));

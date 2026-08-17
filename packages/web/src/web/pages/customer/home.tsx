@@ -2,6 +2,7 @@ import { Link } from "wouter";
 import { StoredImage } from "../../components/stored-image";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../lib/api";
+import { ok } from "../../lib/api-ok";
 import { useAuth } from "../../hooks/use-auth";
 import { StatusBadge } from "../../components/brand";
 import { money } from "../../lib/utils";
@@ -27,11 +28,11 @@ export default function CustomerHome() {
   const [q, setQ] = useState("");
   const services = useQuery({
     queryKey: ["services"],
-    queryFn: async () => (await api.services.$get()).json(),
+    queryFn: async () => ok(await api.services.$get()),
   });
   const bookings = useQuery({
     queryKey: ["bookings"],
-    queryFn: async () => (await api.bookings.$get()).json(),
+    queryFn: async () => ok(await api.bookings.$get()),
   });
 
   // "onsite" and "paused" are real statuses, and this hand-written list left them

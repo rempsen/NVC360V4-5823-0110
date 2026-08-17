@@ -1,3 +1,4 @@
+import type { AppEnv } from "../env";
 /**
  * SUPERADMIN — B2B tenant provisioning & registry.
  *
@@ -36,7 +37,7 @@ import {
 } from "../../services/email-domains";
 
 import { z } from "zod";
-import {
+import { jsonBody,
   parseBody, shortText, longText, optText, hexColor, outboundUrl, imageRef, email as emailField, phone,
 } from "../lib/validate";
 
@@ -377,7 +378,7 @@ async function ensureUser(opts: {
   return { id: u.id, reused: false };
 }
 
-export const superadminRoutes = new Hono()
+export const superadminRoutes = new Hono<AppEnv>()
   // ---- list all tenants -------------------------------------------------
   .get("/companies", requireSuperadmin, async (c) => {
     const rows = await db.select().from(schema.companies);
@@ -398,8 +399,8 @@ export const superadminRoutes = new Hono()
   // ---- AI brand scout: scrape a website -> structured brand proposal ----
   // No DB writes. The admin reviews/edits the result, then submits it as the
   // `brand` payload on POST /companies (or PATCH for an existing tenant).
-  .post("/brand-scout", requireSuperadmin, async (c) => {
-    const b = await parseBody(c, BrandScoutBody);
+  .post("/brand-scout", requireSuperadmin, jsonBody(BrandScoutBody), async (c) => {
+    const b = c.req.valid("json");
     const website = b.website;
     // companyId only used to namespace the hosted logo object; may not exist
     // as a tenant yet (we're onboarding). Fall back to a derived slug.
@@ -494,11 +495,11 @@ export const superadminRoutes = new Hono()
   })
 
   // ---- provision a new tenant + its admin & manager users ---------------
-  .post("/companies", requireSuperadmin, async (c) => {
+  .post("/companies", requireSuperadmin, jsonBody(CompanyCreateBody), async (c) => {
     const me = c.get("user") as SessionUser;
     // Every field is validated up front, so a request with a bad admin email
     // AND a colliding slug now reports both problems instead of only the slug.
-    const b = await parseBody(c, CompanyCreateBody);
+    const b = c.req.valid("json");
 
     const name = b.name;
 

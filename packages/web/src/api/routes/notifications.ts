@@ -3,10 +3,11 @@ import { db } from "../database";
 import * as schema from "../database/schema";
 import { eq, desc, and } from "drizzle-orm";
 import { requireAuth, tenantId } from "../middleware/auth";
+import type { AppEnv } from "../env";
 
 type SessionUser = { id: string };
 
-export const notificationsRoutes = new Hono()
+export const notificationsRoutes = new Hono<AppEnv>()
   .get("/", requireAuth, async (c) => {
     const u = c.get("user") as SessionUser;
     const rows = await db

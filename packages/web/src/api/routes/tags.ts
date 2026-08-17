@@ -4,7 +4,8 @@ import { eq, and, inArray } from "drizzle-orm";
 import { requireAuth, requireAdmin, tx } from "../middleware/auth";
 import { audit } from "../lib/audit";
 import { z } from "zod";
-import { parseBody, shortText, hexColor, idList } from "../lib/validate";
+import { jsonBody, shortText, hexColor, idList } from "../lib/validate";
+import type { AppEnv } from "../env";
 
 type SessionUser = { id: string; name?: string };
 
@@ -55,7 +56,7 @@ const TagPatch = z
 
 const EntityTagsBody = z.object({ tagIds: idList("Tags", 100) });
 
-export const tagsRoutes = new Hono()
+export const tagsRoutes = new Hono<AppEnv>()
   // list all tags (optional ?scope=client|tech)
   .get("/", requireAuth, async (c) => {
     const scopeQ = c.req.query("scope");
@@ -65,9 +66,9 @@ export const tagsRoutes = new Hono()
       : rows;
     return c.json({ tags: filtered }, 200);
   })
-  .post("/", requireAdmin, async (c) => {
+  .post("/", requireAdmin, jsonBody(TagCreate), async (c) => {
     const me = c.get("user") as SessionUser;
-    const b = await parseBody(c, TagCreate);
+    const b = c.req.valid("json");
     const [tag] = await tx(c).insert(schema.tags, {
       label: b.label,
       color: b.color || "#06B6D4",
@@ -76,9 +77,9 @@ export const tagsRoutes = new Hono()
     await audit({ actorId: me?.id, actorName: me?.name, action: "create", entityType: "tag", entityId: tag.id, summary: `Created tag "${b.label}"` });
     return c.json({ tag }, 201);
   })
-  .put("/:id", requireAdmin, async (c) => {
+  .put("/:id", requireAdmin, jsonBody(TagPatch), async (c) => {
     const id = c.req.param("id");
-    const b = await parseBody(c, TagPatch);
+    const b = c.req.valid("json");
     const [tag] = await tx(c).update(schema.tags, b, eq(schema.tags.id, id));
     if (!tag) return c.json({ message: "Tag not found" }, 404);
     return c.json({ tag }, 200);
@@ -112,11 +113,11 @@ export const tagsRoutes = new Hono()
     return c.json({ tags: tagRows }, 200);
   })
   // set the full tag list for an entity (replace)
-  .put("/entity/:type/:id", requireAdmin, async (c) => {
+  .put("/entity/:type/:id", requireAdmin, jsonBody(EntityTagsBody), async (c) => {
     const type = entityType.safeParse(c.req.param("type"));
     if (!type.success) return c.json({ message: "Unknown record type" }, 404);
     const entityId = c.req.param("id");
-    const { tagIds } = await parseBody(c, EntityTagsBody);
+    const { tagIds } = c.req.valid("json");
     const t = tx(c);
     // Every id must be a real tag in this tenant. Validated BEFORE the delete
     // so a bad payload can't wipe the record's existing tags on its way to a

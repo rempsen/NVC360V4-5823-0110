@@ -4,6 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { requireAuth, tx } from "../middleware/auth";
 import { audit } from "../lib/audit";
 import { putObject, deleteObject, signedGetUrl } from "../lib/storage";
+import type { AppEnv } from "../env";
 
 type SessionUser = { id: string; name?: string };
 
@@ -13,7 +14,7 @@ const ALLOWED = [
   "application/pdf",
 ];
 
-export const uploadsRoutes = new Hono()
+export const uploadsRoutes = new Hono<AppEnv>()
   // list attachments for an entity
   .get("/:type/:id", requireAuth, async (c) => {
     const entityType = c.req.param("type");
