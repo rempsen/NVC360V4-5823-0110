@@ -244,3 +244,26 @@ Baseline: 264 `error TS` (tsconfig.app.json). TS2769 105, TS2339 58, TS7006 51, 
   week/month/day (that whole layout was previously never loaded by the sweep), and asserts no
   interactive element under 40px tall on /admin/scheduler + /admin/work-orders at 390px.
   Both additions sabotage-checked (broke each one, watched the sweep FAIL, restored).
+
+## Sentry alert from the sandbox (Aug 17, 2026)
+Dan received a Sentry email at 5:18 PM CDT: "Error: SABOTAGE", project react-native,
+environment production, url http://localhost:4200/admin/scheduler, HeadlessChrome.
+- NOT an app fault. That was the deliberate crash injected minutes earlier to prove the
+  crash-sweep calendar check could actually fail. Removed immediately after.
+- But it revealed two real config bugs, both now fixed:
+  1. `import.meta.env.DEV` was the only guard, and `bunx vite build` in the sandbox is a
+     production bundle by that measure — so Sentry was LIVE on localhost. New
+     `src/web/lib/sentry-target.ts` decides on the HOSTNAME instead: loopback, RFC1918,
+     *.runable.site and other preview suffixes never report. 10 unit tests.
+  2. environment was a flat "production" for any non-dev build. Now derived: production only
+     for the real hosts, otherwise "staging"; staging./preview./dev. subdomains are staging
+     even under a production domain. VITE_SENTRY_ENV can override the label but can NOT turn
+     reporting on for a local host.
+- Verified live end-to-end with the SAME build and a real injected crash, Sentry requests
+  counted but blocked so nothing left the sandbox: localhost -> 0 Sentry calls,
+  uberize.ai (via chrome --host-resolver-rules MAP) -> 1 Sentry call.
+- STILL OUTSTANDING FOR DAN (unchanged, pre-existing): the web app reports into the
+  react-native Sentry project because VITE_SENTRY_DSN points at project 4511819865194496.
+  Every web event is tagged app=nvc360-web/platform=web, but a separate nvc360-web project
+  is still the right fix. Also still needs VITE_SENTRY_DSN/SENTRY_DSN set in Runable publish
+  settings, and the SABOTAGE + REACT-NATIVE-9 issues resolved/ignored in Sentry.

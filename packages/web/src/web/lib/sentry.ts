@@ -18,9 +18,9 @@
  */
 import * as Sentry from "@sentry/react";
 import { isExpectedApiError, isHandledLocally } from "./api-error";
+import { sentryTarget } from "./sentry-target";
 
 const DSN = import.meta.env.VITE_SENTRY_DSN as string | undefined;
-const ENV = (import.meta.env.VITE_SENTRY_ENV as string | undefined) ?? (import.meta.env.DEV ? "development" : "production");
 
 let enabled = false;
 
@@ -30,11 +30,22 @@ export function sentryEnabled() {
 }
 
 export function initSentry() {
-  if (!DSN || import.meta.env.DEV) return;
+  if (!DSN) return;
+
+  // `import.meta.env.DEV` alone was not enough. A `vite build` in the sandbox
+  // is a production bundle by that measure, so a deliberately-injected test
+  // crash on localhost was reported as a production issue and emailed out.
+  // The host decides — see sentry-target.ts.
+  const target = sentryTarget(
+    typeof window === "undefined" ? "" : window.location.hostname,
+    import.meta.env.DEV,
+    import.meta.env.VITE_SENTRY_ENV as string | undefined,
+  );
+  if (!target.report) return;
 
   Sentry.init({
     dsn: DSN,
-    environment: ENV,
+    environment: target.environment,
     // The web app and the driver app currently report into the same Sentry
     // project, so every event has to say which platform it came from —
     // otherwise a browser error looks like a React Native crash.
