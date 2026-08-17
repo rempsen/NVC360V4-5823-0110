@@ -279,3 +279,44 @@ environment production, url http://localhost:4200/admin/scheduler, HeadlessChrom
   visual confirmation needs a dev client / TestFlight build (cross-company Earnings 774a0f1
   is also waiting on an EAS iOS build — same build can carry this).
 - Next: item 2 (customer self-serve cancel + reschedule on the tracking page).
+
+## Item 3 DONE — booking slots grouped by day (day-then-time picker)
+
+The problem: /app/book/:id rendered nextSlots() flat — up to 25 buttons reading
+"Mon, Aug 18, 9 AM", "Mon, Aug 18, 11 AM"… where the only thing that differs between
+rows (the DAY) sat in the middle of the label. Right time, wrong day is the most
+expensive booking mistake there is, because the truck rolls.
+
+- NEW src/shared/slot-days.ts (pure): groupSlotsByDay() + resolveSelectedDay().
+  Grouping is on the COMPANY's clock via zonedDayKey, so a 7 PM Winnipeg slot is not
+  rolled into tomorrow for a customer sitting in Vancouver. Days carry key (YYYY-MM-DD),
+  a full label, a short weekday + day number for the chip, and "Today"/"Tomorrow" only
+  when true. Malformed slot values are dropped, not rendered as "Invalid Date".
+- NEW src/web/components/slot-picker.tsx: day chip row (scrolls sideways on a phone) then
+  that day's times. Times are times only — the date is written once, in the day row.
+  44px minimum tap targets; day row is a real tablist with the full date on aria-label.
+- Used by BOTH customer time pickers: pages/customer/book.tsx and the reschedule modal in
+  components/appointment-change.tsx, whose private groupByDay() is deleted. One copy of
+  "which day is this slot on" for both screens.
+- 14 unit tests, confirmed red before the module existed.
+
+REAL BUG the live check caught (unit tests were green): resolveSelectedDay originally let an
+already-picked slot outrank the tapped day, so once a customer picked a time the day row
+went DEAD — tapping Friday snapped back to Tuesday. Precedence is now tapped day > picked
+slot's day > first open day, with a regression test naming the symptom.
+
+Also fixed a check that passed on that broken build: every day offers the same clock times
+(9/11/1/3/5), so comparing the time LABELS across days proves nothing. It asserts the day
+HEADING changes instead.
+
+- NEW slot-picker-verify.py (14 live assertions, real Chrome at 390px, real server): no dates
+  on time buttons, one day on screen, day tap moves the picker, selection doesn't bleed across
+  days, returning to a day keeps the pick, >=44px targets, booking still submits, no console
+  errors. Sabotage-checked: reverted the precedence fix -> FAILED 2 -> restored -> ALL CLEAN.
+- Reschedule modal verified live too (day row, day switching, time select, confirm enabled).
+- WRITES REAL ROWS: the portal is role-gated and the shared logins are riders/admins, so it
+  signs up a throwaway customer and books a job. 4 probe accounts + their bookings, invoices,
+  job_events, notifications, sessions, accounts and 1 property were deleted afterwards and the
+  counts re-selected at 0. Cleanup SQL is in the script header.
+- Gates: 589 tests / tsc 0 / oxlint 0 / vite build ok / crash-sweep 50/50 ALL CLEAN.
+- Next: item 4 (full driver-app audit pass, fix findings).

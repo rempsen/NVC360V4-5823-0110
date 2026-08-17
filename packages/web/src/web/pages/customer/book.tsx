@@ -9,6 +9,7 @@ import { money } from "../../lib/utils";
 import { AddressAutocomplete } from "../../components/address-autocomplete";
 import { useBrand } from "../../lib/use-brand";
 import { nextSlots } from "../../../shared/booking-slots";
+import { SlotPicker } from "../../components/slot-picker";
 import {
   Calendar, Clock, MapPin, MessageSquare, ArrowLeft, CheckCircle2, Star,
 } from "lucide-react";
@@ -169,22 +170,16 @@ export default function BookPage() {
           </div>
 
           {/* date/time */}
+          {/* Day first, then time. A flat list of every slot put the date in the
+              middle of 25 near-identical buttons, which is how customers ended
+              up booked on the right hour of the wrong day. */}
           <Section icon={Calendar} title="Choose a time">
-            <div className="flex flex-wrap gap-2">
-              {slots.map((s) => (
-                <button
-                  key={s.value}
-                  onClick={() => setSlot(s.value)}
-                  className={`rounded-xl border-2 px-3.5 py-2 text-sm font-medium transition ${
-                    slot === s.value
-                      ? "border-brand bg-brand/5 text-cyan-glow"
-                      : "border-white/10 bg-ink-3 text-slate-300 hover:border-white/20"
-                  }`}
-                >
-                  {s.label}
-                </button>
-              ))}
-            </div>
+            <SlotPicker
+              slots={slots}
+              timezone={brand.timezone}
+              value={slot}
+              onChange={setSlot}
+            />
           </Section>
 
           {/* address */}

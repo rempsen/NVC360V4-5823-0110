@@ -20,10 +20,10 @@ import { api } from "../lib/api";
 import { Modal, Field, inputCls, BtnPrimary, BtnGhost } from "./modal";
 import { useBrand } from "../lib/use-brand";
 import { nextSlots } from "../../shared/booking-slots";
+import { SlotPicker } from "./slot-picker";
 import { approvalNoteFor, type ChangeMode } from "../../shared/change-policy";
 import { fmtAppointment } from "../../shared/fmt-appointment";
 import { safeTimeZone } from "../../shared/tz";
-import { cn } from "../lib/utils";
 import { CalendarClock, XCircle, Clock, CheckCircle2, Phone } from "lucide-react";
 
 type PolicyState = {
@@ -42,28 +42,6 @@ type PolicyState = {
   } | null;
 };
 
-/** Group the flat slot list by calendar day on the COMPANY's clock. */
-function groupByDay(slots: { label: string; value: string }[], tz: string) {
-  const dayFmt = new Intl.DateTimeFormat("en-US", {
-    weekday: "long", month: "short", day: "numeric", timeZone: tz,
-  });
-  const timeFmt = new Intl.DateTimeFormat("en-US", {
-    hour: "numeric", minute: "2-digit", timeZone: tz,
-  });
-  const days: { day: string; times: { label: string; value: string }[] }[] = [];
-  for (const s of slots) {
-    const d = new Date(s.value);
-    const day = dayFmt.format(d);
-    let bucket = days.find((x) => x.day === day);
-    if (!bucket) {
-      bucket = { day, times: [] };
-      days.push(bucket);
-    }
-    bucket.times.push({ label: timeFmt.format(d), value: s.value });
-  }
-  return days;
-}
-
 export function AppointmentChangeCard({ bookingId }: { bookingId: string }) {
   const qc = useQueryClient();
   const brand = useBrand();
@@ -80,7 +58,7 @@ export function AppointmentChangeCard({ bookingId }: { bookingId: string }) {
       (await (api as any).bookings[":id"]["change-policy"].$get({ param: { id: bookingId } })).json(),
   });
 
-  const slots = useMemo(() => groupByDay(nextSlots(tz), tz), [tz]);
+  const slots = useMemo(() => nextSlots(tz), [tz]);
 
   const reset = () => {
     setOpen(null);
@@ -239,31 +217,15 @@ export function AppointmentChangeCard({ bookingId }: { bookingId: string }) {
           </>
         }
       >
-        <div className="max-h-[46vh] space-y-4 overflow-y-auto pr-1">
-          {slots.map((d) => (
-            <div key={d.day}>
-              <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-500">{d.day}</p>
-              <div className="flex flex-wrap gap-2">
-                {d.times.map((s) => (
-                  <button
-                    key={s.value}
-                    type="button"
-                    aria-pressed={slot === s.value}
-                    onClick={() => setSlot(s.value)}
-                    className={cn(
-                      "min-h-[40px] rounded-lg border px-3 py-2 text-sm font-medium transition",
-                      slot === s.value
-                        ? "border-brand bg-brand/15 text-white"
-                        : "border-white/10 text-slate-300 hover:bg-white/5",
-                    )}
-                  >
-                    {s.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
+        {/* Same day-then-time picker as the booking page — one copy of "which
+            day is this slot on" for both screens. */}
+        <SlotPicker
+          slots={slots}
+          timezone={tz}
+          value={slot}
+          onChange={setSlot}
+          className="max-h-[46vh] overflow-y-auto pr-1"
+        />
         <div className="mt-4">
           <Field label="Anything we should know? (optional)">
             <textarea
