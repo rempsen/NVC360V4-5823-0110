@@ -267,3 +267,15 @@ environment production, url http://localhost:4200/admin/scheduler, HeadlessChrom
   Every web event is tagged app=nvc360-web/platform=web, but a separate nvc360-web project
   is still the right fix. Also still needs VITE_SENTRY_DSN/SENTRY_DSN set in Runable publish
   settings, and the SABOTAGE + REACT-NATIVE-9 issues resolved/ignored in Sentry.
+
+## Item 1 DONE — Dispatch header names the company (a6ebc07, pushed)
+- New `packages/mobile/lib/company-name.ts` (pure: `resolveActiveCompanyName`, `dispatchLabels`)
+  and `lib/my-companies.ts` (`useMyCompanies` owns the ["my-companies"] query,
+  `useActiveCompanyName`). Profile's switcher now reads the same cache entry.
+- Uncertain company => "" => old neutral wording. Local id beats server activeCompanyId.
+- 7 tests (red first, 2 sabotage checks). Live-verified against localhost:4200 with the real
+  two-roster account (BMD Materials + NVC 360).
+- NOT browser-rendered: `packages/mobile` has no react-native-web, so Expo web can't boot;
+  visual confirmation needs a dev client / TestFlight build (cross-company Earnings 774a0f1
+  is also waiting on an EAS iOS build — same build can carry this).
+- Next: item 2 (customer self-serve cancel + reschedule on the tracking page).
