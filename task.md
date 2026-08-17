@@ -219,4 +219,16 @@ Baseline: 264 `error TS` (tsconfig.app.json). TS2769 105, TS2339 58, TS7006 51, 
   routers `new Hono<AppEnv>()`. 264 -> 156 errors (all 105 TS2769 gone).
 - Remaining: TS2353 30 + TS2339 58 + TS7006 51 = Family B (web call sites, `apiFetch` union).
 - CSS backlog item CLOSED as non-issue: 128 kB raw / 19.5 kB gzipped, Tailwind v4 (no content globs).
-- Still TODO: mobile card layouts for work-orders + scheduler under `sm`; full gate set; commit.
+- Family B fixed too, at the call sites (no `ok()` helper needed in the end).
+- Last error (track-public.tsx) fixed by putting `jsonBody` on POST /api/track/:token/messages
+  with a permissive `unknown` schema — types the body, leaves readText's wording in charge.
+- RESULT: 264 -> 0 errors. `bunx tsc --noEmit -p tsconfig.app.json` is now a real gate.
+- Gates at commit 4207c8b: 565 tests pass / 0 fail, oxlint 0, vite build ok,
+  crash-sweep.py 50/50 CLEAN (25 admin pages x desktop+mobile).
+- crash-sweep.py REBUILT IN-REPO (was in /tmp and got wiped). Uses
+  executable_path=/usr/bin/google-chrome, wait_until="load" (networkidle never fires
+  on SSE pages), a fresh tab per page (shared tab blamed navigation-aborted requests
+  on the next page), and ignores /stream aborts, cartocdn tiles and /api/public/file 404s.
+- Pre-existing, not a regression: /admin/catalog 404s one demo catalog image missing
+  from local dev storage.
+- Still TODO: mobile card layouts for work-orders + scheduler under `sm`.
