@@ -64,6 +64,42 @@ def sweep(width, height, label, results):
                 errs.append("error boundary rendered")
             if len(body.strip()) < 40:
                 errs.append("page rendered empty")
+            # The scheduler's calendar is a second full layout behind a toggle,
+            # so a plain page load never touches it. Exercise all three views.
+            if path == "/admin/scheduler":
+                try:
+                    tab.get_by_role("button", name="Calendar").first.click()
+                    tab.wait_for_timeout(1200)
+                    for v in ("week", "month", "day"):
+                        tab.get_by_role("button", name=v, exact=True).first.click()
+                        tab.wait_for_timeout(900)
+                        if len(tab.inner_text("body").strip()) < 40:
+                            errs.append(f"calendar {v} rendered empty")
+                except Exception as ex:  # noqa: BLE001
+                    errs.append(f"calendar interaction failed: {ex}")
+
+            # Phone tap targets. Anything under 40px on a touch layout is a
+            # mis-tap; checked only on the pages whose phone layouts are
+            # hand-built, so the gate stays about them and not the whole app.
+            if width < 600 and path in ("/admin/scheduler", "/admin/work-orders"):
+                small = tab.evaluate(
+                    """() => {
+                      const out = [];
+                      for (const el of document.querySelectorAll('button, a[href], [role=button]')) {
+                        const r = el.getBoundingClientRect();
+                        if (r.width === 0 || r.height === 0) continue;      // hidden
+                        if (el.closest('[aria-hidden=true]')) continue;
+                        if (r.height < 40 && !el.closest('table')) {
+                          out.push(((el.getAttribute('aria-label') || el.innerText || '?')
+                            .trim().slice(0, 28)) + ' @' + Math.round(r.height) + 'px');
+                        }
+                      }
+                      return out;
+                    }"""
+                )
+                if small:
+                    errs.append(f"tap targets under 40px: {sorted(set(small))}")
+
             errs = [e for e in errs if not any(i in e for i in IGNORE)]
             status = "CLEAN" if not errs else "FAIL"
             results.append((label, path, status, errs))

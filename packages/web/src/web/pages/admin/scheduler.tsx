@@ -287,7 +287,9 @@ export default function SchedulerPage() {
       />
       <PageHead
         title="Scheduler"
-        subtitle={`Drag work orders onto a ${noun.toLowerCase()} to dispatch — or let AI suggest the best match`}
+        // Device-neutral wording: "drag" is a lie on a phone, where HTML5 drag
+        // events never fire and Assign is the only way to dispatch.
+        subtitle={`Dispatch work orders to a ${noun.toLowerCase()} — or let AI suggest the best match`}
         actions={
           <div className="flex items-center gap-2">
             <div className="flex rounded-lg border border-white/10 bg-ink-2 p-0.5">
@@ -373,17 +375,37 @@ export default function SchedulerPage() {
                 <div
                   key={b.id}
                   draggable
+                  // oxlint-disable-next-line prefer-tag-over-role -- a draggable div cannot be a <button>
+                  role="button"
+                  tabIndex={0}
+                  title="Click to open and set a date"
+                  // Dragging is the only way to schedule from this queue on a
+                  // desktop, and it is unavailable on touch — so tapping the
+                  // card opens the work order, where the date field works
+                  // everywhere. Guarded on calDragId so a completed drag does
+                  // not also open the modal.
+                  onClick={() => {
+                    if (!calDragId) openJob(b);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      openJob(b);
+                    }
+                  }}
                   onDragStart={() => setCalDragId(b.id)}
                   onDragEnd={() => {
                     setCalDragId(null);
                     setOverDay(null);
                   }}
-                  className={`group cursor-grab rounded-xl border border-white/10 bg-ink-3/60 p-2.5 transition active:cursor-grabbing ${
+                  className={`group cursor-grab rounded-xl border border-white/10 bg-ink-3/60 p-2.5 transition hover:border-brand/40 active:cursor-grabbing ${
                     calDragId === b.id ? "dragging" : ""
                   }`}
                 >
                   <div className="flex items-start gap-2">
-                    <GripVertical className="mt-0.5 h-4 w-4 shrink-0 text-slate-600 group-hover:text-slate-400" />
+                    {/* The grab handle promises drag-to-schedule, so it only
+                        appears at the widths where dragging actually works. */}
+                    <GripVertical className="mt-0.5 hidden h-4 w-4 shrink-0 text-slate-600 group-hover:text-slate-400 lg:block" />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold text-white">
                         {b.title || b.service?.name}
@@ -422,7 +444,12 @@ export default function SchedulerPage() {
             )}
           </div>
           <p className="border-t border-white/5 px-3 py-2 text-[10px] text-slate-600">
-            Drag a card onto any calendar day to schedule it for 9:00 AM, then assign a tech from the Board.
+            <span className="hidden lg:inline">
+              Drag a card onto any calendar day to schedule it for 9:00 AM, then assign a tech from the Board.
+            </span>
+            <span className="lg:hidden">
+              Tap a card to open it and set its date, then assign a tech from the Board.
+            </span>
           </p>
         </div>
 
@@ -464,8 +491,12 @@ export default function SchedulerPage() {
             </div>
           </div>
 
+          {/* Desktop calendar grids. Seven columns inside a 390px phone gives
+              each day about 44px — a job chip there is two or three truncated
+              characters, and the month cell's "+2 more" hides everything real.
+              Below lg the same data renders as the agenda further down. */}
           {calView === "month" ? (
-            <div className="grid grid-cols-7">
+            <div className="hidden grid-cols-7 lg:grid">
               {DOW.map((d) => (
                 <div
                   key={d}
@@ -561,7 +592,7 @@ export default function SchedulerPage() {
             </div>
           ) : (
             <div
-              className={`grid ${calView === "day" ? "grid-cols-1" : "grid-cols-7"}`}
+              className={`hidden lg:grid ${calView === "day" ? "grid-cols-1" : "grid-cols-7"}`}
             >
               {calDays.map((d, i) => {
                 const jobs = jobsOn(d);
@@ -716,6 +747,131 @@ export default function SchedulerPage() {
               })}
             </div>
           )}
+
+          {/* Phone agenda: the same calDays range, but only the days that
+              actually have work, each one full width. Day/Week/Month still
+              change what you're looking at — the range and the header label are
+              shared with the desktop grid, so switching widths never changes
+              which jobs you see. Drag-to-schedule is desktop-only (HTML5 drag
+              events never fire from touch), so every card here is a plain tap. */}
+          <div className="divide-y divide-white/5 lg:hidden">
+            {(() => {
+              const withJobs = calDays.filter(
+                (d) => jobsOn(d).length > 0 || (calView === "day" && sameDay(d, anchor)),
+              );
+              if (withJobs.length === 0)
+                return (
+                  <div className="p-4">
+                    <EmptyState
+                      compact
+                      icon={CalendarDays}
+                      title="Nothing scheduled"
+                      hint={
+                        calView === "month"
+                          ? "No work orders this month. Tap New Work Order to add one."
+                          : "No work orders in this range. Use the arrows above to look at another date."
+                      }
+                    />
+                  </div>
+                );
+              return withJobs.map((d) => {
+                const jobs = jobsOn(d);
+                // The month grid spans 42 days, so it always shows a few days
+                // from the neighbouring months. The desktop grid dims those
+                // cells; without the same cue here a job from July reads as a
+                // job in June.
+                const outOfMonth = calView === "month" && d.getMonth() !== anchor.getMonth();
+                return (
+                  <div key={d.toISOString()} className={outOfMonth ? "opacity-60" : ""}>
+                    <div className="flex items-center gap-2 bg-ink-2/60 px-4 py-2">
+                      <span
+                        className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-bold ${sameDay(d, today) ? "bg-brand text-white" : "bg-white/5 text-slate-300"}`}
+                      >
+                        {d.getDate()}
+                      </span>
+                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                        {d.toLocaleDateString(undefined, {
+                          weekday: "short",
+                          month: "short",
+                        })}
+                      </span>
+                      <span className="text-[11px] text-slate-600">
+                        {jobs.length} job{jobs.length === 1 ? "" : "s"}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const dt = new Date(d);
+                          dt.setHours(9, 0, 0, 0);
+                          setNewDate(dt);
+                        }}
+                        aria-label={`Add a work order on ${d.toDateString()}`}
+                        className="-mr-2 ml-auto grid h-11 w-11 place-items-center rounded-full text-slate-400 hover:bg-white/5 hover:text-white"
+                      >
+                        <Plus className="h-4 w-4" />
+                      </button>
+                    </div>
+                    {jobs.length === 0 ? (
+                      <p className="px-4 py-4 text-xs text-slate-600">
+                        Nothing scheduled for this day yet.
+                      </p>
+                    ) : (
+                      <ul>
+                        {jobs.map((b) => (
+                          <li
+                            key={b.id}
+                            className="flex items-start gap-3 border-l-2 px-4 py-3"
+                            style={{
+                              borderColor: PRIORITY_META[b.priority]?.color ?? "#3b82f6",
+                            }}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => openJob(b)}
+                              className="min-w-0 flex-1 text-left"
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold text-cyan-glow">
+                                  {new Date(b.scheduledAt as any).toLocaleTimeString([], {
+                                    hour: "numeric",
+                                    minute: "2-digit",
+                                  })}
+                                </span>
+                                <StatusBadge status={b.status} />
+                              </div>
+                              <p className="mt-0.5 font-semibold leading-snug text-slate-100">
+                                {b.title || b.service?.name}
+                              </p>
+                              {b.customer?.name && (
+                                <p className="text-xs text-slate-500">{b.customer.name}</p>
+                              )}
+                              {b.address && (
+                                <p className="mt-0.5 flex items-start gap-1 text-xs leading-snug text-slate-500">
+                                  <MapPin className="mt-0.5 h-3 w-3 shrink-0" />
+                                  {/* Wrapped, not truncated: half a postal code
+                                      is no more useful than no address. */}
+                                  <span className="line-clamp-2">{b.address}</span>
+                                </p>
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => removeJob(b)}
+                              aria-label="Delete work order"
+                              title="Delete work order"
+                              className="-mr-2 grid h-11 w-11 shrink-0 place-items-center rounded-full text-slate-500 hover:bg-rose-500/10 hover:text-rose-400"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                );
+              });
+            })()}
+          </div>
         </div>
         </div>
       ) : (

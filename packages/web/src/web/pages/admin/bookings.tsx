@@ -752,7 +752,10 @@ function SortControl({
           aria-label="Sort work orders by"
           value={sort}
           onChange={(e) => onSort(e.target.value)}
-          className="appearance-none bg-transparent py-1 pl-2 pr-1 text-xs text-slate-300 outline-none focus-visible:shadow-none"
+          // h-11 on touch widths: the whole control was 32px tall, which is
+          // under every platform's minimum tap target, and it sits in a
+          // crowded toolbar next to the direction toggle.
+          className="h-11 appearance-none bg-transparent py-1 pl-2 pr-1 text-xs text-slate-300 outline-none focus-visible:shadow-none sm:h-8"
         >
           {SORTS.map((s) => (
             <option key={s.key} value={s.key}>
@@ -764,7 +767,7 @@ function SortControl({
           onClick={() => onSort(sort)}
           title={`Sorted ${dirLabel} — click to reverse`}
           aria-label={`Sorted ${dirLabel}. Reverse sort order`}
-          className="grid h-8 w-8 place-items-center border-l border-white/10 text-slate-400 transition-colors hover:bg-white/5 hover:text-white"
+          className="grid h-11 w-11 place-items-center border-l border-white/10 text-slate-400 transition-colors hover:bg-white/5 hover:text-white sm:h-8 sm:w-8"
         >
           <ChevronDown
             className={`h-3.5 w-3.5 transition-transform duration-150 ${dir === "asc" ? "rotate-180" : ""}`}

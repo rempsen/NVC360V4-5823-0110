@@ -231,4 +231,16 @@ Baseline: 264 `error TS` (tsconfig.app.json). TS2769 105, TS2339 58, TS7006 51, 
   on the next page), and ignores /stream aborts, cartocdn tiles and /api/public/file 404s.
 - Pre-existing, not a regression: /admin/catalog 404s one demo catalog image missing
   from local dev storage.
-- Still TODO: mobile card layouts for work-orders + scheduler under `sm`.
+- Mobile layouts DONE. Work orders already had a phone card list (pre-existing); the gap was
+  the scheduler CALENDAR: month/week grids were `grid-cols-7` at every width (~44px per day on
+  a 390px phone). Now `hidden lg:grid`, with a phone agenda below lg built from the SAME
+  calDays range + jobsOn(), so switching widths never changes which jobs you see.
+  Out-of-month days in the month agenda are dimmed to match the desktop grid's opacity cue.
+- Calendar Work Queue on phones: drag was the only way to schedule and HTML5 drag never fires
+  on touch, so the card is now tappable (opens the work order, where the date field works) and
+  the grip + "drag a card" hint are lg-only. Page subtitle reworded off "Drag".
+- Found + fixed via the new gate: work-orders sort direction toggle was a 32px tap target.
+- crash-sweep.py EXTENDED: it now toggles the scheduler into Calendar and cycles
+  week/month/day (that whole layout was previously never loaded by the sweep), and asserts no
+  interactive element under 40px tall on /admin/scheduler + /admin/work-orders at 390px.
+  Both additions sabotage-checked (broke each one, watched the sweep FAIL, restored).
