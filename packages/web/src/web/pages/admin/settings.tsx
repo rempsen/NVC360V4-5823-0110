@@ -14,6 +14,7 @@ import AutomationPage from "./automation";
 import IntegrationsPage from "./integrations";
 import ApiAccessPage from "./api-access";
 import AuditPage from "./audit";
+import { DEFAULT_GEOFENCE_RADIUS_M, resolveGeofenceRadiusM } from "../../../shared/geo-distance";
 
 const TIMEZONES = [
   "America/Winnipeg", "America/Toronto", "America/Vancouver", "America/Edmonton",
@@ -395,14 +396,21 @@ function CompanySettingsTab() {
             <p className="text-xs text-white/50">
               Auto-arrive a {noun.toLowerCase()} and start their on-site clock when they get within this distance of the job address. Leaving the radius pauses the clock automatically.
             </p>
-            <Field label="Auto-arrive radius (meters)" hint="Default 20 m">
+            <Field
+              label="Auto-arrive radius (meters)"
+              hint={`Default ${DEFAULT_GEOFENCE_RADIUS_M} m. Below about 50 m phone GPS isn't accurate enough to check anyone in reliably.`}
+            >
               <input aria-label="Geofence Radius M"
                 type="number"
-                min={5}
-                step={5}
+                min={10}
+                max={2000}
+                step={10}
                 className={inputCls}
-                value={form.geofenceRadiusM ?? 20}
-                onChange={(e) => set("geofenceRadiusM", Math.max(5, parseInt(e.target.value) || 20))}
+                value={form.geofenceRadiusM ?? DEFAULT_GEOFENCE_RADIUS_M}
+                // Clamped on blur, not per keystroke: clamping while typing
+                // turns "40" into 10 the moment the "4" lands.
+                onChange={(e) => set("geofenceRadiusM", parseInt(e.target.value) || 0)}
+                onBlur={(e) => set("geofenceRadiusM", resolveGeofenceRadiusM(e.target.value))}
               />
             </Field>
           </div>

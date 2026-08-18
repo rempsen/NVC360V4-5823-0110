@@ -95,3 +95,61 @@ export const OPEN_STATUSES = ["pending", "confirmed", ...ACTIVE_STATUSES] as con
 export function isOpenStatus(status: unknown): boolean {
   return typeof status === "string" && (OPEN_STATUSES as readonly string[]).includes(status);
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Legal transitions                                                          */
+/* -------------------------------------------------------------------------- */
+/**
+ * What a job may become next, from where it is now.
+ *
+ * `POST /bookings/:id/status` used to accept any status string, which is how a
+ * job could go straight from "enroute" to "completed": arrival is skipped, so
+ * transit time is never finalised, the on-site clock never runs, and the
+ * customer never gets the "your technician is here" notification — the job
+ * simply gets billed as done from the van. The same gap let a completed job be
+ * pushed back to "enroute", re-firing the on-my-way SMS on work already
+ * invoiced.
+ *
+ * Cancellation is legal from any live stage and is therefore added to every
+ * non-terminal entry. Re-sending the CURRENT status is always allowed: a
+ * retried request on flaky signal must not come back as an error the driver has
+ * to interpret.
+ */
+export const NEXT_STATUSES: Record<string, readonly string[]> = {
+  pending: ["confirmed", "assigned"],
+  confirmed: ["assigned", "enroute"],
+  assigned: ["enroute"],
+  enroute: ["arrived", "onsite"],
+  arrived: ["onsite", "in_progress", "paused", "completed"],
+  onsite: ["in_progress", "paused", "completed"],
+  in_progress: ["paused", "completed"],
+  paused: ["in_progress", "onsite", "completed"],
+  completed: [],
+  cancelled: [],
+};
+
+/** Live stages a job can be cancelled out of. */
+const CANCELLABLE_FROM = ["pending", "confirmed", "assigned", "enroute", "arrived", "onsite", "in_progress", "paused"];
+
+/** Is moving `from` -> `to` a legal step in the job flow? */
+export function canTransition(from: unknown, to: unknown): boolean {
+  if (typeof from !== "string" || typeof to !== "string") return false;
+  if (!isKnownStatus(from) || !isKnownStatus(to)) return false;
+  if (from === to) return true;
+  if (to === "cancelled") return CANCELLABLE_FROM.includes(from);
+  return (NEXT_STATUSES[from] ?? []).includes(to);
+}
+
+/**
+ * Null when the move is legal, otherwise a message written for the person who
+ * pressed the button — not a stack trace and not "invalid transition".
+ */
+export function transitionError(from: unknown, to: unknown): string | null {
+  if (canTransition(from, to)) return null;
+  if (to === "completed" && (from === "enroute" || from === "assigned" || from === "confirmed"))
+    return "Check in on site before completing this job — tap \"I've Arrived\" first.";
+  if (from === "completed") return "This job is already completed. The office can reopen it if something changed.";
+  if (from === "cancelled") return "This job was cancelled. The office has to restore it before work can continue.";
+  if (!isKnownStatus(to)) return "That isn't a job stage this app knows about.";
+  return "This job has already moved on — pull it up again to see where it is now.";
+}

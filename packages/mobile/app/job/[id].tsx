@@ -19,6 +19,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import * as Location from "expo-location";
+import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import Constants from "expo-constants";
 import {
@@ -70,7 +71,7 @@ const API = ((Constants.expoConfig?.extra?.apiUrl as string) ?? "").replace(/\/$
 const FLOW: Record<string, { next: string; label: string; variant: any; hint?: string }> = {
   assigned:    { next: "enroute",   label: "Start Driving",  variant: "primary" },
   enroute:     { next: "arrived",   label: "I've Arrived",   variant: "primary",
-                 hint: "Auto-arrives when you're within 150m of the address. Tap if not auto-detected." },
+                 hint: "You're checked in automatically once you reach the address. Tap this if it doesn't happen." },
   arrived:     { next: "completed", label: "Complete Job",   variant: "success" },
   in_progress: { next: "completed", label: "Complete Job",   variant: "success" },
 };
@@ -129,6 +130,8 @@ export default function JobDetail() {
   const [releaseOpen, setReleaseOpen] = useState(false);
   const [releaseReason, setReleaseReason] = useState<string | null>(null);
   const [releaseNote, setReleaseNote] = useState("");
+  const [pingProblem, setPingProblem] = useState(false);
+  const [geo, setGeo] = useState<{ radiusM: number; distanceM: number; inside: boolean } | null>(null);
   const [recording, setRecording] = useState<Recording | null>(null);
   const [voiceBusy, setVoiceBusy] = useState(false);
   const voiceSupported = isVoiceNoteSupported();
@@ -196,9 +199,35 @@ export default function JobDetail() {
   const setStatus = useMutation({
     mutationFn: async (status: string) => {
       const res = await api.bookings[":id"].status.$post({ param: { id: id! }, json: { status } } as any);
-      if (!res.ok) throw new Error("Failed");
+      if (!res.ok) {
+        // The server's refusal is written for the driver ("Check in on site
+        // before completing this job"), so pass it through verbatim instead of
+        // collapsing every failure into "Failed".
+        const body = (await res.json().catch(() => null)) as any;
+        throw new Error(
+          body?.message ||
+            body?.error?.message ||
+            (res.status === 401 ? "You've been signed out — sign in again." : "Couldn't update this job."),
+        );
+      }
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["job", id] }),
+    onSuccess: () => {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      qc.invalidateQueries({ queryKey: ["job", id] });
+      qc.invalidateQueries({ queryKey: ["bookings"] });
+      qc.invalidateQueries({ queryKey: ["today-stats"] });
+    },
+    // Without this the single most important button in the app failed in total
+    // silence on any rejection (409/403/expired session): the driver tapped
+    // "Complete Job", nothing moved, and they tapped again. Offline is a
+    // different case and is already covered by the paused-mutation hint.
+    onError: (e: any) => {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      Alert.alert("Couldn't update this job", e?.message || "Try again in a moment.", [
+        { text: "OK" },
+        { text: "Refresh job", onPress: () => qc.invalidateQueries({ queryKey: ["job", id] }) },
+      ]);
+    },
   });
 
   // Hand the job back to dispatch. On success the job is no longer ours, so we
@@ -237,14 +266,34 @@ export default function JobDetail() {
         headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ index, done }),
       });
-      if (!res.ok) throw new Error("Failed");
+      if (!res.ok) throw new Error("Couldn't save that step.");
       return res.json() as Promise<{ checklist: any[] }>;
     },
+    // Tick the box NOW, reconcile after. Previously the box only moved once the
+    // server answered, so on job-site signal a tap looked like nothing
+    // happened and techs tapped twice.
+    onMutate: ({ index, done }) => {
+      const prev = qc.getQueryData(["job", id]) as any;
+      qc.setQueryData(["job", id], (old: any) => {
+        if (!old) return old;
+        let list: any[] = [];
+        try { list = JSON.parse(old.checklistState || "[]"); } catch { return old; }
+        const item = list[index];
+        if (item == null) return old;
+        list[index] = typeof item === "object" ? { ...item, done } : { label: String(item), done };
+        return { ...old, checklistState: JSON.stringify(list) };
+      });
+      return { prev };
+    },
     onSuccess: (data) => {
-      // optimistic update
       qc.setQueryData(["job", id], (old: any) =>
         old ? { ...old, checklistState: JSON.stringify(data.checklist) } : old
       );
+    },
+    onError: (e: any, _vars, ctx: any) => {
+      // Put the box back — a checklist that lies is worse than one that fails.
+      if (ctx?.prev) qc.setQueryData(["job", id], ctx.prev);
+      Alert.alert("Step not saved", e?.message || "Check your signal and tap it again.");
     },
   });
 
@@ -272,6 +321,9 @@ export default function JobDetail() {
       setMsg("");
       qc.invalidateQueries({ queryKey: ["messages", id] });
     },
+    // Keep the typed text (it is never cleared on failure) and say why.
+    onError: () =>
+      Alert.alert("Message not sent", "Your text is still here — tap send again when you have signal."),
   });
 
   const sendDispatch = useMutation({
@@ -287,6 +339,8 @@ export default function JobDetail() {
       setDispatchMsg("");
       qc.invalidateQueries({ queryKey: ["dispatch-thread"] });
     },
+    onError: () =>
+      Alert.alert("Message not sent", "Your text is still here — tap send again when you have signal."),
   });
 
   const saveDriverNote = async () => {
@@ -343,9 +397,15 @@ export default function JobDetail() {
 
   useEffect(() => {
     const status = job.data?.status;
+    // `startPings` awaits the permission prompt, so React's cleanup can run
+    // BEFORE the interval is even created. Without this flag a fast status
+    // change (enroute -> arrived) left an orphan 8-second timer running for the
+    // rest of the shift: double GPS reads, double battery, duplicate pings.
+    let cancelled = false;
+    let misses = 0;
     async function startPings() {
       const perm = await Location.requestForegroundPermissionsAsync();
-      if (!perm.granted) return;
+      if (!perm.granted || cancelled) return;
       const ping = async () => {
         try {
           const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
@@ -354,18 +414,38 @@ export default function JobDetail() {
             headers: authHeaders({ "Content-Type": "application/json" }),
             body: JSON.stringify({ lat: loc.coords.latitude, lng: loc.coords.longitude }),
           });
-          // Update Live Activity ETA if server returns one
-          if (res.ok) {
-            const data = await res.json().catch(() => null);
-            if (data?.etaMins != null) updateEta(data.etaMins);
+          if (cancelled) return;
+          if (!res.ok) throw new Error(String(res.status));
+          misses = 0;
+          setPingProblem(false);
+          const data = await res.json().catch(() => null);
+          if (data?.etaMins != null) updateEta(data.etaMins);
+          // How far from the address, and at what distance check-in fires —
+          // this is what turns "why haven't I been checked in?" into a number
+          // the driver can act on.
+          if (data?.geofence) setGeo(data.geofence);
+          // The server may have auto-arrived us on this very ping; pull the
+          // job so the button and stepper move without waiting for the 15s poll.
+          if (data?.status && data.status !== status) {
+            qc.invalidateQueries({ queryKey: ["job", id] });
           }
-        } catch {}
+        } catch {
+          if (cancelled) return;
+          // Silence here meant the dispatcher's map and the customer's tracking
+          // link quietly froze on a stale dot with nobody told. Three strikes
+          // (~24s) before we bother the driver, so one blip stays invisible.
+          misses += 1;
+          if (misses >= 3) setPingProblem(true);
+        }
       };
       ping();
+      if (cancelled) return;
       pingTimer.current = setInterval(ping, 8000);
     }
     if (status && ACTIVE_PING.has(status)) startPings();
     return () => {
+      cancelled = true;
+      setPingProblem(false);
       if (pingTimer.current) clearInterval(pingTimer.current);
       pingTimer.current = null;
     };
@@ -661,6 +741,16 @@ export default function JobDetail() {
               onPress={navigate}
               style={{ marginTop: 12 }}
             />
+            {pingProblem && ACTIVE_PING.has(j.status) && (
+              <View style={s.pingWarn}>
+                <Warning color={C.amber} size={16} weight="fill" />
+                <Text style={s.pingWarnTxt}>
+                  Dispatch isn't receiving your location. Check your signal and that Location is on
+                  for NVC360 — the office and the {customerNoun.toLowerCase()} are seeing an old
+                  position.
+                </Text>
+              </View>
+            )}
             {j.status === "enroute" && (
               <>
                 <View style={s.liveRow}>
@@ -688,7 +778,11 @@ export default function JobDetail() {
                   </Pressable>
                 </View>
                 <Text style={s.geoHint}>
-                  You'll be checked in automatically when you reach the address.
+                  {geo
+                    ? geo.inside
+                      ? "You're at the address — checking you in…"
+                      : `${geo.distanceM >= 1000 ? `${(geo.distanceM / 1000).toFixed(1)} km` : `${geo.distanceM} m`} from the address · auto check-in inside ${geo.radiusM} m`
+                    : "You'll be checked in automatically when you reach the address."}
                 </Text>
               </>
             )}
@@ -1624,6 +1718,18 @@ const s = StyleSheet.create({
   liveDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: C.green },
   liveTxt: { color: C.green, fontSize: 12, fontWeight: "600", flex: 1 },
   geoHint: { color: C.sub, fontSize: 12, marginTop: 10, lineHeight: 17 },
+  pingWarn: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "flex-start",
+    backgroundColor: "rgba(245,158,11,0.10)",
+    borderColor: "rgba(245,158,11,0.35)",
+    borderWidth: 1,
+    borderRadius: R.card,
+    padding: 12,
+    marginTop: 12,
+  },
+  pingWarnTxt: { flex: 1, color: C.amber, fontSize: 12, lineHeight: 17, fontWeight: "600" },
   clockCard: {
     flexDirection: "row",
     alignItems: "center",

@@ -11,7 +11,7 @@ import { isMember } from "../lib/memberships";
 import { fireEvent } from "../../services/dispatch";
 import { recomputeBooking } from "../../services/billing";
 import { reconcileRiderStatus } from "../../services/presence";
-import { applyBookingStatus } from "../../services/booking-status";
+import { applyBookingStatus, StatusTransitionError } from "../../services/booking-status";
 import { putObject } from "../lib/storage";
 import { capture } from "../lib/analytics";
 import { incr } from "../lib/metrics";
@@ -919,9 +919,21 @@ export const bookingsRoutes = new Hono<AppEnv>()
   // update status (rider/admin) -> triggers notifications + emails
   .post("/:id/status", requireAuth, jsonBody(StatusBody), async (c) => {
     const co = tenantId(c);
+    const u = c.get("user") as SessionUser;
     const { status } = c.req.valid("json");
     const id = c.req.param("id");
-    const b = await applyBookingStatus(co, id, status);
+    // The office can correct a record (put a wrongly-completed job back on the
+    // board); the field app cannot skip or reverse a stage. Without this a
+    // driver could go enroute -> completed: no arrival, no transit time, no
+    // on-site clock, and no "your technician is here" for the customer.
+    let b;
+    try {
+      b = await applyBookingStatus(co, id, status, { force: isAdminRole(u.role) });
+    } catch (e) {
+      if (e instanceof StatusTransitionError)
+        return c.json({ message: e.message, from: e.from, to: e.to }, 409);
+      throw e;
+    }
     if (!b) return c.json({ error: "not found" }, 404);
     return c.json({ booking: await enrich(b) }, 200);
   })

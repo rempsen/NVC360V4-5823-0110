@@ -1,10 +1,15 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { db } from "../database";
 import * as schema from "../database/schema";
 import { eq } from "drizzle-orm";
 import { requireAuth, tx, tenantId } from "../middleware/auth";
 import { computeEta, computeRoute } from "./geo";
-import { haversineKm, isInsideGeofence } from "../../shared/geo-distance";
+import {
+  haversineKm,
+  isInsideGeofence,
+  resolveGeofenceRadiusM,
+} from "../../shared/geo-distance";
 import { applyBookingStatus, pauseClock, resumeClock } from "../../services/booking-status";
 import { pingLimiter } from "../lib/rate-limit";
 import { publishTrack } from "../../services/realtime";
@@ -34,6 +39,24 @@ async function cachedAuthRoute(id: string, oLat: number, oLng: number, dLat: num
   const route = await computeRoute(oLat, oLng, dLat, dLng);
   authRouteCache.set(id, { at: now, oLat, oLng, route });
   return route;
+}
+
+/**
+ * Per-tenant geofence radius, cached briefly.
+ *
+ * Every active technician pings every 8 seconds, and each ping used to read the
+ * whole companySettings row from the DB just to learn one integer.
+ */
+const GEOFENCE_TTL_MS = 60_000;
+const geofenceCache = new Map<string, { at: number; radiusM: number | null }>();
+async function geofenceRadiusFor(c: Context<AppEnv>) {
+  const co = tenantId(c);
+  const hit = geofenceCache.get(co);
+  if (hit && Date.now() - hit.at < GEOFENCE_TTL_MS) return hit.radiusM;
+  const settings = await tx(c).selectOne(schema.companySettings);
+  const radiusM = settings?.geofenceRadiusM ?? null;
+  geofenceCache.set(co, { at: Date.now(), radiusM });
+  return radiusM;
 }
 
 /** A live GPS ping from a technician's device. */
@@ -88,17 +111,22 @@ export const trackingRoutes = new Hono<AppEnv>()
     // job), entering the radius around the job address auto-arrives them and
     // starts the clock; leaving the radius pauses the clock; re-entering
     // resumes it. Completion stays manual.
+    let geofence: { radiusM: number; distanceM: number; inside: boolean } | null = null;
     if (b && b.lat != null && b.lng != null && b.enrouteAt && b.status !== "completed" && b.status !== "cancelled") {
-      // configured radius (meters) -> km, default 20m
-      const settings = await t.selectOne(schema.companySettings);
-      const radiusM = (settings?.geofenceRadiusM ?? 20) || 20;
+      // Configured radius in metres. Resolved through the shared helper so a
+      // missing settings row, a blank field or a 0 can't silently disable
+      // auto-arrive — the fallback here used to be 20m while the DB column
+      // default and the driver app's own copy both said 150m.
+      const radiusM = resolveGeofenceRadiusM(await geofenceRadiusFor(c));
+      const distanceM = Math.round(haversineKm(lat, lng, b.lat, b.lng) * 1000);
       const inside = isInsideGeofence(lat, lng, b.lat, b.lng, radiusM);
+      geofence = { radiusM, distanceM, inside };
 
       if (inside && !b.insideGeofence) {
         // entered the job site
         if (b.status === "enroute") {
           // first arrival → auto-arrive + start the job clock
-          await applyBookingStatus(tenantId(c), bookingId, "arrived");
+          await applyBookingStatus(tenantId(c), bookingId, "arrived", { byGeofence: true });
         } else {
           // came back after stepping away → resume the clock
           await resumeClock(tenantId(c), bookingId);
@@ -133,8 +161,12 @@ export const trackingRoutes = new Hono<AppEnv>()
     }
 
     // Return current etaMins so the mobile app can update Live Activity countdown
-    const freshEta = (await t.selectOne(schema.bookings, eq(schema.bookings.id, bookingId)))?.etaMins ?? null;
-    return c.json({ success: true, etaMins: freshEta }, 200);
+    const fresh = await t.selectOne(schema.bookings, eq(schema.bookings.id, bookingId));
+    const freshEta = fresh?.etaMins ?? null;
+    // `geofence` and `status` go back to the driver app so the job screen can
+    // say "340 m away — auto check-in at 150 m" instead of a hardcoded promise,
+    // and so it notices an auto-arrive that happened server-side.
+    return c.json({ success: true, etaMins: freshEta, status: fresh?.status ?? null, geofence }, 200);
   })
   // driver registers/refreshes Live Activity push token so server can send APNs updates
   .post("/:bookingId/live-activity-token", requireAuth, async (c) => {

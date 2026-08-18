@@ -6,6 +6,22 @@ import { recomputeBooking, accrueTechPay } from "./billing";
 import { reconcileRiderStatus } from "./presence";
 import { publishTrack } from "./realtime";
 import { pushLiveActivityJobUpdate } from "./apns";
+import { transitionError } from "../shared/job-status";
+
+/**
+ * Thrown when a status change would skip or reverse a stage. Carries the
+ * human-readable reason so the route can hand it straight to the driver.
+ */
+export class StatusTransitionError extends Error {
+  readonly from: string;
+  readonly to: string;
+  constructor(message: string, from: string, to: string) {
+    super(message);
+    this.name = "StatusTransitionError";
+    this.from = from;
+    this.to = to;
+  }
+}
 
 const EVENT_FOR_STATUS: Record<string, any> = {
   confirmed: "created",
@@ -30,12 +46,21 @@ export async function applyBookingStatus(
   companyId: string,
   id: string,
   status: string,
-  opts: { fireNotifications?: boolean } = {},
+  opts: { fireNotifications?: boolean; byGeofence?: boolean; force?: boolean } = {},
 ) {
   const t = tdb(companyId);
   const fireNotifications = opts.fireNotifications ?? true;
   const prevB = await t.selectOne(schema.bookings, eq(schema.bookings.id, id));
   if (!prevB) return null;
+
+  // Refuse illegal steps in the flow (enroute -> completed, completed ->
+  // enroute, ...) unless the caller is explicitly correcting the record.
+  // `force` is for the office; the field app and the geofence both go through
+  // the guard. See shared/job-status.ts for why this is not theoretical.
+  if (!opts.force) {
+    const why = transitionError(prevB.status, status);
+    if (why) throw new StatusTransitionError(why, prevB.status, status);
+  }
 
   const now = new Date();
   const extra: Record<string, unknown> = { status };
@@ -61,8 +86,15 @@ export async function applyBookingStatus(
     if (prevB.clockState !== "running") {
       extra.clockState = "running";
       extra.lastResumeAt = now;
-      extra.insideGeofence = true;
     }
+    // `insideGeofence` means "GPS has actually seen this tech inside the
+    // radius" — it is NOT "the tech says they're here". Setting it on a manual
+    // "I've Arrived" tap was a real field bug: a tech who checks in from the
+    // far end of a plaza, a loading dock, or a badly geocoded address had the
+    // very next ping (8s later) read `!inside && insideGeofence` and pause
+    // their clock, showing "you've stepped away" while they stood in the
+    // customer's building. On-site minutes feed tech pay.
+    if (opts.byGeofence) extra.insideGeofence = true;
   }
 
   // in_progress kept for compatibility — also ensures the clock is running
@@ -183,7 +215,20 @@ export async function pauseClock(companyId: string, id: string) {
 export async function resumeClock(companyId: string, id: string) {
   const t = tdb(companyId);
   const b = await t.selectOne(schema.bookings, eq(schema.bookings.id, id));
-  if (!b || b.clockState === "running") return b ?? null;
+  if (!b) return null;
+  // Already running: only the geofence flag needs reconciling. Returning early
+  // here (as this used to) meant a tech who checked in MANUALLY and then drove
+  // into the radius never got `insideGeofence` set — so leaving the site was
+  // never detected and the clock kept billing after they drove away.
+  if (b.clockState === "running") {
+    if (b.insideGeofence) return b;
+    const [flagged] = await t.update(
+      schema.bookings,
+      { insideGeofence: true },
+      eq(schema.bookings.id, id),
+    );
+    return flagged;
+  }
   const [updated] = await t.update(
     schema.bookings,
     { clockState: "running", lastResumeAt: new Date(), insideGeofence: true },
