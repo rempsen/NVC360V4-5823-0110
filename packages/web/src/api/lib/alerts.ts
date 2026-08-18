@@ -36,21 +36,47 @@
 import { getRedis, redisEnabled } from "./redis";
 import { log } from "./logger";
 
-const THRESHOLD = Math.max(1, Number(process.env.ALERT_ERROR_THRESHOLD ?? 5));
-const WINDOW_MS = Math.max(1_000, Number(process.env.ALERT_WINDOW_MS ?? 60_000));
-const COOLDOWN_MS = Math.max(0, Number(process.env.ALERT_COOLDOWN_MS ?? 900_000));
-const EMAIL_TO = (process.env.ALERT_EMAIL ?? "")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
-const WEBHOOK_URL = process.env.ALERT_WEBHOOK_URL?.trim();
-const APP_URL = (process.env.APP_URL ?? "").replace(/\/$/, "");
-const ENV = process.env.NODE_ENV ?? "development";
-const SERVICE = process.env.SERVICE_NAME ?? "nvc360-api";
+/**
+ * Settings are read on every USE, not captured at import.
+ *
+ * They used to be module-level consts. That made behaviour depend on WHEN this
+ * module was first imported relative to whoever set the environment — which is
+ * invisible in production but broke CI for six commits straight while every
+ * local run stayed green: three test files configure alerting at their own
+ * module top level, and on the GitHub runner one of them lost the import race,
+ * so alerting silently ran with defaults and no channel at all. See
+ * __tests__/env-config-load-order.test.ts.
+ *
+ * Reading process.env per call costs nothing next to sending an alert, and it
+ * means nothing here cares about module load order ever again.
+ */
+function num(name: string, dflt: number, min: number): number {
+  // A malformed value must fall back to the default, never to NaN — NaN
+  // comparisons are all false, which would quietly disable the threshold.
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) ? Math.max(min, n) : dflt;
+}
+
+function cfg() {
+  return {
+    threshold: num("ALERT_ERROR_THRESHOLD", 5, 1),
+    windowMs: num("ALERT_WINDOW_MS", 60_000, 1_000),
+    cooldownMs: num("ALERT_COOLDOWN_MS", 900_000, 0),
+    emailTo: (process.env.ALERT_EMAIL ?? "")
+      .split(",")
+      .map((s: string) => s.trim())
+      .filter(Boolean),
+    webhookUrl: process.env.ALERT_WEBHOOK_URL?.trim() || undefined,
+    appUrl: (process.env.APP_URL ?? "").replace(/\/$/, ""),
+    env: process.env.NODE_ENV ?? "development",
+    service: process.env.SERVICE_NAME ?? "nvc360-api",
+  };
+}
 
 /** Is any alert channel configured at all? */
 export function alertsEnabled(): boolean {
-  return EMAIL_TO.length > 0 || Boolean(WEBHOOK_URL);
+  const c = cfg();
+  return c.emailTo.length > 0 || Boolean(c.webhookUrl);
 }
 
 export interface AlertContext {
@@ -81,6 +107,7 @@ return current
 
 /** Increment the tenant's error counter; return the count within the window. */
 async function bumpCount(companyId: string): Promise<number> {
+  const { windowMs: WINDOW_MS } = cfg();
   if (redisEnabled()) {
     const r = getRedis();
     if (r) {
@@ -107,6 +134,7 @@ async function bumpCount(companyId: string): Promise<number> {
  * recent alert already covers this burst — stay quiet.
  */
 async function claimCooldown(companyId: string): Promise<boolean> {
+  const { cooldownMs: COOLDOWN_MS } = cfg();
   if (COOLDOWN_MS === 0) return true;
   if (redisEnabled()) {
     const r = getRedis();
@@ -129,6 +157,7 @@ async function claimCooldown(companyId: string): Promise<boolean> {
 
 // ---- delivery ---------------------------------------------------------------
 function alertHtml(ctx: AlertContext, count: number): string {
+  const { appUrl: APP_URL, windowMs: WINDOW_MS, threshold: THRESHOLD, service: SERVICE, env: ENV } = cfg();
   const dash = APP_URL ? `${APP_URL}/admin/observability` : "(set APP_URL to deep-link)";
   const rows: Array<[string, string]> = [
     ["Tenant", ctx.companyId],
@@ -157,6 +186,7 @@ function escapeHtml(s: string): string {
 }
 
 async function deliver(ctx: AlertContext, count: number): Promise<void> {
+  const { emailTo: EMAIL_TO, webhookUrl: WEBHOOK_URL, windowMs: WINDOW_MS, env: ENV } = cfg();
   const subject = `[NVC360 ${ENV}] Error burst — tenant ${ctx.companyId} (${count}/${Math.round(WINDOW_MS / 1000)}s)`;
 
   const jobs: Promise<unknown>[] = [];
@@ -211,7 +241,7 @@ export function recordError(ctx: AlertContext): void {
   void (async () => {
     try {
       const count = await bumpCount(ctx.companyId);
-      if (count < THRESHOLD) return;
+      if (count < cfg().threshold) return;
       if (!(await claimCooldown(ctx.companyId))) return;
       await deliver(ctx, count);
     } catch (e) {
@@ -240,6 +270,7 @@ export function recordInfraDegraded(component: string, detail: string): void {
   void (async () => {
     try {
       if (!(await claimCooldown(`infra:${component}`))) return;
+      const { emailTo: EMAIL_TO, webhookUrl: WEBHOOK_URL, service: SERVICE, env: ENV } = cfg();
       const subject = `[NVC360 ${ENV}] Degraded — ${component}`;
       const text =
         `:warning: *${subject}*\n` +

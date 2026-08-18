@@ -17,9 +17,14 @@
  * Plus the fail-closed property: an unrecognised /api/auth/* path must land in
  * the tight bucket, so a future better-auth route can't silently get 600/min.
  */
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterAll } from "bun:test";
 import { Hono } from "hono";
-import { authSurfaceLimiter, setRateLimitStore, type RateLimitStore } from "../rate-limit";
+import {
+  authSurfaceLimiter,
+  setRateLimitStore,
+  _resetRateLimitStore,
+  type RateLimitStore,
+} from "../rate-limit";
 
 /**
  * Fresh in-process fixed-window store per test, so counts from one test can't
@@ -69,6 +74,11 @@ const SESSION = (token: string, ip = "203.0.113.9") => ({
 });
 
 beforeEach(() => setRateLimitStore(freshStore()));
+// The store is a module-level singleton shared by every test file in this bun
+// process. Without this, the stub store installed by the last test below stayed
+// installed and disabled rate limiting for whichever files ran afterwards —
+// which is exactly how CI failed while local runs passed.
+afterAll(() => _resetRateLimitStore());
 
 describe("session reads are not throttled like logins", () => {
   it("survives 30 consecutive get-session calls (the exact reported repro)", async () => {

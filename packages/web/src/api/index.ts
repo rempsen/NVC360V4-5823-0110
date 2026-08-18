@@ -61,7 +61,7 @@ import { publicFormsRoutes } from "./routes/public-forms";
 // (dev only). Credentials are only echoed for explicitly-allowed origins.
 const CORS_ORIGINS = (process.env.CORS_ORIGINS ?? "*")
   .split(",")
-  .map((s) => s.trim())
+  .map((s: string) => s.trim())
   .filter(Boolean);
 const ALLOW_ALL = CORS_ORIGINS.includes("*");
 

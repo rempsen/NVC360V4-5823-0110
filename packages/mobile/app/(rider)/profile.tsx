@@ -22,6 +22,14 @@ import { CompanyBadge, CompanyAlertLine, companyAlertText } from "../../componen
 
 const API = ((Constants.expoConfig?.extra?.apiUrl as string) ?? "").replace(/\/$/, "");
 
+/**
+ * The presence states the API's PATCH /riders/me actually accepts, derived from
+ * the Hono client rather than hand-copied, so widening or narrowing the server
+ * enum (routes/riders.ts RIDER_STATUSES) surfaces here as a type error instead
+ * of a runtime 400.
+ */
+type RiderStatus = NonNullable<Parameters<typeof api.riders.me.$patch>[0]>["json"]["status"];
+
 export default function Profile() {
   const router = useRouter();
   const qc = useQueryClient();
@@ -88,7 +96,7 @@ export default function Profile() {
   });
 
   const setStatus = useMutation({
-    mutationFn: async (status: string) => {
+    mutationFn: async (status: RiderStatus) => {
       const res = await api.riders.me.$patch({ json: { status } });
       if (!res.ok) throw new Error("Failed");
       return (await res.json()).rider;

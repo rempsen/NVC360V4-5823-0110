@@ -129,6 +129,22 @@ export function setRateLimitStore(s: RateLimitStore) {
   store = s;
 }
 
+/**
+ * Test-only: put the default in-process store back.
+ *
+ * `store` is module-level singleton state, so a test that installs a stub store
+ * keeps it installed for every test file that runs later in the same bun
+ * process. One test installed a stub returning `{ count: 1 }` for every key —
+ * i.e. "always the first request in the window" — which silently DISABLED every
+ * limiter in the app for the rest of the suite. Locally that file happened to
+ * run last so nothing noticed; on CI the file order differed and the tests
+ * asserting a 429 got a 200. Any test that calls setRateLimitStore must call
+ * this in afterAll.
+ */
+export function _resetRateLimitStore(): void {
+  store = new MemoryStore();
+}
+
 /** Pick the store based on environment. Call once at boot. */
 export function initRateLimitStore() {
   if (redisEnabled()) {
@@ -158,14 +174,27 @@ function clientIp(c: any): string {
  * @param name    label for the bucket namespace (so different limiters don't collide)
  */
 export function rateLimit(opts: {
-  limit: number;
+  /**
+   * Max requests per window — a number, or a function evaluated per request.
+   *
+   * The presets below pass a function so the env var is read when a request
+   * arrives rather than when this module is imported. Capturing it at import
+   * made the limit depend on load order relative to whoever set the
+   * environment: it broke CI for six commits (a test that raises the public
+   * write budget lost the import race, so the suite tripped the real 10/min
+   * budget and a 201 came back 429) while every local run stayed green.
+   * See __tests__/env-config-load-order.test.ts.
+   */
+  limit: number | (() => number);
   windowMs: number;
   keyFn?: KeyFn;
   name?: string;
 }) {
-  const { limit, windowMs, name = "rl" } = opts;
+  const { windowMs, name = "rl" } = opts;
+  const limitOf = typeof opts.limit === "function" ? opts.limit : () => opts.limit as number;
   const keyFn = opts.keyFn ?? ((c) => clientIp(c));
   return createMiddleware(async (c, next) => {
+    const limit = limitOf();
     const key = `${name}:${keyFn(c)}`;
     const { count, resetMs } = await store.hit(key, windowMs);
     const remaining = Math.max(0, limit - count);
@@ -228,6 +257,20 @@ function hashCred(v: string): string {
 
 // ---- presets --------------------------------------------------------------
 /**
+ * Read a limit from the environment at CALL time.
+ *
+ * `Number(undefined)` and `Number("nonsense")` are both NaN, and `count > NaN`
+ * is always false — so a typo'd env var would not have loosened the limiter, it
+ * would have DISABLED it, silently, on whichever surface was misconfigured.
+ * Anything that isn't a positive finite number falls back to the documented
+ * default instead.
+ */
+function envLimit(name: string, dflt: number): number {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n > 0 ? n : dflt;
+}
+
+/**
  * Tight limiter for CREDENTIAL-VERIFYING auth surfaces (brute-force defense):
  * sign-in, sign-up, password reset, email verification. Keyed by IP on purpose
  * — the attacker has no account yet, so per-user keying would be useless.
@@ -241,7 +284,7 @@ function hashCred(v: string): string {
  */
 export const authLimiter = rateLimit({
   name: "auth",
-  limit: Number(process.env.RL_AUTH_LIMIT ?? 20),
+  limit: () => envLimit("RL_AUTH_LIMIT", 20),
   windowMs: 60_000,
   keyFn: keyByIp,
 });
@@ -259,7 +302,7 @@ export const authLimiter = rateLimit({
  */
 export const sessionLimiter = rateLimit({
   name: "authsession",
-  limit: Number(process.env.RL_SESSION_LIMIT ?? 600),
+  limit: () => envLimit("RL_SESSION_LIMIT", 600),
   windowMs: 60_000,
   keyFn: keyBySession,
 });
@@ -305,14 +348,14 @@ export const authSurfaceLimiter = createMiddleware(async (c, next) => {
 /** General API limiter, per-user when logged in else per-IP. */
 export const apiLimiter = rateLimit({
   name: "api",
-  limit: Number(process.env.RL_API_LIMIT ?? 600),
+  limit: () => envLimit("RL_API_LIMIT", 600),
   windowMs: 60_000,
   keyFn: keyByUser,
 });
 /** Per-token limiter for public tracking polls. */
 export const trackLimiter = rateLimit({
   name: "track",
-  limit: Number(process.env.RL_TRACK_LIMIT ?? 120),
+  limit: () => envLimit("RL_TRACK_LIMIT", 120),
   windowMs: 60_000,
   keyFn: keyByToken,
 });
@@ -326,14 +369,14 @@ export const trackLimiter = rateLimit({
  */
 export const trackWriteLimiter = rateLimit({
   name: "track-write",
-  limit: Number(process.env.RL_TRACK_WRITE_LIMIT ?? 10),
+  limit: () => envLimit("RL_TRACK_WRITE_LIMIT", 10),
   windowMs: 60_000,
   keyFn: keyByToken,
 });
 /** Per-user/IP limiter for high-frequency driver location pings. */
 export const pingLimiter = rateLimit({
   name: "ping",
-  limit: Number(process.env.RL_PING_LIMIT ?? 60),
+  limit: () => envLimit("RL_PING_LIMIT", 60),
   windowMs: 60_000,
   keyFn: keyByUser,
 });

@@ -82,7 +82,7 @@ export function isSuperadmin(role?: string | null): boolean {
  */
 export const SUPERADMIN_DOMAINS = (process.env.SUPERADMIN_EMAIL_DOMAINS ?? "nvc360.com")
   .split(",")
-  .map((d) => d.trim().toLowerCase())
+  .map((d: string) => d.trim().toLowerCase())
   .filter(Boolean);
 
 /** True if this email is allowed to hold the superadmin role. */
