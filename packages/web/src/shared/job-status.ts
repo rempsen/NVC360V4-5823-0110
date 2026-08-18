@@ -153,3 +153,38 @@ export function transitionError(from: unknown, to: unknown): string | null {
   if (!isKnownStatus(to)) return "That isn't a job stage this app knows about.";
   return "This job has already moved on — pull it up again to see where it is now.";
 }
+
+/**
+ * A technician is already working this job: driving to it, on site, or clocked in.
+ *
+ * Dispatch actions (assign, reassign, reschedule) have to treat these
+ * differently from a job sitting in the queue — a silent write here takes the job
+ * off the phone of someone standing in a customer's mechanical room.
+ */
+export const IN_FLIGHT_STATUSES = ["enroute", "arrived", "onsite", "in_progress", "paused"] as const;
+
+export function isInFlightStatus(status: unknown): boolean {
+  return typeof status === "string" && (IN_FLIGHT_STATUSES as readonly string[]).includes(status);
+}
+
+/**
+ * Null when this job can be handed to a technician, otherwise the reason, written
+ * for the dispatcher.
+ *
+ * `POST /bookings/:id/assign` had no guard at all: it wrote status="assigned",
+ * assignStatus="offered", acceptedAt=null on ANY job. One mis-click on a
+ * completed job put it back on the board as an un-accepted offer, and one on a
+ * live job pulled it out from under the tech mid-visit.
+ */
+export function assignBlockedReason(
+  status: unknown,
+  opts: { force?: boolean } = {},
+): string | null {
+  if (status === "completed")
+    return "This job is already completed — reopen it before dispatching it to someone else.";
+  if (status === "cancelled")
+    return "This job was cancelled — restore it before dispatching it.";
+  if (isInFlightStatus(status) && !opts.force)
+    return "A technician is already working this job. Use Reassign to confirm you want to pull them off it.";
+  return null;
+}

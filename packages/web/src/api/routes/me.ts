@@ -396,7 +396,11 @@ export const meRoutes = new Hono<AppEnv>()
             customerName: (b.customerId ? custMap.get(b.customerId) : "") ?? "",
             scheduledAt: b.scheduledAt ? Number(b.scheduledAt) : null,
             finishedAt: b.finishedAt ? Number(b.finishedAt) : null,
-            price: Number(b.price ?? 0),
+            // Pre-tax job value. `price`/`total` includes the GST/HST the company
+            // collected for the government, so the Earnings screen was showing a
+            // tech $1,130 of "earnings" on a $1,000 job — and payouts are computed
+            // on the pre-tax figure, so the two numbers never reconciled.
+            price: Number(b.subtotal ?? 0) || Math.max(0, Number(b.price ?? 0) - Number(b.taxAmount ?? 0)),
           }));
 
           const payoutRows = await t

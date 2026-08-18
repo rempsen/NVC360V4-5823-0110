@@ -284,6 +284,17 @@ export const bookings = sqliteTable("bookings", {
   techPay: real("tech_pay").notNull().default(0), // computed driver pay for this job (hourly)
   techPayBreakdown: text("tech_pay_breakdown").notNull().default(""), // JSON
   paymentStatus: text("payment_status").notNull().default("unpaid"), // unpaid | paid | refunded
+  /**
+   * The payout that already paid the technician for this job.
+   *
+   * Payout runs used to be selected purely by `scheduledAt`, with nothing
+   * recording that a job had been paid — so re-running a period, or running two
+   * overlapping periods, produced a second payout for the same completed work.
+   * This is the idempotency key for tech pay: a job with a payout is never
+   * picked up again, and deleting a pending payout clears it so the work returns
+   * to the next run.
+   */
+  payoutId: text("payout_id").notNull().default(""),
   // public tracking
   publicToken: text("public_token")
     .notNull()

@@ -4,6 +4,7 @@ import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { ok } from "../../lib/api-ok";
+import { assignJob } from "../../lib/assign-job";
 import { FullLoader } from "../../components/loader";
 import { PageWrap, StatusBadge } from "../../components/brand";
 import { PageHead } from "./shell";
@@ -88,12 +89,12 @@ export default function SchedulerPage() {
   });
   const boardSkillClasses: string[] = (skillClassesQ.data?.skillClasses ?? []).map((s: any) => s.name);
 
+  // assignJob turns the server's "a tech is already working this job" refusal into
+  // a Reassign confirmation. Dragging a card onto another tech's column is exactly
+  // how that used to happen silently, mid-visit.
   const assign = useMutation({
-    mutationFn: async ({ id, riderId }: { id: string; riderId: string }) =>
-      ok(await api.bookings[":id"].assign.$post({
-        param: { id },
-        json: { riderId },
-      })),
+    mutationFn: async ({ id, riderId, techName }: { id: string; riderId: string; techName?: string }) =>
+      assignJob({ bookingId: id, riderId, techName, confirm }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["bookings"] });
       qc.invalidateQueries({ queryKey: ["fleet"] });
@@ -1017,7 +1018,7 @@ export default function SchedulerPage() {
                                   key={t.id}
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    assign.mutate({ id: b.id, riderId: t.id });
+                                    assign.mutate({ id: b.id, riderId: t.id, techName: t.name });
                                     setAssignFor(null);
                                   }}
                                   className={`flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-xs hover:bg-white/5 ${dimmed ? "opacity-50" : ""}`}
@@ -1107,6 +1108,7 @@ export default function SchedulerPage() {
                               assign.mutate({
                                 id: b.id,
                                 riderId: suggest.data!.best!.techId,
+                                techName: suggest.data!.best!.name,
                               });
                             }}
                             className={`mt-1.5 w-full rounded-md py-1 font-semibold text-white ${

@@ -1,7 +1,7 @@
 import { usersForCompany } from "../lib/memberships";
 import { Hono } from "hono";
 import * as schema from "../database/schema";
-import { requireAuth, tenantId } from "../middleware/auth";
+import { requireAdmin, tenantId } from "../middleware/auth";
 import { tdb, type TenantDb } from "../database/tenant";
 import { inPoly } from "../../shared/zone-utils";
 import { companyTimeZone } from "../../services/company-tz";
@@ -84,9 +84,15 @@ async function techNameMap(t: TenantDb) {
   return { map, riders, users, uById };
 }
 
+/**
+ * Every report on this router is company financial data — revenue, margins, COGS,
+ * receivables and what each technician was paid. All of it was behind plain
+ * `requireAuth`, so any signed-in field tech could read the whole company's
+ * books (verified live against a technician's token). Office-only now.
+ */
 export const reportsRoutes = new Hono<AppEnv>()
   // dropdown options for the report filter bar
-  .get("/meta/filters", requireAuth, async (c) => {
+  .get("/meta/filters", requireAdmin, async (c) => {
     const t = tdb(tenantId(c));
     const { map } = await techNameMap(t);
     const techs = [...map.entries()].map(([id, v]) => ({ id, name: v.name })).sort((a, b) => a.name.localeCompare(b.name));
@@ -94,7 +100,7 @@ export const reportsRoutes = new Hono<AppEnv>()
     const statuses = ["pending", "confirmed", "assigned", "enroute", "arrived", "in_progress", "completed", "cancelled"];
     return c.json({ techs, zones, statuses }, 200);
   })
-  .get("/:report", requireAuth, async (c) => {
+  .get("/:report", requireAdmin, async (c) => {
     const report = c.req.param("report");
     const t = tdb(tenantId(c));
     const tz = await companyTimeZone(tenantId(c));

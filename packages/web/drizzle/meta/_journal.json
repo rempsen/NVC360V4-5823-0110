@@ -85,6 +85,13 @@
       "when": 1786830268671,
       "tag": "0011_wild_zarek",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1787058680984,
+      "tag": "0012_fast_gargoyle",
+      "breakpoints": true
     }
   ]
 }

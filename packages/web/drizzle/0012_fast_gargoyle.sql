@@ -1,0 +1,1 @@
+ALTER TABLE `bookings` ADD `payout_id` text DEFAULT '' NOT NULL;

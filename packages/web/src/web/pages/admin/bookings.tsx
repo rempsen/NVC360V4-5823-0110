@@ -6,6 +6,7 @@ import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, apiHeaders } from "../../lib/api";
 import { ok } from "../../lib/api-ok";
+import { assignJob } from "../../lib/assign-job";
 import { StatusBadge, PageWrap } from "../../components/brand";
 import { PageHead } from "./shell";
 import { fmtDate, money, PRIORITY_META, dismiss } from "../../lib/utils";
@@ -1207,6 +1208,7 @@ function RowExportMenu({
 
 function AssignModal({ booking, onClose, onDone }: any) {
   const { noun, nounPlural } = useWorkerNoun();
+  const confirmDispatch = useConfirm();
   const riders = useQuery({
     queryKey: ["riders"],
     queryFn: async () => ok(await api.riders.$get()),
@@ -1218,13 +1220,20 @@ function AssignModal({ booking, onClose, onDone }: any) {
         param: { bookingId: booking.id },
       })),
   });
+  // Goes through assignJob so a refusal to pull a tech off a live job (or to
+  // re-offer a job someone already accepted) becomes a "Reassign?" confirmation
+  // instead of an unexplained failure.
   const assign = useMutation({
-    mutationFn: async (riderId: string) =>
-      api.bookings[":id"].assign.$post({
-        param: { id: booking.id },
-        json: { riderId },
+    mutationFn: async (rider: { id: string; name?: string }) =>
+      assignJob({
+        bookingId: booking.id,
+        riderId: rider.id,
+        techName: rider.name,
+        confirm: confirmDispatch,
       }),
-    onSuccess: onDone,
+    onSuccess: (res) => {
+      if (!res.cancelled) onDone();
+    },
   });
 
   const list = (riders.data?.riders ?? []).filter(
@@ -1294,7 +1303,7 @@ function AssignModal({ booking, onClose, onDone }: any) {
               <button
                 key={r.id}
                 disabled={assign.isPending}
-                onClick={() => assign.mutate(r.id)}
+                onClick={() => assign.mutate({ id: r.id, name: r.name })}
                 className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left transition disabled:opacity-50 ${
                   r.id === bestId
                     ? "border-brand/50 bg-brand/10"

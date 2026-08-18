@@ -28,6 +28,7 @@ import {
 } from "../../services/change-requests";
 import { companyTimeZone } from "../../services/company-tz";
 import { zonedDayBounds, fmtInZone } from "../../shared/tz";
+import { assignBlockedReason, isInFlightStatus, isTerminalStatus } from "../../shared/job-status";
 import { z } from "zod";
 import { jsonBody,
   id as idField,
@@ -303,7 +304,11 @@ const BookingPatch = z
   .refine((v) => Object.keys(v).length > 0, { message: "Nothing to update" });
 
 const ScheduleBody = z.object({ scheduledAt: isoDate("Schedule date") });
-const AssignBody = z.object({ riderId: idField("Technician") });
+const AssignBody = z.object({
+  riderId: idField("Technician"),
+  /** Explicit dispatcher confirmation to pull a tech off a job they're working. */
+  force: z.boolean().optional(),
+});
 const StatusBody = z.object({ status: bookingStatus });
 const ReviewBody = z.object({ rating: ratingField, comment: longText(4_000).optional() });
 const ChecklistBody = z.object({
@@ -740,8 +745,28 @@ export const bookingsRoutes = new Hono<AppEnv>()
     const t = tx(c);
     const prev = await t.selectOne(schema.bookings, eq(schema.bookings.id, id));
     if (!prev) return c.json({ message: "Not found" }, 404);
+    // Revenue reports and payout periods are selected by scheduledAt, so dragging
+    // a finished or cancelled job on the calendar quietly moved money from one
+    // reporting period into another.
+    if (isTerminalStatus(prev.status))
+      return c.json(
+        {
+          message:
+            prev.status === "completed"
+              ? "This job is already completed — its date is part of your reports and payouts and can't be moved."
+              : "This job was cancelled — restore it before rescheduling.",
+          status: prev.status,
+        },
+        409,
+      );
     const set: Record<string, unknown> = { scheduledAt };
     const [b] = await t.update(schema.bookings, set, eq(schema.bookings.id, id));
+    // A `rescheduled` notification exists and is on by default for the client
+    // (email) and the tech (SMS) — but only the customer-initiated change-request
+    // flow ever fired it. When the office moved a job on the calendar, the tech's
+    // phone kept showing the old time and the customer was never told.
+    const moved = Number(prev.scheduledAt ?? 0) !== Number(scheduledAt ?? 0);
+    if (moved) await fireEvent("rescheduled", id);
     return c.json({ booking: await enrich(b) }, 200);
   })
   // admin edits any field on a work order (address, schedule, service, pricing, etc.)
@@ -841,6 +866,16 @@ export const bookingsRoutes = new Hono<AppEnv>()
       if (prev.riderId) await reconcileRiderStatus(co, prev.riderId);
     }
 
+    // Editing the date in the work-order modal is a reschedule too — same silent
+    // failure as the calendar drag: nobody was told the appointment moved.
+    if (
+      body.scheduledAt &&
+      !isTerminalStatus(prev.status) &&
+      Number(prev.scheduledAt ?? 0) !== Number(body.scheduledAt ?? 0)
+    ) {
+      await fireEvent("rescheduled", id);
+    }
+
     // re-price whenever pricing-relevant fields move
     if (
       body.rateModel !== undefined ||
@@ -857,19 +892,73 @@ export const bookingsRoutes = new Hono<AppEnv>()
   // assign a rider (admin) -> offers the job; tech must accept before en route
   .post("/:id/assign", requireAuth, jsonBody(AssignBody), async (c) => {
     const co = tenantId(c);
-    const { riderId } = c.req.valid("json");
+    const u = c.get("user") as SessionUser;
+    // Dispatching work is an office action. This route was open to any signed-in
+    // user in the tenant, so a technician could hand themselves (or a coworker)
+    // any job on the board.
+    if (!isAdminRole(u.role)) return c.json({ message: "Forbidden" }, 403);
+    const { riderId, force } = c.req.valid("json");
     const id = c.req.param("id");
+    const t = tx(c);
     // Tenant check: without this an admin could assign a technician belonging to
     // another company by passing their id — the booking update itself is
     // tenant-scoped, but riderId was never checked against the same tenant.
-    const assignee = await tx(c).selectOne(schema.riders, eq(schema.riders.id, riderId));
+    const assignee = await t.selectOne(schema.riders, eq(schema.riders.id, riderId));
     if (!assignee) return c.json({ message: "Technician not found" }, 404);
-    const [b] = await tx(c).update(
+    // A bad/stale booking id used to fall through to `enrich(undefined)`.
+    const prev = await t.selectOne(schema.bookings, eq(schema.bookings.id, id));
+    if (!prev) return c.json({ message: "Work order not found" }, 404);
+
+    // Terminal and in-flight jobs are protected (see assignBlockedReason).
+    const blocked = assignBlockedReason(prev.status, { force });
+    // `forceable` tells the dispatch UI whether this refusal is a "are you sure"
+    // (a tech is mid-job) or a hard no (the job is completed/cancelled), so it can
+    // offer a Reassign confirmation for the first and only explain the second.
+    if (blocked)
+      return c.json(
+        { message: blocked, status: prev.status, forceable: isInFlightStatus(prev.status) },
+        409,
+      );
+    // Re-offering the job to the tech who already accepted it looks harmless in
+    // the UI but wipes acceptedAt, drops them back to "offered" and re-sends the
+    // dispatch notification. Refuse unless the office really means it.
+    if (prev.riderId === riderId && prev.assignStatus === "accepted" && !force)
+      return c.json(
+        { message: "This technician has already accepted this job.", status: prev.status, forceable: true },
+        409,
+      );
+
+    const set: Record<string, unknown> = {
+      riderId, status: "assigned", assignStatus: "offered",
+      assignedAt: new Date(), acceptedAt: null, declineReason: "",
+    };
+    // Handing a live job to someone else: the new tech must not inherit the
+    // previous tech's drive time, arrival or running on-site clock (that time is
+    // billable and belongs to the first visit, not to this one).
+    if (prev.status !== "assigned" && prev.riderId !== riderId) {
+      set.enrouteAt = null;
+      set.startedAt = null;
+      set.clockState = "idle";
+      set.lastResumeAt = null;
+      set.insideGeofence = false;
+    }
+    // Compare-and-set on the status we just checked: if a tech accepted, released
+    // or completed the job in the meantime, this write does nothing rather than
+    // clobbering the newer state.
+    const [b] = await t.update(
       schema.bookings,
-      { riderId, status: "assigned", assignStatus: "offered", assignedAt: new Date(), acceptedAt: null, declineReason: "" },
-      eq(schema.bookings.id, id),
+      set,
+      and(eq(schema.bookings.id, id), eq(schema.bookings.status, prev.status)),
     );
+    if (!b)
+      return c.json(
+        { message: "This job just changed — pull it up again to see where it is now." },
+        409,
+      );
     await reconcileRiderStatus(co, riderId);
+    // Free the tech who was pulled off, so they don't stay "busy" on a job they
+    // no longer hold.
+    if (prev.riderId && prev.riderId !== riderId) await reconcileRiderStatus(co, prev.riderId);
 
     await fireEvent("assigned", id);
     return c.json({ booking: await enrich(b) }, 200);
