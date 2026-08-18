@@ -398,7 +398,7 @@ function CompanySettingsTab() {
             </p>
             <Field
               label="Auto-arrive radius (meters)"
-              hint={`Default ${DEFAULT_GEOFENCE_RADIUS_M} m. Below about 50 m phone GPS isn't accurate enough to check anyone in reliably.`}
+              hint={`Default ${DEFAULT_GEOFENCE_RADIUS_M} m. Tighter (20-50 m) suits homes and driveways — nobody is checked in early, though phone GPS drift means techs will sometimes tap "I've Arrived" themselves. Wider (150 m+) suits large commercial sites and plazas where the map pin sits far from the actual door.`}
             >
               <input aria-label="Geofence Radius M"
                 type="number"
