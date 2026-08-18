@@ -1,0 +1,33 @@
+name: nvc360-v4
+
+services:
+  db:
+    image: ghcr.io/tursodatabase/libsql-server:latest
+    platform: linux/amd64
+    ports:
+      - "8080:8080"
+      - "5001:5001"
+    environment:
+      - SQLD_NODE=primary
+    volumes:
+      - sqld-data:/var/lib/sqld
+
+  web:
+    image: oven/bun:alpine
+    ports:
+      - "5173:5173"
+    depends_on:
+      - db
+    volumes:
+      - ../../packages/web:/app
+      - node-modules:/app/node_modules
+      - ./entrypoint.sh:/app/entrypoint.sh
+    environment:
+      - DATABASE_URL=http://db:8080
+      - BETTER_AUTH_URL=http://localhost:5173
+    working_dir: /app
+    entrypoint: ["/bin/sh", "/app/entrypoint.sh"]
+
+volumes:
+  sqld-data:
+  node-modules:
