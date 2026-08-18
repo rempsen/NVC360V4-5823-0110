@@ -835,10 +835,24 @@ export const payouts = sqliteTable("payouts", {
   periodStart: integer("period_start", { mode: "timestamp_ms" }).notNull(),
   periodEnd: integer("period_end", { mode: "timestamp_ms" }).notNull(),
   jobsCount: integer("jobs_count").notNull().default(0),
+  // gross == net == the sum of real per-job tech pay (hourly on-site time +
+  // per-unit pay). feePct/fee are legacy columns from the old "percentage of the
+  // customer's invoice" model and are written as 0 on every new payout. The
+  // column default is left at 20 deliberately: changing it would make drizzle
+  // rebuild the table (and every index) on remote Turso for no benefit.
   gross: real("gross").notNull().default(0),
   feePct: real("fee_pct").notNull().default(20),
   fee: real("fee").notNull().default(0),
   net: real("net").notNull().default(0),
+  // Breakdown of how the total was reached, so the office can answer "why is my
+  // cheque this number?" without re-opening every job.
+  hourlyPay: real("hourly_pay").notNull().default(0), // on-site hours x hourly rate
+  unitPay: real("unit_pay").notNull().default(0),     // per-unit line pay
+  onSiteMinutes: real("on_site_minutes").notNull().default(0),
+  // Jobs in this payout that produced $0 because no hourly rate was set and
+  // there was no per-unit pay — the office needs to fix the rate.
+  unratedJobs: integer("unrated_jobs").notNull().default(0),
+  breakdown: text("breakdown").notNull().default(""), // JSON per-job detail
   status: text("status").notNull().default("pending"), // pending | paid
   paidAt: integer("paid_at", { mode: "timestamp_ms" }),
   createdAt: now(),

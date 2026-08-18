@@ -19,6 +19,8 @@ import { requireAuth, loadMemberships } from "../middleware/auth";
 import { isSuperadmin } from "../lib/permissions";
 import { detachMembership } from "../lib/memberships";
 import type { AppEnv } from "../env";
+import { computeTechPay } from "../../shared/tech-pay";
+import { parseLineItems, round2 } from "../../shared/catalog";
 
 type SessionUser = { id: string; role?: string; companyId?: string };
 
@@ -295,7 +297,10 @@ export const meRoutes = new Hono<AppEnv>()
         companies: [],
         jobs: [],
         payouts: [],
-        totals: { gross: 0, weekGross: 0, weekJobs: 0, jobsCount: 0, paidNet: 0 },
+        totals: {
+          gross: 0, weekGross: 0, weekJobs: 0, jobsCount: 0, paidNet: 0,
+          pay: 0, weekPay: 0, hourlyPay: 0, unitPay: 0, onSiteMinutes: 0,
+        },
         truncated: false,
       });
     }
@@ -323,7 +328,16 @@ export const meRoutes = new Hono<AppEnv>()
       customerName: string;
       scheduledAt: number | null;
       finishedAt: number | null;
+      /** Pre-tax value of the job to the company (context, not take-home pay). */
       price: number;
+      /** What the tech actually earns: hourly on-site pay + per-unit pay. */
+      pay: number;
+      onSiteMinutes: number;
+      payRatePerHour: number;
+      hourlyPay: number;
+      unitPay: number;
+      /** $0 because no hourly rate is set and there was no per-unit pay. */
+      unrated: boolean;
     };
     type PayoutRow = {
       id: string;
@@ -334,6 +348,9 @@ export const meRoutes = new Hono<AppEnv>()
       jobsCount: number;
       gross: number;
       net: number;
+      hourlyPay: number;
+      unitPay: number;
+      onSiteMinutes: number;
       status: string;
     };
 
@@ -346,6 +363,10 @@ export const meRoutes = new Hono<AppEnv>()
           rating: null as number | null,
           jobsCount: 0,
           gross: 0,
+          pay: 0,
+          hourlyPay: 0,
+          unitPay: 0,
+          onSiteMinutes: 0,
           jobs: [] as JobRow[],
           payouts: [] as PayoutRow[],
         };
@@ -387,7 +408,17 @@ export const meRoutes = new Hono<AppEnv>()
             us.forEach((u) => custMap.set(u.id, u.name ?? ""));
           }
 
-          const jobs: JobRow[] = completed.map((b) => ({
+          const jobs: JobRow[] = completed.map((b) => {
+            // Real take-home pay for the job: on-site hours x this tech's hourly
+            // rate + per-unit line pay. Computed with the same shared function as
+            // job completion and payout generation, so the Earnings screen can
+            // never disagree with the cheque.
+            const pay = computeTechPay({
+              onSiteMinutes: b.onSiteMinutes || 0,
+              payRatePerHour: rider.payRatePerHour || 0,
+              lineItems: parseLineItems(b.lineItems),
+            });
+            return {
             id: b.id,
             companyId: m.companyId,
             company: companyName,
@@ -396,12 +427,19 @@ export const meRoutes = new Hono<AppEnv>()
             customerName: (b.customerId ? custMap.get(b.customerId) : "") ?? "",
             scheduledAt: b.scheduledAt ? Number(b.scheduledAt) : null,
             finishedAt: b.finishedAt ? Number(b.finishedAt) : null,
+            pay: pay.techPay,
+            onSiteMinutes: b.onSiteMinutes || 0,
+            payRatePerHour: pay.payRatePerHour,
+            hourlyPay: pay.hourlyPay,
+            unitPay: pay.unitPay,
+            unrated: pay.unrated,
             // Pre-tax job value. `price`/`total` includes the GST/HST the company
             // collected for the government, so the Earnings screen was showing a
             // tech $1,130 of "earnings" on a $1,000 job — and payouts are computed
             // on the pre-tax figure, so the two numbers never reconciled.
             price: Number(b.subtotal ?? 0) || Math.max(0, Number(b.price ?? 0) - Number(b.taxAmount ?? 0)),
-          }));
+          };
+          });
 
           const payoutRows = await t
             .select(schema.payouts, eq(schema.payouts.riderId, rider.id))
@@ -415,6 +453,9 @@ export const meRoutes = new Hono<AppEnv>()
             jobsCount: Number(p.jobsCount ?? 0),
             gross: Number(p.gross ?? 0),
             net: Number(p.net ?? 0),
+            hourlyPay: Number(p.hourlyPay ?? 0),
+            unitPay: Number(p.unitPay ?? 0),
+            onSiteMinutes: Number(p.onSiteMinutes ?? 0),
             status: p.status,
           }));
 
@@ -424,7 +465,13 @@ export const meRoutes = new Hono<AppEnv>()
             // Each employer rates independently — never blend these.
             rating: rider.rating == null ? null : Number(rider.rating),
             jobsCount: jobs.length,
-            gross: jobs.reduce((s, j) => s + j.price, 0),
+            // `gross` stays the job value (what the company billed); `pay` is what
+            // the tech earns. They are different numbers and must never be mixed.
+            gross: round2(jobs.reduce((s, j) => s + j.price, 0)),
+            pay: round2(jobs.reduce((s, j) => s + j.pay, 0)),
+            hourlyPay: round2(jobs.reduce((s, j) => s + j.hourlyPay, 0)),
+            unitPay: round2(jobs.reduce((s, j) => s + j.unitPay, 0)),
+            onSiteMinutes: Math.round(jobs.reduce((s, j) => s + j.onSiteMinutes, 0) * 10) / 10,
             jobs,
             payouts,
           };
@@ -454,19 +501,30 @@ export const meRoutes = new Hono<AppEnv>()
 
     return c.json({
       companies: perCompany
-        .map(({ companyId, company, rating, jobsCount, gross }) => ({
+        .map(({ companyId, company, rating, jobsCount, gross, pay, hourlyPay, unitPay, onSiteMinutes }) => ({
           companyId,
           company,
           rating,
           jobsCount,
           gross: +gross.toFixed(2),
+          pay,
+          hourlyPay,
+          unitPay,
+          onSiteMinutes,
         }))
         .sort((a, b) => a.company.localeCompare(b.company)),
       jobs,
       payouts: allPayouts,
       totals: {
+        // `gross`/`weekGross` = value of the work to the company.
+        // `pay`/`weekPay` = what this tech actually earns. Screens must show pay.
         gross: +allJobs.reduce((s, j) => s + j.price, 0).toFixed(2),
         weekGross: +inWeek.reduce((s, j) => s + j.price, 0).toFixed(2),
+        pay: +allJobs.reduce((s, j) => s + j.pay, 0).toFixed(2),
+        weekPay: +inWeek.reduce((s, j) => s + j.pay, 0).toFixed(2),
+        hourlyPay: +allJobs.reduce((s, j) => s + j.hourlyPay, 0).toFixed(2),
+        unitPay: +allJobs.reduce((s, j) => s + j.unitPay, 0).toFixed(2),
+        onSiteMinutes: Math.round(allJobs.reduce((s, j) => s + j.onSiteMinutes, 0) * 10) / 10,
         weekJobs: inWeek.length,
         jobsCount: allJobs.length,
         paidNet: +allPayouts

@@ -118,6 +118,8 @@ async function seedJob(opts: {
   paymentStatus?: string;
   clockState?: string;
   insideGeofence?: boolean;
+  onSiteMinutes?: number;
+  lineItems?: unknown[];
 }) {
   const s = sqlClient();
   const subtotal = opts.subtotal ?? 250;
@@ -128,8 +130,8 @@ async function seedJob(opts: {
             (id, company_id, customer_id, service_id, title, status, assign_status, scheduled_at,
              address, lat, lng, rider_id, price, subtotal, tax_amount, total, payment_status,
              public_token, enroute_at, started_at, accepted_at, clock_state, last_resume_at,
-             inside_geofence, accumulated_ms, on_site_minutes, mileage_km)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+             inside_geofence, accumulated_ms, on_site_minutes, mileage_km, line_items)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     args: [
       opts.id, CO, CUST, SVC, "Rooftop unit service", opts.status,
       opts.assignStatus ?? "accepted",
@@ -145,7 +147,8 @@ async function seedJob(opts: {
       opts.clockState ?? "idle",
       opts.clockState === "running" ? Date.now() - 60_000 : null,
       opts.insideGeofence ? 1 : 0,
-      0, 0, 0,
+      0, opts.onSiteMinutes ?? 0, 0,
+      JSON.stringify(opts.lineItems ?? []),
     ],
   });
 }
@@ -336,62 +339,126 @@ async function payoutRows() {
   return r.rows as any[];
 }
 
-describe("POST /payouts/generate — tech pay", () => {
+const unitLine = (cost: number, name = "Install") => ({
+  id: `li-${name}-${cost}`, kind: "unit", name, unit: "sqft",
+  qty: 1, unitCost: cost, unitPrice: 0, taxable: true, cost, price: 0,
+});
+
+async function setRate(riderId: string, rate: number) {
+  await sqlClient().execute({ sql: "UPDATE riders SET pay_rate_per_hour = ? WHERE id = ?", args: [rate, riderId] });
+}
+
+// Each pay-model case starts from a clean slate: no payouts, and none of the
+// other cases' probe jobs sitting unpaid in the window.
+async function resetPayouts() {
+  await sqlClient().execute("DELETE FROM payouts");
+  await sqlClient().execute("DELETE FROM bookings WHERE id LIKE 'dap-pay%'");
+}
+
+describe("POST /payouts/generate — real tech pay", () => {
   const start = Date.now() - 10 * 86_400_000;
   const end = Date.now() - 1 * 86_400_000;
   const mid = Date.now() - 5 * 86_400_000;
 
-  it("pays the tech on the pre-tax value of the work, not on the sales tax", async () => {
-    await sqlClient().execute("DELETE FROM payouts");
+  const generate = (s = start, e = end) =>
+    req("/payouts/generate", { method: "POST", json: { periodStart: s, periodEnd: e } });
+
+  it("pays on-site hours × the tech's hourly rate, not a percentage of the invoice", async () => {
+    await resetPayouts();
+    await setRate(RIDER, 40);
+    // A 20-minute warranty call on a $4,000 invoice used to pay $3,200.
     await seedJob({
       id: "dap-pay1", status: "completed", paymentStatus: "paid",
-      scheduledAt: mid, subtotal: 1000, taxAmount: 130,
+      scheduledAt: mid, subtotal: 4000, taxAmount: 520, onSiteMinutes: 20,
     });
-    const res = await req("/payouts/generate", {
-      method: "POST",
-      json: { periodStart: start, periodEnd: end, feePct: 20 },
-    });
+    const res = await generate();
     expect(res.status).toBe(201);
     const rows = await payoutRows();
     expect(rows.length).toBe(1);
-    expect(rows[0].gross).toBe(1000);
-    expect(rows[0].fee).toBe(200);
-    expect(rows[0].net).toBe(800);
+    expect(rows[0].hourly_pay).toBe(13.2); // 0.33h × $40
+    expect(rows[0].unit_pay).toBe(0);
+    expect(rows[0].net).toBe(13.2);
+    expect(rows[0].gross).toBe(13.2);
+    // No platform fee in the real-pay model.
+    expect(rows[0].fee).toBe(0);
+    expect(rows[0].fee_pct).toBe(0);
+  });
+
+  it("adds per-unit pay on top of the hourly pay", async () => {
+    await resetPayouts();
+    await setRate(RIDER, 30);
+    await seedJob({
+      id: "dap-pay-unit", status: "completed", scheduledAt: mid,
+      onSiteMinutes: 120, lineItems: [unitLine(150)],
+    });
+    expect((await generate()).status).toBe(201);
+    const p = (await payoutRows()).at(-1)!;
+    expect(p.hourly_pay).toBe(60);
+    expect(p.unit_pay).toBe(150);
+    expect(p.net).toBe(210);
+  });
+
+  it("pays for completed work even when the customer has not paid the invoice yet", async () => {
+    await resetPayouts();
+    await setRate(RIDER, 50);
+    await seedJob({
+      id: "dap-pay-unpaid", status: "completed", paymentStatus: "unpaid",
+      scheduledAt: mid, onSiteMinutes: 60,
+    });
+    expect((await generate()).status).toBe(201);
+    const p = (await payoutRows()).at(-1)!;
+    expect(p.net).toBe(50);
+  });
+
+  it("flags a $0 job whose tech has no hourly rate set instead of hiding it", async () => {
+    await resetPayouts();
+    await setRate(RIDER, 0);
+    await seedJob({ id: "dap-pay-unrated", status: "completed", scheduledAt: mid, onSiteMinutes: 180 });
+    expect((await generate()).status).toBe(201);
+    const p = (await payoutRows()).at(-1)!;
+    expect(p.net).toBe(0);
+    expect(p.unrated_jobs).toBeGreaterThanOrEqual(1);
+    const jobs = JSON.parse(p.breakdown);
+    expect(jobs.find((j: any) => j.bookingId === "dap-pay-unrated").unrated).toBe(true);
+  });
+
+  it("records the per-job breakdown and writes it back on the booking so every screen agrees", async () => {
+    await resetPayouts();
+    await setRate(RIDER, 45);
+    await seedJob({
+      id: "dap-pay-detail", status: "completed", scheduledAt: mid,
+      onSiteMinutes: 90, lineItems: [unitLine(25)],
+    });
+    expect((await generate()).status).toBe(201);
+    const p = (await payoutRows()).at(-1)!;
+    const jobs = JSON.parse(p.breakdown);
+    const j = jobs.find((x: any) => x.bookingId === "dap-pay-detail");
+    expect(j.hourlyPay).toBe(67.5);
+    expect(j.unitPay).toBe(25);
+    expect(j.techPay).toBe(92.5);
+    expect(Number((await row("dap-pay-detail")).tech_pay)).toBe(92.5);
   });
 
   it("will not pay the same job twice when the period is generated again", async () => {
-    const res = await req("/payouts/generate", {
-      method: "POST",
-      json: { periodStart: start, periodEnd: end, feePct: 20 },
-    });
+    const res = await generate();
     expect(res.status).toBe(201);
     expect(((await res.json()) as any).created).toBe(0);
-    expect((await payoutRows()).length).toBe(1);
   });
 
   it("will not pay the same job twice through an overlapping period either", async () => {
-    const res = await req("/payouts/generate", {
-      method: "POST",
-      json: { periodStart: start - 5 * 86_400_000, periodEnd: end + 0, feePct: 20 },
-    });
+    const res = await generate(start - 5 * 86_400_000, end);
     expect(((await res.json()) as any).created).toBe(0);
-    expect((await payoutRows()).length).toBe(1);
   });
 
   it("still picks up a job that was completed late and never paid out", async () => {
-    await seedJob({
-      id: "dap-pay-late", status: "completed", paymentStatus: "paid",
-      scheduledAt: mid, subtotal: 500, taxAmount: 65,
-    });
-    const res = await req("/payouts/generate", {
-      method: "POST",
-      json: { periodStart: start, periodEnd: end, feePct: 20 },
-    });
+    const before = (await payoutRows()).length;
+    await setRate(RIDER, 20);
+    await seedJob({ id: "dap-pay-late", status: "completed", scheduledAt: mid, onSiteMinutes: 30 });
+    const res = await generate();
     expect(((await res.json()) as any).created).toBe(1);
     const rows = await payoutRows();
-    expect(rows.length).toBe(2);
-    expect(rows[1].gross).toBe(500);
-    expect(rows[1].net).toBe(400);
+    expect(rows.length).toBe(before + 1);
+    expect(rows.at(-1)!.net).toBe(10); // 0.5h × $20
   });
 });
 

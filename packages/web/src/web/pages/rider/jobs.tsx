@@ -137,7 +137,11 @@ function JobCard({ b, cta }: { b: any; cta: string }) {
           {b.customer && <p className="mt-0.5 text-xs text-slate-500">Customer: {b.customer.name}</p>}
         </div>
         <div className="text-right">
-          <div className="font-extrabold text-green-600">{money(b.techPay ?? b.price)}</div>
+          {/* Real pay, not the customer's price. Pay is only known once the job
+              is completed and the on-site clock has been banked. */}
+          <div className="font-extrabold text-green-600">
+            {b.status === "completed" ? money(Number(b.techPay) || 0) : <span className="text-xs font-semibold text-slate-500">Pay on completion</span>}
+          </div>
           <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-cyan-glow">{cta}<ArrowRight className="h-3 w-3" /></span>
         </div>
       </div>

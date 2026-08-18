@@ -24,10 +24,30 @@ export default function RiderEarnings() {
   const list = bookings.data?.bookings ?? [];
   const completed = list.filter((b) => b.status === "completed");
 
-  // Use techPay if available (unit-line jobs), fallback to price
-  const toEarnings = (b: any) => Number(b.techPay ?? b.price ?? 0);
+  /**
+   * Real pay, never the job's price. `price` is what the CUSTOMER was charged;
+   * pay is on-site hours × the tech's hourly rate + per-unit pay, computed on
+   * the server at completion (and again when the payout is generated), so this
+   * screen always matches the cheque.
+   */
+  const toEarnings = (b: any) => Number(b.techPay ?? 0) || 0;
+  const breakdownOf = (b: any) => {
+    try {
+      const x = JSON.parse(b.techPayBreakdown || "null");
+      return x && typeof x === "object" ? x : null;
+    } catch { return null; }
+  };
+  const fmtMins = (m: number) => {
+    const n = Math.max(0, Math.round(Number(m) || 0));
+    if (n === 0) return "0m";
+    const h = Math.floor(n / 60);
+    return h > 0 ? `${h}h ${n % 60}m` : `${n}m`;
+  };
 
   const total = completed.reduce((s, b) => s + toEarnings(b), 0);
+  const hourlyTotal = completed.reduce((s, b) => s + (Number(breakdownOf(b)?.hourlyPay) || 0), 0);
+  const unitTotal = completed.reduce((s, b) => s + (Number(breakdownOf(b)?.unitPay) || 0), 0);
+  const minsTotal = completed.reduce((s, b) => s + (Number(breakdownOf(b)?.onSiteMinutes) || 0), 0);
 
   const now = Date.now();
   const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
@@ -48,6 +68,25 @@ export default function RiderEarnings() {
       <div className="grid grid-cols-2 gap-3">
         <Stat icon={TrendingUp} label="This week" value={money(weekly)} tint="text-green-600 bg-green-50" />
         <Stat icon={CheckCircle2} label="Jobs done" value={String(completed.length)} tint="text-cyan-glow bg-brand/15" />
+      </div>
+
+      {/* How the total was reached — on-site time × hourly rate, plus per-unit work. */}
+      <div className="rounded-2xl border border-white/5 bg-ink-2 p-4">
+        <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-slate-500">How your pay is calculated</h2>
+        <div className="space-y-2 text-sm">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-slate-300">On-site time <span className="text-xs text-slate-500">({fmtMins(minsTotal)} worked)</span></span>
+            <span className="font-semibold text-white">{money(hourlyTotal)}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-slate-300">Per-unit work</span>
+            <span className="font-semibold text-white">{money(unitTotal)}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3 border-t border-white/5 pt-2">
+            <span className="text-xs font-bold uppercase tracking-wide text-slate-500">Total earned</span>
+            <span className="font-extrabold text-green-600">{money(total)}</span>
+          </div>
+        </div>
       </div>
 
       <div>
@@ -78,6 +117,23 @@ export default function RiderEarnings() {
                     </div>
                     <p className="mt-0.5 text-xs text-slate-500">{fmtDate(b.scheduledAt)}</p>
                     {b.customer && <p className="text-xs text-slate-500">{b.customer.name}</p>}
+                    {(() => {
+                      const bd = breakdownOf(b);
+                      if (!bd) return null;
+                      const hourly = Number(bd.hourlyPay) || 0;
+                      const unit = Number(bd.unitPay) || 0;
+                      const rate = Number(bd.payRatePerHour) || 0;
+                      return (
+                        <p className="mt-0.5 text-[11px] text-slate-500">
+                          {hourly > 0
+                            ? `${fmtMins(bd.onSiteMinutes)} on site${rate ? ` @ ${money(rate)}/h` : ""} = ${money(hourly)}`
+                            : bd.unrated
+                              ? "No pay rate set — ask the office"
+                              : `${fmtMins(bd.onSiteMinutes)} on site`}
+                          {unit > 0 ? ` · per-unit ${money(unit)}` : ""}
+                        </p>
+                      );
+                    })()}
                   </div>
                   <div className="font-extrabold text-green-600">+{money(toEarnings(b))}</div>
                 </div>

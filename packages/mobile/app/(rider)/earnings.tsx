@@ -38,7 +38,16 @@ type EarnJob = {
   customerName: string;
   scheduledAt: number | null;
   finishedAt: number | null;
+  /** Pre-tax value of the job to the company — NOT what the tech takes home. */
   price: number;
+  /** Real pay: on-site hours x hourly rate + per-unit pay. */
+  pay: number;
+  onSiteMinutes: number;
+  payRatePerHour: number;
+  hourlyPay: number;
+  unitPay: number;
+  /** $0 because the office has not set an hourly rate and there was no unit pay. */
+  unrated: boolean;
 };
 type EarnPayout = {
   id: string;
@@ -49,6 +58,9 @@ type EarnPayout = {
   jobsCount: number;
   gross: number;
   net: number;
+  hourlyPay: number;
+  unitPay: number;
+  onSiteMinutes: number;
   status: string;
 };
 type EarnCompany = {
@@ -57,12 +69,19 @@ type EarnCompany = {
   rating: number | null;
   jobsCount: number;
   gross: number;
+  pay: number;
+  hourlyPay: number;
+  unitPay: number;
+  onSiteMinutes: number;
 };
 type Earnings = {
   companies: EarnCompany[];
   jobs: EarnJob[];
   payouts: EarnPayout[];
-  totals: { gross: number; weekGross: number; weekJobs: number; jobsCount: number; paidNet: number };
+  totals: {
+    gross: number; weekGross: number; weekJobs: number; jobsCount: number; paidNet: number;
+    pay: number; weekPay: number; hourlyPay: number; unitPay: number; onSiteMinutes: number;
+  };
   truncated: boolean;
 };
 
@@ -72,6 +91,14 @@ type Earnings = {
  * than using list order — otherwise a company's colour would change the moment
  * the driver joins another roster.
  */
+/** Minutes -> "1h 45m" / "45m" / "—", for pay lines. */
+function fmtHours(mins: number): string {
+  const n = Math.max(0, Math.round(Number(mins) || 0));
+  if (n === 0) return "0m";
+  const h = Math.floor(n / 60);
+  return h > 0 ? `${h}h ${n % 60}m` : `${n}m`;
+}
+
 const CHIP_COLORS = [C.brand, "#a78bfa", C.amber, "#34d399", "#f472b6", C.cyan];
 function chipColor(companyId: string): string {
   let h = 0;
@@ -125,7 +152,7 @@ export default function Earnings() {
     <View style={{ gap: 22, marginBottom: 10 }}>
       <View style={s.heroCard}>
         <Text style={s.heroLbl}>This week{multi ? " · all companies" : ""}</Text>
-        <Text style={s.heroAmt}>{money(d?.totals.weekGross ?? 0)}</Text>
+        <Text style={s.heroAmt}>{money(d?.totals.weekPay ?? 0)}</Text>
         <View style={s.heroRow}>
           <TrendUp color={C.green} size={16} />
           <Text style={s.heroSub}>
@@ -135,10 +162,29 @@ export default function Earnings() {
       </View>
 
       <View style={s.statGrid}>
-        <Stat label={multi ? "Total earned (all)" : "Total earned"} value={money(d?.totals.gross ?? 0)} />
+        <Stat label={multi ? "Total earned (all)" : "Total earned"} value={money(d?.totals.pay ?? 0)} />
         <Stat label={`${jobNounPlural} done`} value={String(d?.totals.jobsCount ?? 0)} />
         <Stat label="Paid out" value={money(d?.totals.paidNet ?? 0)} />
         <Stat label="Companies" value={String(rosters.length || 1)} />
+      </View>
+
+      {/* How the total was earned. Pay is on-site time x hourly rate plus any
+          per-unit work, so the split is shown instead of one opaque number —
+          "why is my cheque this?" should be answerable on this screen. */}
+      <View style={s.splitCard}>
+        <Text style={s.section}>How your pay is calculated</Text>
+        <View style={s.splitRow}>
+          <Text style={s.splitLbl}>On-site time{"\n"}<Text style={s.splitHint}>{fmtHours(d?.totals.onSiteMinutes ?? 0)} worked</Text></Text>
+          <Text style={s.splitVal}>{money(d?.totals.hourlyPay ?? 0)}</Text>
+        </View>
+        <View style={s.splitRow}>
+          <Text style={s.splitLbl}>Per-unit work</Text>
+          <Text style={s.splitVal}>{money(d?.totals.unitPay ?? 0)}</Text>
+        </View>
+        <View style={[s.splitRow, s.splitTotal]}>
+          <Text style={s.splitTotalLbl}>Total earned</Text>
+          <Text style={s.splitTotalVal}>{money(d?.totals.pay ?? 0)}</Text>
+        </View>
       </View>
 
       {/* Per-company breakdown. Ratings are set by each employer separately,
@@ -149,7 +195,7 @@ export default function Earnings() {
           {rosters.map((r) => (
             <Card
               key={r.companyId}
-              accessibilityLabel={`${r.company}: ${r.jobsCount} jobs, ${money(r.gross)}${
+              accessibilityLabel={`${r.company}: ${r.jobsCount} jobs, ${money(r.pay)} earned${
                 r.rating != null ? `, rated ${r.rating.toFixed(1)}` : ""
               }${r.companyId === activeCompany ? ", current shift" : ""}`}
             >
@@ -252,7 +298,7 @@ export default function Earnings() {
           removeClippedSubviews
           renderItem={({ item: b }) => (
             <Card
-              accessibilityLabel={`${b.service || b.title || "Job"} for ${b.customerName || "customer"} at ${b.company}, completed ${fmtDate(b.finishedAt ?? b.scheduledAt ?? 0)}, ${money(b.price)}`}
+              accessibilityLabel={`${b.service || b.title || "Job"} for ${b.customerName || "customer"} at ${b.company}, completed ${fmtDate(b.finishedAt ?? b.scheduledAt ?? 0)}, earned ${money(b.pay)}`}
             >
               <View style={s.jobRow}>
                 <CheckCircle color={C.green} size={22} weight="fill" />
@@ -267,8 +313,17 @@ export default function Earnings() {
                   <Text style={s.jobMeta} numberOfLines={1}>
                     {b.customerName} · {fmtDate(b.finishedAt ?? b.scheduledAt ?? 0)}
                   </Text>
+                  {/* Pay breakdown per job, so the number is never a mystery. */}
+                  <Text style={s.jobPay} numberOfLines={1}>
+                    {b.hourlyPay > 0
+                      ? `${fmtHours(b.onSiteMinutes)} on site${b.payRatePerHour ? ` @ ${money(b.payRatePerHour)}/h` : ""} = ${money(b.hourlyPay)}`
+                      : b.unrated
+                        ? "No pay rate set — ask the office"
+                        : `${fmtHours(b.onSiteMinutes)} on site`}
+                    {b.unitPay > 0 ? ` · per-unit ${money(b.unitPay)}` : ""}
+                  </Text>
                 </View>
-                <Text style={s.jobAmt}>{money(b.price)}</Text>
+                <Text style={s.jobAmt}>{money(b.pay)}</Text>
               </View>
             </Card>
           )}
@@ -340,4 +395,20 @@ const s = StyleSheet.create({
   jobName: { color: C.text, fontSize: 15, fontWeight: "700" },
   jobMeta: { color: C.sub, fontSize: 12 },
   jobAmt: { color: C.green, fontSize: 15, fontWeight: "800" },
+  jobPay: { color: C.sub, fontSize: 11.5, fontWeight: "600" },
+  splitCard: {
+    backgroundColor: C.card,
+    borderRadius: R.card,
+    borderWidth: 1,
+    borderColor: C.border,
+    padding: 16,
+    gap: 10,
+  },
+  splitRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  splitLbl: { color: C.text, fontSize: 13, fontWeight: "700", flex: 1 },
+  splitHint: { color: C.sub, fontSize: 11.5, fontWeight: "600" },
+  splitVal: { color: C.text, fontSize: 14, fontWeight: "800" },
+  splitTotal: { borderTopWidth: 1, borderTopColor: C.border, paddingTop: 10 },
+  splitTotalLbl: { color: C.sub, fontSize: 12, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.8 },
+  splitTotalVal: { color: C.green, fontSize: 17, fontWeight: "900" },
 });

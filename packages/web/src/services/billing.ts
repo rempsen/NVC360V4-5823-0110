@@ -3,7 +3,8 @@ import { eq } from "drizzle-orm";
 import { tdb } from "../api/database/tenant";
 import { parseRateModel, computeSubtotal, EMPTY_RATE_MODEL, type RateModel } from "../shared/pricing";
 import { lookupTax, regionFromAddress } from "../shared/tax";
-import { parseLineItems, sumLineItems, sumUnitLinePay, round2 } from "../shared/catalog";
+import { parseLineItems, sumLineItems, round2 } from "../shared/catalog";
+import { computeTechPay, type TechPayResult } from "../shared/tech-pay";
 
 /**
  * Tenancy: every function takes the resolved `companyId` and routes all
@@ -122,41 +123,36 @@ export async function quoteBooking(companyId: string, bookingId: string, actualM
   return recomputeBooking(companyId, bookingId, { actualMinutes, actualKm, persist: false });
 }
 
-export interface TechPayResult {
-  hours: number;
-  payRatePerHour: number;
-  hourlyPay: number;
-  unitPay: number;
-  techPay: number;
-}
+export type { TechPayResult } from "../shared/tech-pay";
 
 /** Compute & persist tech pay for a completed job.
- *  = hourly pay (on-site time × rider hourly rate) + ad-hoc per-unit line pay. */
+ *  = hourly pay (on-site time × rider hourly rate) + ad-hoc per-unit line pay.
+ *  The arithmetic lives in `shared/tech-pay.ts` so job completion, payout
+ *  generation and the Earnings screens can never drift apart. */
 export async function accrueTechPay(companyId: string, bookingId: string): Promise<TechPayResult | null> {
   const t = tdb(companyId);
   const b = await t.selectOne(schema.bookings, eq(schema.bookings.id, bookingId));
   if (!b || !b.riderId) return null;
   const r = await t.selectOne(schema.riders, eq(schema.riders.id, b.riderId));
   if (!r) return null;
-  const payRatePerHour = r.payRatePerHour || 0;
-  const minutes = b.onSiteMinutes || 0;
-  const hours = Math.round((minutes / 60) * 100) / 100;
-  const hourlyPay = Math.round(hours * payRatePerHour * 100) / 100;
-  // per-unit line items also pay the tech (e.g. $1.20/sq-ft installed)
-  const unitPay = sumUnitLinePay(parseLineItems(b.lineItems));
-  const techPay = round2(hourlyPay + unitPay);
+  const pay = computeTechPay({
+    onSiteMinutes: b.onSiteMinutes || 0,
+    payRatePerHour: r.payRatePerHour || 0,
+    lineItems: parseLineItems(b.lineItems),
+  });
   const breakdown = {
-    onSiteMinutes: minutes,
-    hours,
-    payRatePerHour,
-    hourlyPay,
-    unitPay,
+    onSiteMinutes: b.onSiteMinutes || 0,
+    hours: pay.hours,
+    payRatePerHour: pay.payRatePerHour,
+    hourlyPay: pay.hourlyPay,
+    unitPay: pay.unitPay,
     mileageKm: b.mileageKm || 0,
-    techPay,
+    techPay: pay.techPay,
+    unrated: pay.unrated,
   };
   await t.update(schema.bookings, {
-    techPay,
+    techPay: pay.techPay,
     techPayBreakdown: JSON.stringify(breakdown),
   }, eq(schema.bookings.id, bookingId));
-  return { hours, payRatePerHour, hourlyPay, unitPay, techPay };
+  return pay;
 }
