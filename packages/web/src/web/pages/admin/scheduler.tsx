@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { ok } from "../../lib/api-ok";
 import { assignJob } from "../../lib/assign-job";
+import { runWithForceConfirm } from "../../lib/force-confirm";
 import { FullLoader } from "../../components/loader";
 import { PageWrap, StatusBadge } from "../../components/brand";
 import { PageHead } from "./shell";
@@ -134,12 +135,22 @@ export default function SchedulerPage() {
     if (ok) del.mutate(b.id);
   };
 
+  // Dropping a card on a new day/time can put the assigned tech in two places at
+  // once, or on a day they booked off. The server refuses with a forceable 409;
+  // this turns it into one question instead of a silent double booking.
   const reschedule = useMutation({
     mutationFn: async ({ id, scheduledAt }: { id: string; scheduledAt: string }) =>
-      ok(await api.bookings[":id"].schedule.$post({
-        param: { id },
-        json: { scheduledAt },
-      })),
+      runWithForceConfirm(
+        async (force) =>
+          ok(
+            await api.bookings[":id"].schedule.$post({
+              param: { id },
+              json: force ? { scheduledAt, force: true } : { scheduledAt },
+            }),
+          ),
+        confirm,
+        { title: "Move it there anyway?", confirmLabel: "Move it" },
+      ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["bookings"] }),
   });
 

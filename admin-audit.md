@@ -150,22 +150,87 @@ which is also the figure payouts are computed on, so the two finally reconcile.
 
 ---
 
+### P0-9 — Payouts paid a cut of the invoice instead of what the tech earned ✅ fixed
+
+Two pay models disagreed: `accrueTechPay()` stored real pay per job (hourly rate ×
+on-site minutes + per-unit line pay), while the payouts screen paid *gross minus a
+platform fee %*. Real pay is now the only model, in one place:
+`packages/web/src/shared/tech-pay.ts` (`computeTechPay()`), used by both
+`services/billing.ts` and `api/routes/payouts.ts`.
+
+- Platform fee % is gone from the payout run and from the UI.
+- Completed jobs are included whether or not the customer has paid yet.
+- A job with no hourly rate and no per-unit lines pays `$0` and is flagged
+  ("no pay rate set") instead of quietly paying a percentage.
+- Payouts now store the breakdown: `hourly_pay`, `unit_pay`, `on_site_minutes`,
+  `unrated_jobs`, `breakdown` (migration `0013_cooing_spacker_dave.sql`, applied to
+  live Turso and columns confirmed present).
+- Admin payouts screen shows hourly / per-unit / total per tech with expandable
+  per-job detail.
+
+### P0-10 — Driver and web "Earnings" showed job value, not the tech's pay ✅ fixed
+
+`/api/me/earnings`, the web rider Earnings and Jobs pages, and the driver app's
+Earnings screen all show real pay now, with the hourly + per-unit split. Rider job
+cards show "Pay on completion" before the job is finished. Shipped to TestFlight as
+build 17 (1.0.1).
+
+Fixed in commit `0e1e30e`. Verified live with `tech-pay-verify.py` —
+**ALL CLEAN, 36 assertions** against the running server on 4200 and the real Turso
+database; probe booking/payout rows deleted and deletion verified, tech hourly rate
+restored. Sabotage-checked (payout `net` temporarily set back to a % of total → named
+payout tests failed; restored → green). Gates: `bun test src` **661 pass / 0 fail** ·
+CI-shape **590 pass** · `tsc --noEmit` **0** · `oxlint` **0 / 355 files** ·
+`vite build` ok · `crash-sweep.py` **50/50** · mobile `typecheck` **0** · GitHub CI
+run `32148176120` **success**.
+
+---
+
+
+### P1-11 — The dispatcher could send one tech to two jobs at the same time ✅ fixed
+
+Assign, create, edit, and drag-to-reschedule now check the assigned technician's
+other non-terminal, non-archived jobs using the service duration (fallback: one
+hour). A clash returns a forceable 409 with a plain-English message (for example,
+"Dan Rosenblat is already booked at 2:00 PM — Availability probe"), and the web UI
+asks the dispatcher before continuing. Back-to-back jobs are allowed; completed,
+cancelled, archived, unassigned, and other-tech jobs do not count as clashes.
+
+### P1-12 — Time off existed, but dispatch ignored it ✅ fixed
+
+`tech_shifts` time-off rows are now enforced when the office assigns, creates,
+edits, or reschedules work. This is also forceable — the company can still override
+it intentionally — but not silently. Regular shift rows are not treated as hard
+availability; many tenants do not fill shift calendars consistently.
+
+### P1-13 — Shift/time-off rows could store broken dates and impossible times ✅ fixed
+
+`/api/shifts` now validates input instead of raw `c.req.json()`: bad dates are 400,
+stale/cross-tenant rider ids are 404, start/end minutes must be real minutes within
+the day, end must be after start, `kind` must be `shift` or `timeoff`, and PUT/DELETE
+unknown ids return 404. Date-picker values like `2026-09-15` are stored as the start
+of that day in the company's own timezone, not UTC midnight (which showed/enforced
+the previous day for North American tenants).
+
+New proof:
+- Pure tests: `src/shared/__tests__/availability.test.ts` — overlap, back-to-back,
+  default duration, time-off day matching, and dispatcher messages.
+- Route tests: `dispatch-and-payouts.test.ts` now covers availability across assign,
+  schedule, create and patch; `shifts.test.ts` covers validation and tenant checks.
+- Sabotage check: temporarily disabled the assign availability block; the named
+  double-booking + time-off tests failed, restored green.
+- Live verifier: `availability-verify.py` → **ALL CLEAN, 20 assertions** against the
+  running server on 4200 and the real Turso database. It only exercised refusals, so
+  no assigned/rescheduled notifications were sent. Probe booking/shift rows were
+  deleted and deletion verified.
+
+---
 ## Open — your decisions, not code
 
-1. **There are two tech-pay models in the app and they don't agree.** Per job,
-   `accrueTechPay()` computes real pay as *hourly rate × on-site time + per-unit line
-   pay* and stores it on the job (`tech_pay`). The payouts screen ignores that
-   completely and pays *gross minus a platform fee %*. Both are now internally
-   correct, but only one of them is how you actually pay people. Tell me which, and
-   I'll make the other one follow it (or retire it).
-2. **"Earnings" on the driver app is job value, not his pay.** It is now the pre-tax
-   value of the work he did, which is honest, but a tech will read it as take-home.
-   Relabelling it ("Work completed" with his `tech_pay` beside it) is a mobile copy
-   change and needs an EAS build, so I left it for you to call.
-3. **Assign and reschedule aren't in the audit log.** Payouts, deletes and edits are.
+1. **Assign and reschedule aren't in the audit log.** Payouts, deletes and edits are.
    Given that a reassignment now moves clock state around, I'd log both — say the
    word.
-4. **Twilio is still authenticating with the account SID and auth token** rather than
+2. **Twilio is still authenticating with the account SID and auth token** rather than
    an API key (`TWILIO_API_KEY_SID` / `TWILIO_API_KEY_SECRET` are not in the
    environment). Pre-existing, works fine, weaker than it should be.
 

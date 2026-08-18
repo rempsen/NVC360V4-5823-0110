@@ -42,7 +42,7 @@
  * are seeded, so fireEvent resolves zero recipients and sends no SMS or email —
  * only the job-events timeline row it writes is observable.
  */
-import { describe, it, expect, beforeAll } from "bun:test";
+import { describe, it, expect, beforeAll, beforeEach } from "bun:test";
 import { Hono } from "hono";
 import { getTableConfig, type SQLiteColumn } from "drizzle-orm/sqlite-core";
 
@@ -193,6 +193,7 @@ beforeAll(async () => {
     schema.webhookEndpoints, schema.automationRules, schema.reviews,
     schema.notificationChannels, schema.trackingPings, schema.memberships,
     schema.scheduledTasks, schema.payouts, schema.auditLog, schema.catalogItems,
+    schema.techShifts,
   ]) {
     await s.execute(ddlFor(t));
   }
@@ -517,5 +518,200 @@ describe("financial data is office-only", () => {
 
   it("still serves reports to the office", async () => {
     expect((await req("/reports/revenue")).status).toBe(200);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5. Availability: double booking + time off
+// ---------------------------------------------------------------------------
+
+/**
+ * The board would send one tech to two addresses at the same hour, and
+ * `tech_shifts` (time off, written from the tech's profile) was read by nothing.
+ * Both are now forceable refusals — the office confirms instead of finding out
+ * from the second customer.
+ */
+const HOUR = 3_600_000;
+// A fixed instant well clear of "now" so nothing here depends on the clock.
+const SLOT = Date.UTC(2026, 8, 15, 18, 0, 0); // 2026-09-15 18:00Z
+
+/**
+ * Availability is the one area where the OTHER rows in the table are the input,
+ * so each case starts from a clean slate instead of inheriting the previous
+ * case's probe job and clashing with it.
+ */
+async function clearAvailabilityFixtures() {
+  const s = sqlClient();
+  await s.execute(
+    "DELETE FROM bookings WHERE id LIKE 'dap-av%' OR id LIKE 'dap-off%' OR id LIKE 'dap-mv%' OR id LIKE 'dap-cr%' OR id LIKE 'dap-pt%'",
+  );
+  await s.execute("DELETE FROM tech_shifts");
+}
+
+async function seedTimeOff(id: string, riderId: string, dayMs: number, kind = "timeoff") {
+  const s = sqlClient();
+  await s.execute({ sql: "DELETE FROM tech_shifts WHERE id = ?", args: [id] });
+  await s.execute({
+    sql: `INSERT INTO tech_shifts (id, company_id, rider_id, kind, date, start_min, end_min, note)
+          VALUES (?,?,?,?,?,?,?,?)`,
+    args: [id, CO, riderId, kind, dayMs, 540, 1020, "Vacation"],
+  });
+}
+
+describe("dispatch respects the technician's other work", () => {
+  beforeEach(clearAvailabilityFixtures);
+
+  it("refuses to double-book a tech, and says when and on what", async () => {
+    await seedJob({ id: "dap-av-busy", status: "assigned", riderId: RIDER, scheduledAt: SLOT });
+    await seedJob({ id: "dap-av-new", status: "confirmed", assignStatus: "", riderId: null, scheduledAt: SLOT + 30 * 60_000 });
+    const res = await assign("dap-av-new", RIDER);
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.forceable).toBe(true);
+    expect(body.message).toContain("already booked");
+    // untouched
+    expect((await row("dap-av-new")).rider_id).toBeFalsy();
+  });
+
+  it("dispatches anyway when the office confirms", async () => {
+    await seedJob({ id: "dap-av-busy2", status: "assigned", riderId: RIDER, scheduledAt: SLOT });
+    await seedJob({ id: "dap-av-new2", status: "confirmed", assignStatus: "", riderId: null, scheduledAt: SLOT + 30 * 60_000 });
+    const res = await assign("dap-av-new2", RIDER, { force: true });
+    expect(res.status).toBe(200);
+    expect((await row("dap-av-new2")).rider_id).toBe(RIDER);
+  });
+
+  it("does not count a finished job as a clash", async () => {
+    await seedJob({ id: "dap-av-done", status: "completed", riderId: RIDER, scheduledAt: SLOT });
+    await seedJob({ id: "dap-av-new3", status: "confirmed", assignStatus: "", riderId: null, scheduledAt: SLOT });
+    expect((await assign("dap-av-new3", RIDER)).status).toBe(200);
+  });
+
+  it("does not count an archived job as a clash", async () => {
+    await seedJob({ id: "dap-av-arch", status: "assigned", riderId: RIDER, scheduledAt: SLOT });
+    await sqlClient().execute({ sql: "UPDATE bookings SET deleted_at = ? WHERE id = ?", args: [Date.now(), "dap-av-arch"] });
+    await seedJob({ id: "dap-av-new4", status: "confirmed", assignStatus: "", riderId: null, scheduledAt: SLOT });
+    expect((await assign("dap-av-new4", RIDER)).status).toBe(200);
+  });
+
+  it("lets back-to-back jobs through", async () => {
+    await seedJob({ id: "dap-av-first", status: "assigned", riderId: RIDER, scheduledAt: SLOT });
+    await seedJob({ id: "dap-av-next", status: "confirmed", assignStatus: "", riderId: null, scheduledAt: SLOT + HOUR });
+    expect((await assign("dap-av-next", RIDER)).status).toBe(200);
+  });
+
+  it("does not mind another tech being busy at that time", async () => {
+    await seedJob({ id: "dap-av-other", status: "assigned", riderId: RIDER2, scheduledAt: SLOT });
+    await seedJob({ id: "dap-av-new5", status: "confirmed", assignStatus: "", riderId: null, scheduledAt: SLOT });
+    expect((await assign("dap-av-new5", RIDER)).status).toBe(200);
+  });
+});
+
+describe("dispatch respects booked time off", () => {
+  beforeEach(clearAvailabilityFixtures);
+
+  it("refuses to dispatch a tech on a day they booked off", async () => {
+    await seedTimeOff("dap-off-1", RIDER, Date.UTC(2026, 8, 15, 5, 0, 0));
+    await seedJob({ id: "dap-off-job", status: "confirmed", assignStatus: "", riderId: null, scheduledAt: SLOT });
+    const res = await assign("dap-off-job", RIDER);
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.forceable).toBe(true);
+    expect(body.message).toContain("time off");
+    await sqlClient().execute({ sql: "DELETE FROM tech_shifts WHERE id = ?", args: ["dap-off-1"] });
+  });
+
+  it("ignores a regular shift row", async () => {
+    await seedTimeOff("dap-off-2", RIDER, Date.UTC(2026, 8, 15, 5, 0, 0), "shift");
+    await seedJob({ id: "dap-off-job2", status: "confirmed", assignStatus: "", riderId: null, scheduledAt: SLOT });
+    expect((await assign("dap-off-job2", RIDER)).status).toBe(200);
+    await sqlClient().execute({ sql: "DELETE FROM tech_shifts WHERE id = ?", args: ["dap-off-2"] });
+  });
+});
+
+describe("POST /bookings/:id/schedule — moving a job onto busy time", () => {
+  beforeEach(clearAvailabilityFixtures);
+
+  it("refuses to move a job on top of the same tech's other job", async () => {
+    await seedJob({ id: "dap-mv-busy", status: "assigned", riderId: RIDER, scheduledAt: SLOT });
+    await seedJob({ id: "dap-mv-job", status: "assigned", riderId: RIDER, scheduledAt: SLOT + 5 * HOUR });
+    const res = await reschedule("dap-mv-job", SLOT + 15 * 60_000);
+    expect(res.status).toBe(409);
+    expect((await res.json()).forceable).toBe(true);
+    expect(Number((await row("dap-mv-job")).scheduled_at)).toBe(SLOT + 5 * HOUR);
+  });
+
+  it("moves it when the office confirms", async () => {
+    await seedJob({ id: "dap-mv-busy2", status: "assigned", riderId: RIDER, scheduledAt: SLOT });
+    await seedJob({ id: "dap-mv-job2", status: "assigned", riderId: RIDER, scheduledAt: SLOT + 5 * HOUR });
+    const res = await req("/bookings/dap-mv-job2/schedule", {
+      method: "POST",
+      json: { scheduledAt: SLOT + 15 * 60_000, force: true },
+    });
+    expect(res.status).toBe(200);
+    expect(Number((await row("dap-mv-job2")).scheduled_at)).toBe(SLOT + 15 * 60_000);
+  });
+
+  it("still moves a job that clashes with nothing", async () => {
+    await seedJob({ id: "dap-mv-free", status: "assigned", riderId: RIDER, scheduledAt: SLOT + 30 * HOUR });
+    expect((await reschedule("dap-mv-free", SLOT + 40 * HOUR)).status).toBe(200);
+  });
+});
+
+describe("POST /bookings/admin — booking a new job onto busy time", () => {
+  beforeEach(clearAvailabilityFixtures);
+
+  const createJob = (json: Record<string, unknown>) =>
+    req("/bookings/admin", { method: "POST", json: { customerId: CUST, serviceId: SVC, address: "9 Test Rd", ...json } });
+
+  it("refuses to book a new job for a tech who is already out on one", async () => {
+    await seedJob({ id: "dap-cr-busy", status: "assigned", riderId: RIDER, scheduledAt: SLOT });
+    const res = await createJob({ riderId: RIDER, scheduledAt: new Date(SLOT + 20 * 60_000).toISOString() });
+    expect(res.status).toBe(409);
+    expect((await res.json()).forceable).toBe(true);
+  });
+
+  it("books it when the office confirms", async () => {
+    await seedJob({ id: "dap-cr-busy2", status: "assigned", riderId: RIDER, scheduledAt: SLOT });
+    const res = await createJob({
+      riderId: RIDER,
+      scheduledAt: new Date(SLOT + 20 * 60_000).toISOString(),
+      force: true,
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it("still books an unassigned job at a busy time", async () => {
+    await seedJob({ id: "dap-cr-busy3", status: "assigned", riderId: RIDER, scheduledAt: SLOT });
+    const res = await createJob({ scheduledAt: new Date(SLOT + 20 * 60_000).toISOString() });
+    expect(res.status).toBe(201);
+  });
+});
+
+describe("PATCH /bookings/:id — editing a job onto busy time", () => {
+  beforeEach(clearAvailabilityFixtures);
+
+  it("refuses when the edit puts the tech in two places", async () => {
+    await seedJob({ id: "dap-pt-busy", status: "assigned", riderId: RIDER, scheduledAt: SLOT });
+    await seedJob({ id: "dap-pt-job", status: "confirmed", assignStatus: "", riderId: null, scheduledAt: SLOT + 10 * 60_000 });
+    const res = await req("/bookings/dap-pt-job", { method: "PATCH", json: { riderId: RIDER } });
+    expect(res.status).toBe(409);
+    expect((await res.json()).forceable).toBe(true);
+    expect((await row("dap-pt-job")).rider_id).toBeFalsy();
+  });
+
+  it("saves the edit when the office confirms", async () => {
+    await seedJob({ id: "dap-pt-busy2", status: "assigned", riderId: RIDER, scheduledAt: SLOT });
+    await seedJob({ id: "dap-pt-job2", status: "confirmed", assignStatus: "", riderId: null, scheduledAt: SLOT + 10 * 60_000 });
+    const res = await req("/bookings/dap-pt-job2", { method: "PATCH", json: { riderId: RIDER, force: true } });
+    expect(res.status).toBe(200);
+    expect((await row("dap-pt-job2")).rider_id).toBe(RIDER);
+  });
+
+  it("does not warn on an edit that touches neither the tech nor the time", async () => {
+    await seedJob({ id: "dap-pt-busy3", status: "assigned", riderId: RIDER, scheduledAt: SLOT });
+    await seedJob({ id: "dap-pt-job3", status: "assigned", riderId: RIDER, scheduledAt: SLOT + 10 * 60_000 });
+    const res = await req("/bookings/dap-pt-job3", { method: "PATCH", json: { notes: "gate code 1234" } });
+    expect(res.status).toBe(200);
   });
 });

@@ -27,6 +27,7 @@ import {
   requestCancel,
 } from "../../services/change-requests";
 import { companyTimeZone } from "../../services/company-tz";
+import { findAvailabilityBlock } from "../../services/availability";
 import { zonedDayBounds, fmtInZone } from "../../shared/tz";
 import { assignBlockedReason, isInFlightStatus, isTerminalStatus } from "../../shared/job-status";
 import { z } from "zod";
@@ -275,6 +276,8 @@ const BookingAdminCreate = z.object({
   customerId: idField("Client"),
   riderId: idField("Technician").nullish(),
   status: bookingStatus.optional(),
+  /** Book it anyway: the tech is already out on a job then, or has time off. */
+  force: z.boolean().optional(),
 });
 
 /** Every field is optional, but a present field must still be the right shape. */
@@ -299,11 +302,17 @@ const BookingPatch = z
     requiredSkills: z.union([z.string().max(2_000), z.array(z.string().max(120)).max(50)]),
     fieldData: jsonObject(),
     riderId: idField("Technician").nullable().or(z.literal("")),
+    /** Save it anyway when the new tech/time double-books somebody. */
+    force: z.boolean(),
   })
   .partial()
   .refine((v) => Object.keys(v).length > 0, { message: "Nothing to update" });
 
-const ScheduleBody = z.object({ scheduledAt: isoDate("Schedule date") });
+const ScheduleBody = z.object({
+  scheduledAt: isoDate("Schedule date"),
+  /** Move it anyway, onto time the assigned tech is already booked for. */
+  force: z.boolean().optional(),
+});
 const AssignBody = z.object({
   riderId: idField("Technician"),
   /** Explicit dispatcher confirmation to pull a tech off a job they're working. */
@@ -631,6 +640,17 @@ export const bookingsRoutes = new Hono<AppEnv>()
       if (!rd) return c.json({ message: "Technician not found" }, 404);
     }
 
+    // Booking a brand-new job straight onto a tech who is already out on one at
+    // that hour (or has the day off) was accepted without a word.
+    if (body.riderId && !body.force) {
+      const busy = await findAvailabilityBlock(co, {
+        riderId: body.riderId,
+        scheduledAt: new Date(body.scheduledAt),
+        serviceId: body.serviceId,
+      });
+      if (busy) return c.json({ message: busy.message, reason: busy.kind, forceable: true }, 409);
+    }
+
     // Coordinates + zone enforcement, identical logic to the customer path
     // (services/zones.ts) so the two can't drift. Geocode when the office typed
     // an address without picking a suggestion, instead of defaulting to Toronto.
@@ -741,7 +761,7 @@ export const bookingsRoutes = new Hono<AppEnv>()
     const u = c.get("user") as SessionUser;
     if (!isAdminRole(u.role)) return c.json({ message: "Forbidden" }, 403);
     const id = c.req.param("id");
-    const { scheduledAt } = c.req.valid("json");
+    const { scheduledAt, force } = c.req.valid("json");
     const t = tx(c);
     const prev = await t.selectOne(schema.bookings, eq(schema.bookings.id, id));
     if (!prev) return c.json({ message: "Not found" }, 404);
@@ -759,6 +779,18 @@ export const bookingsRoutes = new Hono<AppEnv>()
         },
         409,
       );
+    // Dragging a job onto a time its tech is already booked for (or a day they
+    // have off) is the same silent double-booking as a bad assign.
+    if (!force) {
+      const busy = await findAvailabilityBlock(tenantId(c), {
+        riderId: prev.riderId,
+        scheduledAt,
+        bookingId: id,
+        serviceId: prev.serviceId,
+      });
+      if (busy)
+        return c.json({ message: busy.message, reason: busy.kind, status: prev.status, forceable: true }, 409);
+    }
     const set: Record<string, unknown> = { scheduledAt };
     const [b] = await t.update(schema.bookings, set, eq(schema.bookings.id, id));
     // A `rescheduled` notification exists and is on by default for the client
@@ -804,6 +836,27 @@ export const bookingsRoutes = new Hono<AppEnv>()
     if (body.templateId) {
       const tpl = await t.selectOne(schema.taskTemplates, eq(schema.taskTemplates.id, body.templateId));
       if (!tpl) return c.json({ message: "Template not found" }, 404);
+    }
+
+    // A save from the work-order modal can change the tech, the time, or both —
+    // the same double-booking as a drag or an assign, just through a different
+    // door. Only checked when one of those two actually changed.
+    const nextRider = body.riderId === undefined ? (prev.riderId ?? "") : (body.riderId || "");
+    const nextAt = body.scheduledAt ? new Date(body.scheduledAt) : prev.scheduledAt;
+    const movedInTime = Boolean(body.scheduledAt) && Number(nextAt) !== Number(prev.scheduledAt ?? 0);
+    if (
+      nextRider &&
+      !body.force &&
+      !isTerminalStatus(prev.status) &&
+      (nextRider !== (prev.riderId ?? "") || movedInTime)
+    ) {
+      const busy = await findAvailabilityBlock(co, {
+        riderId: nextRider,
+        scheduledAt: nextAt,
+        bookingId: id,
+        serviceId: body.serviceId ?? prev.serviceId,
+      });
+      if (busy) return c.json({ message: busy.message, reason: busy.kind, forceable: true }, 409);
     }
 
     const set: Record<string, unknown> = {};
@@ -927,6 +980,21 @@ export const bookingsRoutes = new Hono<AppEnv>()
         { message: "This technician has already accepted this job.", status: prev.status, forceable: true },
         409,
       );
+
+    // Is this tech actually free then? Nothing used to ask. The board would send
+    // one person to two addresses at 2:00 PM, and `tech_shifts` (time off) was
+    // written by the UI and read by nothing at all. Forceable, because a real
+    // dispatcher overrides both for good reasons — just not by accident.
+    if (!force) {
+      const busy = await findAvailabilityBlock(co, {
+        riderId,
+        scheduledAt: prev.scheduledAt,
+        bookingId: id,
+        serviceId: prev.serviceId,
+      });
+      if (busy)
+        return c.json({ message: busy.message, reason: busy.kind, status: prev.status, forceable: true }, 409);
+    }
 
     const set: Record<string, unknown> = {
       riderId, status: "assigned", assignStatus: "offered",

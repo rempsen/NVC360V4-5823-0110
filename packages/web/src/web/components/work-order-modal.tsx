@@ -49,6 +49,8 @@ import {
 } from "../../shared/catalog";
 import { lookupTax, regionFromAddress } from "../../shared/tax";
 import { AddressAutocomplete } from "./address-autocomplete";
+import { useConfirm } from "./confirm-dialog";
+import { BusyError } from "../lib/force-confirm";
 import { liveOnSiteMinutes } from "../../shared/clock";
 
 // ─── Custom field types ──────────────────────────────────────────────────────
@@ -419,6 +421,7 @@ export function WorkOrderModal({
 }) {
   const isEdit = !!editBooking;
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const { noun } = useWorkerNoun();
   const { noun: customerNoun } = useCustomerNoun();
 
@@ -724,14 +727,36 @@ export function WorkOrderModal({
 
   const create = useMutation({
     mutationFn: async () => {
-      const res = await api.bookings.admin.$post({ json: buildPayload() as any });
-      if (!res.ok) {
-        const e = await res.json().catch(() => ({}) as any);
-        throw new Error((e as any).message || "Failed to create work order");
+      // The server refuses (409, forceable) to book a tech who is already out on a
+      // job at that hour or has the day off. Ask once, then go ahead if the office
+      // means it — that used to be a silent double booking.
+      const send = async (force: boolean) => {
+        const res = await api.bookings.admin.$post({
+          json: (force ? { ...buildPayload(), force: true } : buildPayload()) as any,
+        });
+        if (!res.ok) {
+          const e = (await res.json().catch(() => ({}))) as any;
+          if (res.status === 409 && e?.forceable) throw new BusyError(e.message);
+          throw new Error(e?.message || "Failed to create work order");
+        }
+        return res.json();
+      };
+      try {
+        return await send(false);
+      } catch (e) {
+        if (!(e instanceof BusyError)) throw e;
+        const yes = await confirm({
+          title: "Book it anyway?",
+          message: `${e.message} You can book it anyway — check the schedule works.`,
+          confirmLabel: "Book it",
+        });
+        if (!yes) return null;
+        return await send(true);
       }
-      return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
+      // null = the dispatcher backed out of the "book it anyway?" question.
+      if (!data) return;
       qc.invalidateQueries({ queryKey: ["bookings"] });
       qc.invalidateQueries({ queryKey: ["scheduler"] });
       qc.invalidateQueries({ queryKey: ["riders"] });
@@ -744,22 +769,41 @@ export function WorkOrderModal({
 
   const update = useMutation({
     mutationFn: async () => {
-      const res = await api.bookings[":id"].$patch({
-        param: { id: editBooking.id },
-        json: {
-          ...buildPayload(),
-          templateId: templateId || "",
-          riderId: riderId || "",
-          region: region || "",
-        } as any,
-      });
-      if (!res.ok) {
-        const e = await res.json().catch(() => ({}) as any);
-        throw new Error((e as any).message || "Failed to update work order");
+      // Same guard as create: a save that changes the tech or the time can put
+      // somebody in two places at once.
+      const send = async (force: boolean) => {
+        const res = await api.bookings[":id"].$patch({
+          param: { id: editBooking.id },
+          json: {
+            ...buildPayload(),
+            templateId: templateId || "",
+            riderId: riderId || "",
+            region: region || "",
+            ...(force ? { force: true } : {}),
+          } as any,
+        });
+        if (!res.ok) {
+          const e = (await res.json().catch(() => ({}))) as any;
+          if (res.status === 409 && e?.forceable) throw new BusyError(e.message);
+          throw new Error(e?.message || "Failed to update work order");
+        }
+        return res.json();
+      };
+      try {
+        return await send(false);
+      } catch (e) {
+        if (!(e instanceof BusyError)) throw e;
+        const yes = await confirm({
+          title: "Save it anyway?",
+          message: `${e.message} You can save it anyway — check the schedule works.`,
+          confirmLabel: "Save anyway",
+        });
+        if (!yes) return null;
+        return await send(true);
       }
-      return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
+      if (!data) return;
       qc.invalidateQueries({ queryKey: ["bookings"] });
       qc.invalidateQueries({ queryKey: ["scheduler"] });
       qc.invalidateQueries({ queryKey: ["riders"] });

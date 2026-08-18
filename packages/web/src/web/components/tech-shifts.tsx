@@ -3,6 +3,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { Field, inputCls, BtnPrimary } from "./modal";
 import { Plus, Trash2, Clock, CalendarOff } from "lucide-react";
+import { useBrand } from "../lib/use-brand";
+import { fmtInZone } from "../../shared/tz";
 
 type Shift = {
   id: string;
@@ -19,10 +21,17 @@ const toMin = (s: string) => {
   const [h, m] = s.split(":").map(Number);
   return (h || 0) * 60 + (m || 0);
 };
-const fmtDate = (d: string | number) => new Date(d).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+/**
+ * On the COMPANY's clock, not the viewer's. A day stored as its local midnight
+ * formatted in the browser's zone showed the day before for anyone further west
+ * — the office booked Tuesday off and the list said Monday.
+ */
+const fmtDate = (d: string | number, tz: string) =>
+  fmtInZone(d, tz, { weekday: "short", month: "short", day: "numeric" });
 
 export function TechShifts({ riderId }: { riderId: string }) {
   const qc = useQueryClient();
+  const brand = useBrand();
   const [form, setForm] = useState({ kind: "shift", date: new Date().toISOString().slice(0, 10), start: "09:00", end: "17:00", note: "" });
 
   const shiftsQ = useQuery({
@@ -36,7 +45,9 @@ export function TechShifts({ riderId }: { riderId: string }) {
         json: {
           riderId,
           kind: form.kind,
-          date: new Date(form.date).getTime(),
+          // The day as the office typed it. Sending `new Date("2026-09-15").getTime()`
+          // sent UTC midnight, which the server read as the previous local day.
+          date: form.date,
           startMin: toMin(form.start),
           endMin: toMin(form.end),
           note: form.note,
@@ -97,7 +108,7 @@ export function TechShifts({ riderId }: { riderId: string }) {
                 {s.kind === "timeoff" ? <CalendarOff className="h-4 w-4" /> : <Clock className="h-4 w-4" />}
               </span>
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-white">{fmtDate(s.date)}</p>
+                <p className="text-sm font-semibold text-white">{fmtDate(s.date, brand.timezone)}</p>
                 <p className="text-[11px] text-slate-500">
                   {s.kind === "timeoff" ? "Time off" : `${toHM(s.startMin)} – ${toHM(s.endMin)}`}
                   {s.note ? ` · ${s.note}` : ""}
