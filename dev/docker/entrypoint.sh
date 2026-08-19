@@ -3,4 +3,9 @@ set -e
 
 bun install
 bun db:push
-exec bun dev --host
+
+if [ $# -gt 0 ]; then
+  exec "$@"
+else
+  exec bun dev --host
+fi

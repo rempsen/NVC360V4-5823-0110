@@ -28,6 +28,26 @@ services:
     working_dir: /app
     entrypoint: ["/bin/sh", "/app/entrypoint.sh"]
 
+  db-studios:
+    image: oven/bun:alpine
+    ports:
+      - "4983:4983"
+    depends_on:
+      - db
+      - web
+    volumes:
+      - ../../packages/web:/app
+      - node-modules:/app/node_modules
+      - ./entrypoint.sh:/app/entrypoint.sh
+    environment:
+      - DATABASE_URL=http://db:8080
+      - DATABASE_AUTH_TOKEN=dummy
+    working_dir: /app
+    entrypoint: ["/bin/sh", "/app/entrypoint.sh"]
+    command: ["bun", "db:studio"]
+
+
+
 volumes:
   sqld-data:
   node-modules:

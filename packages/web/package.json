@@ -9,7 +9,7 @@
     "build": "tsc --noEmit && vite build",
     "build:smoke": "tsc --noEmit && vite build && bun run scripts/smoke-build.mjs",
     "smoke": "bun run scripts/smoke-build.mjs",
-    "dev": "vite",
+    "dev": "vite --host",
     "start": "bun src/server.ts",
     "lint": "cd ../.. && oxlint packages/web --deny-warnings --no-error-on-unmatched-pattern",
     "a11y": "python3 a11y-gate.py",
@@ -20,7 +20,7 @@
     "db:generate": "bun --env-file=../../.env drizzle-kit generate",
     "db:migrate": "bun --env-file=../../.env drizzle-kit migrate",
     "db:push": "bun --env-file=../../.env drizzle-kit push",
-    "db:studio": "bun --env-file=../../.env drizzle-kit studio"
+    "db:studio": "bun --env-file=../../.env drizzle-kit studio --host 0.0.0.0"
   },
   "dependencies": {
     "@better-auth/expo": "1.4.22",

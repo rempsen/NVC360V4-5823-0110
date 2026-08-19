@@ -7,7 +7,7 @@ import { PageWrap } from "../../components/brand";
 import { PageHead } from "./shell";
 import { Field, inputCls, BtnPrimary, ConfirmModal } from "../../components/modal";
 import { AddressAutocomplete } from "../../components/address-autocomplete";
-import { Save, Building2, Check, Calendar, Copy, RefreshCw, ExternalLink, MapPin, Sparkles, Plug, KeyRound, ScrollText, Lock, Eye, EyeOff, Tag, Plus, Trash2, Pencil, X, Star, CalendarClock, Clock3 } from "lucide-react";
+import { Save, Building2, Check, Calendar, Copy, RefreshCw, ExternalLink, ChevronDown, MapPin, Sparkles, Plug, KeyRound, ScrollText, Lock, Eye, EyeOff, Tag, Plus, Trash2, Pencil, X, Star, CalendarClock, Clock3 } from "lucide-react";
 import { useWorkerNoun } from "../../lib/use-brand";
 import { cn } from "../../lib/utils";
 import AutomationPage from "./automation";
@@ -27,6 +27,7 @@ function CalendarSync() {
   const confirm = useConfirm();
   const qc = useQueryClient();
   const [copied, setCopied] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const feed = useQuery({
     queryKey: ["calendar-feed"],
@@ -64,56 +65,73 @@ function CalendarSync() {
           disabled={regen.isPending}
           className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-2.5 py-1.5 text-xs font-medium text-white/70 transition hover:bg-white/5 disabled:opacity-50"
         >
-          <RefreshCw className={`h-3.5 w-3.5 ${regen.isPending ? "animate-spin" : ""}`} /> Regenerate
+          <RefreshCw className={`h-3.5 w-3.5 ${regen.isPending ? "animate-spin" : ""}`} />
         </button>
       </div>
       <p className="text-xs text-white/50">
-        Subscribe to keep every job synced to your calendar app. Updates refresh automatically (~30 min). This is a read-only feed of all dispatch jobs.
+        Subscribe to view all jobs in your calendar app.
       </p>
 
       {feed.isLoading || !d ? (
         <div className="h-24 animate-pulse rounded-lg bg-white/5" />
       ) : (
         <div className="space-y-3">
-          <Field label="Subscription URL">
+          <div className="space-y-1">
+            <span className="block text-xs font-semibold uppercase tracking-wide text-slate-400">Subscription URL</span>
             <div className="flex items-center gap-2">
-              <input aria-label="Webcal" className={inputCls} readOnly value={d.webcal} onFocus={(e) => e.target.select()} />
+              <a href={d.webcal} title="Click to open calendar feed" className="flex-1 truncate rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 font-mono text-xs text-white/70 transition hover:border-white/20 hover:bg-white/[0.06] hover:text-white">{d.webcal}</a>
               <button
+                type="button"
                 onClick={() => copy(d.webcal, "webcal")}
                 className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 py-2 text-xs font-medium text-white/80 transition hover:bg-white/5"
+                title="Copy subscription URL"
               >
                 {copied === "webcal" ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-                {copied === "webcal" ? "Copied" : "Copy"}
               </button>
+              <div className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setMenuOpen((o) => !o)}
+                  className="inline-flex items-center gap-1 rounded-lg border border-white/10 px-2.5 py-2 text-xs font-medium text-white/80 transition hover:bg-white/5"
+                  title="Add to calendar"
+                >
+                  <Calendar className="h-3.5 w-3.5 text-brand" />
+                  <ChevronDown className={`h-3.5 w-3.5 text-white/60 transition-transform ${menuOpen ? "rotate-180" : ""}`} />
+                </button>
+                {menuOpen && (
+                  <>
+                    <div className="absolute right-0 top-full z-20 mt-1.5 w-44 rounded-lg border border-white/10 bg-slate-900/95 p-1 shadow-xl backdrop-blur-md">
+                      <a
+                        href={d.google}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={() => setMenuOpen(false)}
+                        className="flex items-center gap-2 rounded-md px-3 py-2 text-xs font-medium text-white/80 transition hover:bg-white/10 hover:text-white"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5 opacity-70" /> Google Calendar
+                    </a>
+                    <a
+                      href={d.outlook}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={() => setMenuOpen(false)}
+                      className="flex items-center gap-2 rounded-md px-3 py-2 text-xs font-medium text-white/80 transition hover:bg-white/10 hover:text-white"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5 opacity-70" /> Outlook Calendar
+                    </a>
+                    <a
+                      href={d.webcal}
+                      onClick={() => setMenuOpen(false)}
+                      className="flex items-center gap-2 rounded-md px-3 py-2 text-xs font-medium text-white/80 transition hover:bg-white/10 hover:text-white"
+                    >
+                      <Calendar className="h-3.5 w-3.5 opacity-70" /> Apple Calendar
+                    </a>
+                  </div>
+                </>
+              )}
             </div>
-          </Field>
-          <div className="flex flex-wrap gap-2">
-            <a
-              href={d.google}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1.5 rounded-lg bg-white/5 px-3 py-2 text-xs font-medium text-white/90 transition hover:bg-white/10"
-            >
-              <ExternalLink className="h-3.5 w-3.5" /> Add to Google
-            </a>
-            <a
-              href={d.outlook}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1.5 rounded-lg bg-white/5 px-3 py-2 text-xs font-medium text-white/90 transition hover:bg-white/10"
-            >
-              <ExternalLink className="h-3.5 w-3.5" /> Add to Outlook
-            </a>
-            <a
-              href={d.webcal}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-white/5 px-3 py-2 text-xs font-medium text-white/90 transition hover:bg-white/10"
-            >
-              <Calendar className="h-3.5 w-3.5" /> Apple Calendar
-            </a>
           </div>
-          <p className="text-[11px] text-white/40">
-            Apple Calendar: the “Apple Calendar” button opens the <code className="text-white/60">webcal://</code> link directly. For Google/Outlook, use the buttons above.
-          </p>
+        </div>
         </div>
       )}
     </div>
@@ -354,36 +372,36 @@ function CompanySettingsTab() {
       <div className="grid gap-5 xl:grid-cols-3 xl:items-start">
         {/* Business profile + geofencing (left, 2-wide) */}
         <div className="space-y-5 xl:col-span-2">
-        <div className="nvc-card space-y-4 p-5">
-          <h3 className="flex items-center gap-2 font-bold text-white">
-            <Building2 className="h-4 w-4 text-brand" /> Business Profile
-          </h3>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Company name">
-              <input aria-label="Name" className={inputCls} value={form.name} onChange={(e) => set("name", e.target.value)} />
-            </Field>
-            <Field label="Legal name">
-              <input aria-label="Legal Name" className={inputCls} value={form.legalName} onChange={(e) => set("legalName", e.target.value)} />
-            </Field>
-            <Field label="Email">
-              <input aria-label="Email" className={inputCls} type="email" value={form.email} onChange={(e) => set("email", e.target.value)} />
-            </Field>
-            <Field label="Phone">
-              <input aria-label="Phone" className={inputCls} value={form.phone} onChange={(e) => set("phone", e.target.value)} />
-            </Field>
-            <Field label="Website">
-              <input aria-label="Website" className={inputCls} value={form.website} onChange={(e) => set("website", e.target.value)} />
-            </Field>
-            <Field label="Business address" hint="Autocompletes & geocodes for dispatch & geofencing">
-              <AddressAutocomplete
-                value={form.address}
-                onResolve={({ address, lat, lng }) =>
-                  setForm((f: any) => ({ ...f, address, ...(lat != null && { lat, lng }) }))
-                }
-              />
-            </Field>
+          <div className="nvc-card space-y-4 p-5">
+            <h3 className="flex items-center gap-2 font-bold text-white">
+              <Building2 className="h-4 w-4 text-brand" /> Business Profile
+            </h3>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Company name">
+                <input aria-label="Name" className={inputCls} value={form.name} onChange={(e) => set("name", e.target.value)} />
+              </Field>
+              <Field label="Legal name">
+                <input aria-label="Legal Name" className={inputCls} value={form.legalName} onChange={(e) => set("legalName", e.target.value)} />
+              </Field>
+              <Field label="Email">
+                <input aria-label="Email" className={inputCls} type="email" value={form.email} onChange={(e) => set("email", e.target.value)} />
+              </Field>
+              <Field label="Phone">
+                <input aria-label="Phone" className={inputCls} value={form.phone} onChange={(e) => set("phone", e.target.value)} />
+              </Field>
+              <Field label="Website">
+                <input aria-label="Website" className={inputCls} value={form.website} onChange={(e) => set("website", e.target.value)} />
+              </Field>
+              <Field label="Business address" hint="Autocompletes & geocodes for dispatch & geofencing">
+                <AddressAutocomplete
+                  value={form.address}
+                  onResolve={({ address, lat, lng }) =>
+                    setForm((f: any) => ({ ...f, address, ...(lat != null && { lat, lng }) }))
+                  }
+                />
+              </Field>
+            </div>
           </div>
-        </div>
 
           {/* Categories — shared by Form Builder templates and the Product Catalog */}
           <CategoriesCard />
@@ -434,14 +452,12 @@ function CompanySettingsTab() {
                 type="button"
                 aria-label="Toggle review requests"
                 onClick={() => set("reviewRequestEnabled", !(form.reviewRequestEnabled ?? true))}
-                className={`relative h-6 w-11 shrink-0 rounded-full transition ${
-                  (form.reviewRequestEnabled ?? true) ? "bg-emerald-live" : "bg-white/10"
-                }`}
+                className={`relative h-6 w-11 shrink-0 rounded-full transition ${(form.reviewRequestEnabled ?? true) ? "bg-emerald-live" : "bg-white/10"
+                  }`}
               >
                 <span
-                  className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${
-                    (form.reviewRequestEnabled ?? true) ? "left-[22px]" : "left-0.5"
-                  }`}
+                  className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${(form.reviewRequestEnabled ?? true) ? "left-[22px]" : "left-0.5"
+                    }`}
                 />
               </button>
             </div>
