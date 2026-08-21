@@ -16,13 +16,19 @@ name: Deploy staging
 #   * Skips itself cleanly when AWS is not yet configured, so a fork or a repo
 #     without the secrets set does not show a permanent red X.
 #
-# NOTE ON AUTH: this uses a long-lived IAM access key stored in repo secrets,
-# which is NOT what we want. GitHub OIDC is the correct answer and the
-# Terraform for it is written, but iam:CreateOpenIDConnectProvider is denied by
-# the organization SCP on this Project account. Once that is lifted, delete the
-# two aws-access-key inputs below and replace them with:
-#     role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
-# plus `permissions: id-token: write`. Nothing else changes.
+# AUTH: GitHub OIDC. No AWS access keys are stored in this repo. Actions mints
+# a short-lived OIDC token, AWS trades it for temporary credentials, and the
+# trust policy only accepts this repo on refs/heads/main — so a fork, a pull
+# request, or another branch cannot deploy.
+#
+# Set one repo *variable* (Settings -> Secrets and variables -> Actions ->
+# Variables), not a secret, since a role ARN is not sensitive:
+#     AWS_DEPLOY_ROLE_ARN = arn:aws:iam::293174400261:role/nvc360-staging-github-deploy
+#
+# (An earlier revision used a long-lived IAM key because
+# iam:CreateOpenIDConnectProvider was denied by the organization SCP on this
+# account. That restriction was lifted on 2026-08-21 when the account moved off
+# the AWS-managed Project plan, and this is the correct setup.)
 
 on:
   workflow_run:
@@ -62,10 +68,10 @@ jobs:
       - name: Check AWS is configured
         id: gate
         env:
-          KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
         run: |
-          if [ -z "$KEY_ID" ]; then
-            echo "AWS credentials are not set in repo secrets — skipping deploy."
+          if [ -z "$ROLE_ARN" ]; then
+            echo "AWS_DEPLOY_ROLE_ARN repo variable is not set — skipping deploy."
             echo "configured=false" >> "$GITHUB_OUTPUT"
           else
             echo "configured=true" >> "$GITHUB_OUTPUT"
@@ -82,8 +88,8 @@ jobs:
         if: steps.gate.outputs.configured == 'true'
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: deploy-staging-${{ github.run_id }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Log in to ECR
