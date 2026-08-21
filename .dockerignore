@@ -21,9 +21,15 @@ packages/mobile/.expo
 **/.turbo
 **/*.tsbuildinfo
 
-# Workspaces the server never imports (Expo / Electron).
+# Workspaces the server never imports (Expo / Electron). Their source is
+# excluded, but their package.json MUST come through: bun install runs at the
+# workspace root and validates every workspace manifest against bun.lock, so
+# --frozen-lockfile fails without them. Excluding them outright is what broke
+# CI run #71 ("/packages/desktop/package.json": not found).
 packages/mobile
+!packages/mobile/package.json
 packages/desktop
+!packages/desktop/package.json
 
 # VCS, CI, docs, local scratch.
 .git
