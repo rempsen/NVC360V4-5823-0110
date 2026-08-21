@@ -22,7 +22,11 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 *.db
 
 # dotenv environment variable files
+# NOTE: `.env` alone did NOT cover files like `.env.aws`, so a credential file
+# dropped in the repo root was committable. `.env.*` closes that hole.
 .env
+.env.*
+!.env.example
 .env.development.local
 .env.test.local
 .env.production.local
