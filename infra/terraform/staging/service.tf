@@ -1,61 +1,234 @@
 # ---------------------------------------------------------------------------
-# The staging service itself: AWS App Runner.
+# The staging service: ECS Fargate behind an Application Load Balancer.
 #
-# Why App Runner over ECS Fargate + ALB, given the plan recommended Fargate:
-# the app is one stateless container listening on $PORT, which is exactly App
-# Runner's shape. Fargate needs an ALB to get HTTPS and a hostname, and an ALB
-# is ~$16/month idle before any compute. App Runner includes TLS, a hostname,
-# health checks, and scale-to-one, for roughly a third of that. On a $100
-# credit budget that difference matters, and nothing here is one-way: the image
-# is the same, so moving staging or production to ECS later is a Terraform
-# change, not an application change.
+# This was originally written for AWS App Runner, which is a better fit for a
+# single stateless container and needs no load balancer (~$16/month cheaper).
+# App Runner is DENIED by the organization's Service Control Policy on this
+# Project account (see infra/README.md), so Fargate + ALB it is. If that SCP is
+# ever loosened, App Runner becomes worth revisiting purely on cost.
 #
-# Gated behind var.create_service because App Runner refuses to create until an
-# image actually exists in ECR. Order of operations: apply with the gate off ->
-# CI pushes an image -> flip the gate on.
+# Gated behind var.create_service (default false) because this is the part that
+# costs money: ~$16/month for the ALB plus ~$9/month for one always-on 0.25 vCPU
+# / 0.5 GB Fargate task.
+#
+# Networking uses the default VPC's public subnets with public IPs assigned, on
+# purpose: private subnets would need a NAT gateway (~$32/month) for the task to
+# reach Turso, Stripe, Twilio and Resend. Isolation comes from security groups —
+# the task accepts traffic only from the ALB, and the database only from the
+# task.
 # ---------------------------------------------------------------------------
 
-# Lets App Runner pull from our private ECR repository.
-data "aws_iam_policy_document" "apprunner_build_assume" {
-  statement {
-    effect  = "Allow"
-    actions = ["sts:AssumeRole"]
-    principals {
-      type        = "Service"
-      identifiers = ["build.apprunner.amazonaws.com"]
-    }
+locals {
+  container_name = "web"
+
+  # Config keys pulled from Secrets Manager into the container environment.
+  # One secret holding a JSON object, injected key by key using ECS's
+  # "<secret-arn>:<json-key>::" syntax — Secrets Manager bills per secret per
+  # month, and this app needs ~25 keys.
+  #
+  # Deliberately absent: S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY (the task role
+  # supplies credentials) and S3_ENDPOINT (unset = real AWS S3).
+  secret_keys = [
+    "DATABASE_URL",
+    "DATABASE_AUTH_TOKEN",
+    "BETTER_AUTH_SECRET",
+    "GOOGLE_CLIENT_ID",
+    "GOOGLE_CLIENT_SECRET",
+    "GOOGLE_MAPS_API_KEY",
+    "RESEND_API_KEY",
+    "EMAIL_FROM",
+    "STRIPE_SECRET_KEY",
+    "STRIPE_PUBLISHABLE_KEY",
+    "STRIPE_WEBHOOK_SECRET",
+    "AUTUMN_SECRET_KEY",
+    "TWILIO_ACCOUNT_SID",
+    "TWILIO_AUTH_TOKEN",
+    "TWILIO_FROM_NUMBER",
+    "AI_GATEWAY_API_KEY",
+    "AI_GATEWAY_BASE_URL",
+    "SENTRY_DSN",
+    "REDIS_URL",
+  ]
+}
+
+# --- Security groups -------------------------------------------------------
+
+resource "aws_security_group" "alb" {
+  count       = var.create_service ? 1 : 0
+  name        = "${var.name_prefix}-alb"
+  description = "Public ingress to the staging load balancer."
+  vpc_id      = data.aws_vpc.default.id
+
+  ingress {
+    description = "HTTP"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "HTTPS"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description = "To the Fargate task"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 }
 
-resource "aws_iam_role" "apprunner_ecr_access" {
+resource "aws_security_group" "task" {
+  count       = var.create_service ? 1 : 0
+  name        = "${var.name_prefix}-task"
+  description = "Staging Fargate task. Ingress only from the ALB."
+  vpc_id      = data.aws_vpc.default.id
+
+  ingress {
+    description     = "App port from ALB only"
+    from_port       = var.container_port
+    to_port         = var.container_port
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb[0].id]
+  }
+
+  egress {
+    description = "Outbound to Turso, Stripe, Twilio, Resend, ECR, S3"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+# --- Load balancer ---------------------------------------------------------
+
+resource "aws_lb" "web" {
   count              = var.create_service ? 1 : 0
-  name               = "${var.name_prefix}-apprunner-ecr"
-  assume_role_policy = data.aws_iam_policy_document.apprunner_build_assume.json
+  name               = "${var.name_prefix}-alb"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.alb[0].id]
+  subnets            = data.aws_subnets.default.ids
+
+  idle_timeout = 300 # SSE streams hold connections open; 60s default cuts them
 }
 
-resource "aws_iam_role_policy_attachment" "apprunner_ecr_access" {
-  count      = var.create_service ? 1 : 0
-  role       = aws_iam_role.apprunner_ecr_access[0].name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess"
+resource "aws_lb_target_group" "web" {
+  count       = var.create_service ? 1 : 0
+  name        = "${var.name_prefix}-tg"
+  port        = var.container_port
+  protocol    = "HTTP"
+  target_type = "ip" # awsvpc networking
+  vpc_id      = data.aws_vpc.default.id
+
+  # Give in-flight SSE streams time to finish on deploy.
+  deregistration_delay = 30
+
+  health_check {
+    enabled             = true
+    path                = "/api/ready"
+    protocol            = "HTTP"
+    matcher             = "200"
+    interval            = 30
+    timeout             = 5
+    healthy_threshold   = 2
+    unhealthy_threshold = 5
+  }
 }
 
-# The role the running container itself assumes — this is what gives the app
-# access to its uploads bucket and its secrets. No access keys in env vars.
-data "aws_iam_policy_document" "apprunner_task_assume" {
+resource "aws_lb_listener" "http" {
+  count             = var.create_service ? 1 : 0
+  load_balancer_arn = aws_lb.web[0].arn
+  port              = 80
+  protocol          = "HTTP"
+
+  # With a certificate, force HTTPS. Without one, serve HTTP so staging is
+  # reachable before DNS and ACM are sorted out.
+  default_action {
+    type = var.acm_certificate_arn == "" ? "forward" : "redirect"
+
+    target_group_arn = var.acm_certificate_arn == "" ? aws_lb_target_group.web[0].arn : null
+
+    dynamic "redirect" {
+      for_each = var.acm_certificate_arn == "" ? [] : [1]
+      content {
+        port        = "443"
+        protocol    = "HTTPS"
+        status_code = "HTTP_301"
+      }
+    }
+  }
+}
+
+resource "aws_lb_listener" "https" {
+  count             = var.create_service && var.acm_certificate_arn != "" ? 1 : 0
+  load_balancer_arn = aws_lb.web[0].arn
+  port              = 443
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+  certificate_arn   = var.acm_certificate_arn
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.web[0].arn
+  }
+}
+
+# --- IAM -------------------------------------------------------------------
+
+data "aws_iam_policy_document" "ecs_task_assume" {
   statement {
     effect  = "Allow"
     actions = ["sts:AssumeRole"]
     principals {
       type        = "Service"
-      identifiers = ["tasks.apprunner.amazonaws.com"]
+      identifiers = ["ecs-tasks.amazonaws.com"]
     }
   }
 }
 
+# Execution role: what ECS itself needs — pull the image, write logs, read the
+# secrets it injects into the container.
+resource "aws_iam_role" "execution" {
+  count              = var.create_service ? 1 : 0
+  name               = "${var.name_prefix}-execution"
+  assume_role_policy = data.aws_iam_policy_document.ecs_task_assume.json
+}
+
+resource "aws_iam_role_policy_attachment" "execution_managed" {
+  count      = var.create_service ? 1 : 0
+  role       = aws_iam_role.execution[0].name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+data "aws_iam_policy_document" "execution_secrets" {
+  statement {
+    sid       = "ReadInjectedSecrets"
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_secretsmanager_secret.app_config.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "execution_secrets" {
+  count  = var.create_service ? 1 : 0
+  name   = "read-secrets"
+  role   = aws_iam_role.execution[0].id
+  policy = data.aws_iam_policy_document.execution_secrets.json
+}
+
+# Task role: what the application code itself can do at runtime.
 resource "aws_iam_role" "app_task" {
   count              = var.create_service ? 1 : 0
   name               = "${var.name_prefix}-app-task"
-  assume_role_policy = data.aws_iam_policy_document.apprunner_task_assume.json
+  assume_role_policy = data.aws_iam_policy_document.ecs_task_assume.json
 }
 
 data "aws_iam_policy_document" "app_task" {
@@ -77,16 +250,6 @@ data "aws_iam_policy_document" "app_task" {
     actions   = ["s3:ListBucket", "s3:GetBucketLocation"]
     resources = [aws_s3_bucket.uploads.arn]
   }
-
-  statement {
-    sid     = "ReadConfig"
-    effect  = "Allow"
-    actions = ["secretsmanager:GetSecretValue"]
-    resources = compact([
-      aws_secretsmanager_secret.app_config.arn,
-      var.create_database ? aws_secretsmanager_secret.db_url[0].arn : "",
-    ])
-  }
 }
 
 resource "aws_iam_role_policy" "app_task" {
@@ -96,74 +259,130 @@ resource "aws_iam_role_policy" "app_task" {
   policy = data.aws_iam_policy_document.app_task.json
 }
 
-resource "aws_apprunner_service" "web" {
-  count        = var.create_service ? 1 : 0
-  service_name = "${var.name_prefix}-web"
+# --- ECS -------------------------------------------------------------------
 
-  source_configuration {
-    # CI pushes an image and calls StartDeployment. Terraform must not fight it.
-    auto_deployments_enabled = false
+resource "aws_ecs_cluster" "main" {
+  count = var.create_service ? 1 : 0
+  name  = var.name_prefix
 
-    authentication_configuration {
-      access_role_arn = aws_iam_role.apprunner_ecr_access[0].arn
-    }
-
-    image_repository {
-      image_identifier      = "${aws_ecr_repository.web.repository_url}:${var.image_tag}"
-      image_repository_type = "ECR"
-
-      image_configuration {
-        port = tostring(var.container_port)
-
-        runtime_environment_variables = {
-          NODE_ENV   = "production"
-          PORT       = tostring(var.container_port)
-          S3_BUCKET  = aws_s3_bucket.uploads.bucket
-          AWS_REGION = var.region
-          SENTRY_ENV = "staging"
-          # Deliberately NOT set: S3_ENDPOINT (defaults to AWS S3),
-          # S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY (the task role supplies
-          # credentials instead). Everything secret comes from Secrets Manager.
-        }
-
-        runtime_environment_secrets = merge(
-          { APP_CONFIG_JSON = aws_secretsmanager_secret.app_config.arn },
-          var.create_database ? { POSTGRES_URL = aws_secretsmanager_secret.db_url[0].arn } : {},
-        )
-      }
-    }
-  }
-
-  instance_configuration {
-    cpu               = "256" # 0.25 vCPU — staging, not production load
-    memory            = "512" # MB
-    instance_role_arn = aws_iam_role.app_task[0].arn
-  }
-
-  health_check_configuration {
-    protocol            = "HTTP"
-    path                = "/api/ready"
-    interval            = 20
-    timeout             = 5
-    healthy_threshold   = 1
-    unhealthy_threshold = 5
-  }
-
-  # One instance. This is not a cost decision — six setInterval sweeps run
-  # inside this process and are only correct at a single instance. Raising
-  # max_size before the background-task workstream lands would double-fire the
-  # scheduler, automations and delay watcher.
-  auto_scaling_configuration_arn = aws_apprunner_auto_scaling_configuration_version.single[0].arn
-
-  observability_configuration {
-    observability_enabled = false
+  setting {
+    name  = "containerInsights"
+    value = "disabled" # extra CloudWatch cost, not worth it for staging
   }
 }
 
-resource "aws_apprunner_auto_scaling_configuration_version" "single" {
-  count                           = var.create_service ? 1 : 0
-  auto_scaling_configuration_name = "${var.name_prefix}-single"
-  max_concurrency                 = 100
-  min_size                        = 1
-  max_size                        = 1
+resource "aws_ecs_task_definition" "web" {
+  count                    = var.create_service ? 1 : 0
+  family                   = "${var.name_prefix}-web"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = "256"
+  memory                   = "512"
+  execution_role_arn       = aws_iam_role.execution[0].arn
+  task_role_arn            = aws_iam_role.app_task[0].arn
+
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = "X86_64"
+  }
+
+  container_definitions = jsonencode([
+    {
+      name      = local.container_name
+      image     = "${aws_ecr_repository.web.repository_url}:${var.image_tag}"
+      essential = true
+
+      portMappings = [
+        {
+          containerPort = var.container_port
+          protocol      = "tcp"
+        }
+      ]
+
+      environment = [
+        { name = "NODE_ENV", value = "production" },
+        { name = "PORT", value = tostring(var.container_port) },
+        { name = "S3_BUCKET", value = aws_s3_bucket.uploads.bucket },
+        { name = "AWS_REGION", value = var.region },
+        { name = "SENTRY_ENV", value = "staging" },
+        # The app self-pings this to stay warm; point it at the ALB so the
+        # request traverses the real path rather than localhost.
+        { name = "APP_URL", value = var.staging_url },
+        { name = "WEBSITE_URL", value = var.staging_url },
+      ]
+
+      secrets = [
+        for k in local.secret_keys : {
+          name      = k
+          valueFrom = "${aws_secretsmanager_secret.app_config.arn}:${k}::"
+        }
+      ]
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.app.name
+          "awslogs-region"        = var.region
+          "awslogs-stream-prefix" = "web"
+        }
+      }
+
+      # Container-level health check, independent of the ALB's.
+      healthCheck = {
+        command     = ["CMD-SHELL", "bun -e 'const r = await fetch(\"http://127.0.0.1:${var.container_port}/api/ready\"); process.exit(r.ok ? 0 : 1)' || exit 1"]
+        interval    = 30
+        timeout     = 5
+        retries     = 3
+        startPeriod = 30
+      }
+    }
+  ])
+}
+
+resource "aws_ecs_service" "web" {
+  count           = var.create_service ? 1 : 0
+  name            = "${var.name_prefix}-web"
+  cluster         = aws_ecs_cluster.main[0].id
+  task_definition = aws_ecs_task_definition.web[0].arn
+  launch_type     = "FARGATE"
+
+  # Exactly one task. This is NOT a cost decision: six setInterval sweeps
+  # (presence, scheduler, automation, delay-watch, email-domain poll, DB ping)
+  # run inside this process and are only correct at a single instance. Raising
+  # this before the background-task workstream lands would double-fire the
+  # scheduler, automations and the delay watcher.
+  desired_count = 1
+
+  # With one task, a rolling deploy needs room to start the replacement before
+  # draining the old one.
+  deployment_minimum_healthy_percent = 0
+  deployment_maximum_percent         = 200
+
+  # Roll back automatically if the new task never goes healthy.
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
+  health_check_grace_period_seconds = 60
+
+  network_configuration {
+    subnets          = data.aws_subnets.default.ids
+    security_groups  = [aws_security_group.task[0].id]
+    assign_public_ip = true # no NAT gateway — see header
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.web[0].arn
+    container_name   = local.container_name
+    container_port   = var.container_port
+  }
+
+  # CI deploys by registering a new task definition revision, so Terraform must
+  # not revert the running revision on the next apply.
+  lifecycle {
+    ignore_changes = [task_definition, desired_count]
+  }
+
+  depends_on = [aws_lb_listener.http]
 }

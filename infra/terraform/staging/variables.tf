@@ -60,3 +60,19 @@ variable "db_username" {
   type        = string
   default     = "nvc360_admin"
 }
+
+variable "acm_certificate_arn" {
+  description = <<-EOT
+    ACM certificate for HTTPS on the ALB. Empty = HTTP only, which is fine for
+    a password-protected staging box but must be set before any real data goes
+    near it. Requires a validated cert for the staging hostname in this region.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "staging_url" {
+  description = "Public URL of staging. The app self-pings /api/ready using this, and it is used for absolute links in emails/SMS. Set to the ALB DNS name after the first apply, or to the CNAME once DNS is pointed."
+  type        = string
+  default     = "http://localhost:4200"
+}
