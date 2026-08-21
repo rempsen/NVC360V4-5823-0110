@@ -94,3 +94,19 @@ packages/mobile/scripts/*
 
 # local upload fallback (runtime artifacts, not source)
 packages/web/uploads
+
+# Terraform. The provider plugin cache under .terraform/ contains vendored
+# binaries — the AWS provider alone is 845 MB, which GitHub rejects outright.
+# Never commit it: `terraform init` reproduces it from .terraform.lock.hcl,
+# which IS committed so everyone resolves identical provider versions.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+crash.*.log
+# Variable files can carry credentials. terraform.tfvars here holds only cost
+# gates and is committed deliberately via the exception below.
+*.auto.tfvars
+!infra/terraform/staging/terraform.tfvars
