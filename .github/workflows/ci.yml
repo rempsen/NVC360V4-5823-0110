@@ -2,7 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    # Feature branches run CI too. Without this, work on a branch is unverified
+    # until it reaches main or someone opens a pull request — which is how the
+    # container image sat unbuilt after its first push.
+    branches: [main, master, "infra/**", "feat/**", "fix/**", "chore/**"]
   pull_request:
 
 concurrency:
