@@ -44,6 +44,20 @@ resource "aws_security_group" "postgres" {
   }
 }
 
+# Postgres accepts connections ONLY from the Fargate task security group —
+# never from the internet. Created as a separate rule (not inline ingress) so
+# the database can exist before the service does without a dependency cycle.
+resource "aws_vpc_security_group_ingress_rule" "postgres_from_task" {
+  count = var.create_database && var.create_service ? 1 : 0
+
+  security_group_id            = aws_security_group.postgres[0].id
+  description                  = "Postgres from the staging Fargate task"
+  from_port                    = 5432
+  to_port                      = 5432
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = aws_security_group.task[0].id
+}
+
 # Master password is generated here and stored in Secrets Manager. It does land
 # in Terraform state, which is why state lives in an encrypted, versioned,
 # access-controlled bucket — and why this password is staging-only and must

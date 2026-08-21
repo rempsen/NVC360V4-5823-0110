@@ -23,9 +23,19 @@ output "log_group" {
   value       = aws_cloudwatch_log_group.app.name
 }
 
-output "service_url" {
-  description = "Public HTTPS URL of the staging service (null until create_service = true)."
-  value       = var.create_service ? "https://${aws_apprunner_service.web[0].service_url}" : null
+output "alb_dns_name" {
+  description = "Public DNS name of the staging load balancer (null until create_service = true). Point a CNAME at this, then set var.staging_url."
+  value       = var.create_service ? aws_lb.web[0].dns_name : null
+}
+
+output "ecs_cluster_name" {
+  description = "ECS cluster name, needed by the CD workflow to force a new deployment."
+  value       = var.create_service ? aws_ecs_cluster.main[0].name : null
+}
+
+output "ecs_service_name" {
+  description = "ECS service name, needed by the CD workflow."
+  value       = var.create_service ? aws_ecs_service.web[0].name : null
 }
 
 output "database_endpoint" {

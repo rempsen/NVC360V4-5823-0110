@@ -1,0 +1,202 @@
+name: Deploy staging
+
+# Continuous delivery for the staging environment (AWS account 293174400261,
+# us-east-2). This is the CD half that did not exist before — ci.yml verifies,
+# this ships.
+#
+# Flow: build image -> push to ECR -> register a new ECS task definition
+# revision -> roll the service -> wait for stability -> smoke test.
+#
+# Safety properties:
+#   * Runs only after CI passes on main (workflow_run), never in parallel with it.
+#   * Concurrency group of 1, no cancel — two overlapping deploys of a
+#     single-instance service is how you get a double-fired scheduler.
+#   * ECS deployment circuit breaker (configured in Terraform) rolls back
+#     automatically if the new task never becomes healthy.
+#   * Skips itself cleanly when AWS is not yet configured, so a fork or a repo
+#     without the secrets set does not show a permanent red X.
+#
+# NOTE ON AUTH: this uses a long-lived IAM access key stored in repo secrets,
+# which is NOT what we want. GitHub OIDC is the correct answer and the
+# Terraform for it is written, but iam:CreateOpenIDConnectProvider is denied by
+# the organization SCP on this Project account. Once that is lifted, delete the
+# two aws-access-key inputs below and replace them with:
+#     role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+# plus `permissions: id-token: write`. Nothing else changes.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "deploy" to confirm a manual staging deploy'
+        required: true
+        default: ""
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-2
+  ECR_REPOSITORY: nvc360-staging-web
+  ECS_CLUSTER: nvc360-staging
+  ECS_SERVICE: nvc360-staging-web
+  CONTAINER_NAME: web
+
+jobs:
+  deploy:
+    name: Build, push and deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # Only deploy green CI on main, or an explicitly confirmed manual run.
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.confirm == 'deploy')
+
+    steps:
+      - name: Check AWS is configured
+        id: gate
+        env:
+          KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        run: |
+          if [ -z "$KEY_ID" ]; then
+            echo "AWS credentials are not set in repo secrets — skipping deploy."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.gate.outputs.configured == 'true'
+        uses: actions/checkout@v5
+        with:
+          # workflow_run gives us the SHA that passed CI, not the tip of main.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Configure AWS credentials
+        if: steps.gate.outputs.configured == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ECR
+        if: steps.gate.outputs.configured == 'true'
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Buildx
+        if: steps.gate.outputs.configured == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image
+        if: steps.gate.outputs.configured == 'true'
+        id: image
+        uses: docker/build-push-action@v6
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        with:
+          context: .
+          push: true
+          # Tag with the commit SHA (immutable, what the task definition
+          # pins) and with staging-latest for human convenience.
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.event.workflow_run.head_sha || github.sha }}
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:staging-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VITE_SENTRY_ENV=staging
+            VITE_SENTRY_DSN=${{ secrets.VITE_SENTRY_DSN }}
+
+      # Database migrations deliberately DO NOT run here yet.
+      #
+      # Migrations in this repo are forward-only with no down-migrations, and
+      # staging has no database of its own until the Turso account-ownership
+      # question is resolved (or RDS Postgres is turned on). Running migrations
+      # from CI against a shared database before staging has its own is how you
+      # migrate production by accident. This step lands with the staging
+      # database, not before it.
+
+      - name: Deploy to ECS
+        if: steps.gate.outputs.configured == 'true'
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          IMAGE="${{ steps.ecr.outputs.registry }}/${ECR_REPOSITORY}:${SHA}"
+          echo "Deploying $IMAGE"
+
+          # Take the live task definition, swap only the image, register a new
+          # revision. Everything else (secrets, env, roles, limits) stays as
+          # Terraform defined it.
+          TASK_DEF=$(aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query 'services[0].taskDefinition' --output text)
+
+          aws ecs describe-task-definition --task-definition "$TASK_DEF" \
+            --query 'taskDefinition' > /tmp/taskdef.json
+
+          jq --arg IMAGE "$IMAGE" --arg NAME "$CONTAINER_NAME" '
+            .containerDefinitions = (
+              .containerDefinitions | map(if .name == $NAME then .image = $IMAGE else . end)
+            )
+            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                  .compatibilities, .registeredAt, .registeredBy, .deregisteredAt)
+          ' /tmp/taskdef.json > /tmp/newdef.json
+
+          NEW_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file:///tmp/newdef.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "Registered $NEW_ARN"
+
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" \
+            --task-definition "$NEW_ARN" > /dev/null
+
+      - name: Wait for the service to stabilise
+        if: steps.gate.outputs.configured == 'true'
+        run: |
+          # The circuit breaker rolls back a bad deploy on its own; this makes
+          # the workflow fail loudly when that happens instead of going green.
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
+
+      - name: Smoke test
+        if: steps.gate.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          URL=$(aws elbv2 describe-load-balancers \
+            --names nvc360-staging-alb \
+            --query 'LoadBalancers[0].DNSName' --output text)
+          echo "Smoke testing http://$URL"
+
+          # /api/ready does a real database round-trip, so this asserts the app
+          # is genuinely serving, not just that a container started.
+          for i in $(seq 1 20); do
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://$URL/api/ready" || true)
+            if [ "$CODE" = "200" ]; then
+              echo "Staging is healthy."
+              # The SPA shell must also render, or we shipped an API-only box.
+              curl -fsS "http://$URL/" | grep -qi "<div id=\"root\"" \
+                && echo "SPA shell served." && exit 0
+              echo "::error::API is healthy but the SPA shell did not render."
+              exit 1
+            fi
+            echo "attempt $i: /api/ready returned $CODE"
+            sleep 10
+          done
+          echo "::error::Staging never returned 200 from /api/ready"
+          exit 1
+
+      - name: Report
+        if: steps.gate.outputs.configured == 'true' && always()
+        run: |
+          echo "### Staging deploy: ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Commit: \`${{ github.event.workflow_run.head_sha || github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
