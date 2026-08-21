@@ -1,0 +1,40 @@
+# Keep the build context small and — more importantly — keep secrets and host
+# artifacts out of the image. Anything not listed here IS sent to the daemon.
+
+# Secrets. Never bake env files into an image.
+.env
+.env.*
+!.env.example
+packages/mobile/.env
+keys/
+*.p8
+*.p12
+*.mobileprovision
+
+# Dependencies and build output — installed/built inside the image instead.
+node_modules
+**/node_modules
+packages/web/dist
+packages/desktop/dist
+packages/desktop/dist-electron
+packages/mobile/.expo
+**/.turbo
+**/*.tsbuildinfo
+
+# Workspaces the server never imports (Expo / Electron).
+packages/mobile
+packages/desktop
+
+# VCS, CI, docs, local scratch.
+.git
+.github
+.gitignore
+*.md
+!package.json
+.vscode
+.idea
+coverage
+*.log
+*.db
+uploads/
+/tmp
