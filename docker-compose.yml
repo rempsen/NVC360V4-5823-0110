@@ -1,0 +1,79 @@
+# Local development / verification stack.
+#
+# Purpose:
+#   1. Prove the production image runs outside Runable (`docker compose up app`).
+#   2. Give every developer a local Postgres, so the Turso → Postgres migration
+#      (Phase D) can be developed and rehearsed without touching a hosted DB.
+#   3. Give every developer a local Redis, so the realtime bus and rate limiter
+#      run in their multi-node code path locally instead of the in-memory
+#      fallback — that fallback is what hides multi-instance bugs today.
+#
+# Usage:
+#   cp .env.example .env        # then fill in real values
+#   docker compose up --build app
+#   docker compose up -d postgres redis     # infra only, app run natively
+#
+# The app service reads .env at RUNTIME (env_file), so no secret is ever baked
+# into the image. VITE_* values are build-time only and passed as build args.
+
+name: nvc360
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
+        VITE_SENTRY_ENV: local
+        VITE_APPLICATION_ID: ${VITE_APPLICATION_ID:-}
+        VITE_RUNABLE_AUTH_ISSUER: ${VITE_RUNABLE_AUTH_ISSUER:-}
+    image: nvc360-web:local
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: 4200
+      # Point the app at the containerised Redis rather than Redis Cloud so
+      # local runs exercise the multi-node path without touching shared infra.
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "4200:4200"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Postgres 16 — target of the Phase D migration. Nothing reads this yet.
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: nvc360
+      POSTGRES_PASSWORD: nvc360_local
+      POSTGRES_DB: nvc360
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nvc360 -d nvc360"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pgdata:
+  redisdata:

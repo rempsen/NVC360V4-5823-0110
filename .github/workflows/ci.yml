@@ -58,3 +58,57 @@ jobs:
             diff -rq /tmp/drizzle-committed drizzle || true
             exit 1
           fi
+
+  # Builds the production container image on every push/PR. This is the artifact
+  # staging and (later) production deploy from, so a broken Dockerfile must fail
+  # the build here rather than at deploy time. No registry push yet — that lands
+  # with the CD workflow once the AWS staging target exists.
+  image:
+    name: Container image builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: nvc360-web:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VITE_SENTRY_ENV=ci
+
+      - name: Smoke test — container boots and binds its port
+        run: |
+          # No database or third-party credentials are provided, so the app is
+          # expected to log connection errors. What we assert is narrower and
+          # still valuable: the image starts, Bun resolves every server-side
+          # import, and the HTTP listener binds. An import-time or module-
+          # resolution regression (the realistic Dockerfile failure mode) fails
+          # here. Deeper health checking belongs to the staging smoke test.
+          docker run -d --name nvc360-smoke -p 4200:4200 \
+            -e PORT=4200 \
+            -e DATABASE_URL="libsql://placeholder.invalid" \
+            -e DATABASE_AUTH_TOKEN="placeholder" \
+            -e BETTER_AUTH_SECRET="ci-smoke-secret-not-a-real-key" \
+            nvc360-web:ci
+          for i in $(seq 1 30); do
+            if curl -fsS -o /dev/null "http://127.0.0.1:4200/"; then
+              echo "Container served an HTTP response."
+              docker rm -f nvc360-smoke
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Container never served an HTTP response on :4200"
+          docker logs nvc360-smoke || true
+          docker rm -f nvc360-smoke
+          exit 1
