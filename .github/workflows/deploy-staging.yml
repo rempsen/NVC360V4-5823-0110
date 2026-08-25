@@ -55,6 +55,9 @@ env:
 
 jobs:
   deploy:
+    permissions:
+      id-token: write
+      contents: read
     name: Build, push and deploy
     runs-on: ubuntu-latest
     timeout-minutes: 30
