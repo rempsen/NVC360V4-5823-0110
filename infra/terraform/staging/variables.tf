@@ -13,7 +13,7 @@ variable "name_prefix" {
 variable "github_repo" {
   description = "owner/repo allowed to assume the CI deploy role via OIDC."
   type        = string
-  default     = "rempsen/NVC360V4-7630"
+  default     = "rempsen/NVC360V4-5823-0110"
 }
 
 variable "container_port" {
