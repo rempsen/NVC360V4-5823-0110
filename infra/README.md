@@ -82,22 +82,22 @@ credentials step the first time it ran. It was never caught because
 `create_service = false` and no deploy had executed. Corrected and applied —
 the live trust policy and all resource tags now carry the real repo.
 
-## Cost gates
+## Cost footprint
 
-| Variable | Creates | Cost | Current |
-|---|---|---|---|
-| `create_database` | RDS Postgres db.t4g.micro, 20 GB gp3, 7-day backups | Free for 12 months, then ~$15/month | **`true`** — live since 2026-08-21 |
-| `create_service` | ECS Fargate service 0.25 vCPU / 0.5 GB + ALB, 1 task | ~$25/month (ALB ~$16 + task ~$9) | `false` |
+There are no cost-gate variables anymore — `terraform apply` always creates
+everything, including the RDS instance and the ECS/ALB compute:
 
-`create_service` also requires an image to already exist in ECR. Order of
-operations:
+| Creates | Cost |
+|---|---|
+| RDS Postgres db.t4g.micro, 20 GB gp3, 7-day backups | Free for 12 months, then ~$15/month |
+| ECS Fargate service 0.25 vCPU / 0.5 GB + ALB, 1 task | ~$25/month (ALB ~$16 + task ~$9) |
 
-1. `terraform apply` with `create_service = false` — foundation only.
-2. CI builds and pushes the image to ECR (assumes the OIDC deploy role).
-3. Set `create_service = true` and apply again.
-
-Do not flip `create_service` without Dan's explicit approval — nothing above a
-few dollars a month gets created without telling him first.
+The ECS service still needs an image in ECR before its task can start — CI
+pushes that (assumes the OIDC deploy role) — but the Terraform resources
+themselves are unconditional. `create_database` and `create_service` were
+removed on 2026-08-25 (they'd both already been flipped to `true`, so they
+were dead indirection); if this footprint ever needs to shrink again, do it by
+editing the resources directly rather than reintroducing a flag.
 
 ## Usage
 
@@ -168,8 +168,8 @@ Eight tagged resources. **No ECS cluster exists and nothing is running.**
 
 - Populating `nvc360-staging/app-config` with real staging values — needs
   test-mode Stripe, Twilio and Resend credentials.
-- Turning on staging compute (`create_service = true` plus a first image push,
-  ~$25/month). Needs approval.
+- A first image push to ECR so the ECS service (~$25/month, created
+  unconditionally now) has something to run.
 - ACM certificate and a `staging.nvc360.com` hostname before any real data goes
   in.
 - Rotating or retiring the long-lived `nvc360-agent` access key now that OIDC

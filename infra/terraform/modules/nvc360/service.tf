@@ -7,9 +7,8 @@
 # Project account (see infra/README.md), so Fargate + ALB it is. If that SCP is
 # ever loosened, App Runner becomes worth revisiting purely on cost.
 #
-# Gated behind var.create_service (default false) because this is the part that
-# costs money: ~$16/month for the ALB plus ~$9/month for one always-on 0.25 vCPU
-# / 0.5 GB Fargate task.
+# This is the part that costs money: ~$16/month for the ALB plus ~$9/month for
+# one always-on 0.25 vCPU / 0.5 GB Fargate task.
 #
 # Networking uses the default VPC's public subnets with public IPs assigned, on
 # purpose: private subnets would need a NAT gateway (~$32/month) for the task to
@@ -54,7 +53,6 @@ locals {
 # --- Security groups -------------------------------------------------------
 
 resource "aws_security_group" "alb" {
-  count       = var.create_service ? 1 : 0
   name        = "${var.name_prefix}-alb"
   description = "Public ingress to the staging load balancer."
   vpc_id      = data.aws_vpc.default.id
@@ -85,7 +83,6 @@ resource "aws_security_group" "alb" {
 }
 
 resource "aws_security_group" "task" {
-  count       = var.create_service ? 1 : 0
   name        = "${var.name_prefix}-task"
   description = "Staging Fargate task. Ingress only from the ALB."
   vpc_id      = data.aws_vpc.default.id
@@ -95,7 +92,7 @@ resource "aws_security_group" "task" {
     from_port       = var.container_port
     to_port         = var.container_port
     protocol        = "tcp"
-    security_groups = [aws_security_group.alb[0].id]
+    security_groups = [aws_security_group.alb.id]
   }
 
   egress {
@@ -110,18 +107,16 @@ resource "aws_security_group" "task" {
 # --- Load balancer ---------------------------------------------------------
 
 resource "aws_lb" "web" {
-  count              = var.create_service ? 1 : 0
   name               = "${var.name_prefix}-alb"
   internal           = false
   load_balancer_type = "application"
-  security_groups    = [aws_security_group.alb[0].id]
+  security_groups    = [aws_security_group.alb.id]
   subnets            = data.aws_subnets.default.ids
 
   idle_timeout = 300 # SSE streams hold connections open; 60s default cuts them
 }
 
 resource "aws_lb_target_group" "web" {
-  count       = var.create_service ? 1 : 0
   name        = "${var.name_prefix}-tg"
   port        = var.container_port
   protocol    = "HTTP"
@@ -144,8 +139,7 @@ resource "aws_lb_target_group" "web" {
 }
 
 resource "aws_lb_listener" "http" {
-  count             = var.create_service ? 1 : 0
-  load_balancer_arn = aws_lb.web[0].arn
+  load_balancer_arn = aws_lb.web.arn
   port              = 80
   protocol          = "HTTP"
 
@@ -154,7 +148,7 @@ resource "aws_lb_listener" "http" {
   default_action {
     type = var.acm_certificate_arn == "" ? "forward" : "redirect"
 
-    target_group_arn = var.acm_certificate_arn == "" ? aws_lb_target_group.web[0].arn : null
+    target_group_arn = var.acm_certificate_arn == "" ? aws_lb_target_group.web.arn : null
 
     dynamic "redirect" {
       for_each = var.acm_certificate_arn == "" ? [] : [1]
@@ -168,8 +162,8 @@ resource "aws_lb_listener" "http" {
 }
 
 resource "aws_lb_listener" "https" {
-  count             = var.create_service && var.acm_certificate_arn != "" ? 1 : 0
-  load_balancer_arn = aws_lb.web[0].arn
+  count             = var.acm_certificate_arn != "" ? 1 : 0
+  load_balancer_arn = aws_lb.web.arn
   port              = 443
   protocol          = "HTTPS"
   ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
@@ -177,7 +171,7 @@ resource "aws_lb_listener" "https" {
 
   default_action {
     type             = "forward"
-    target_group_arn = aws_lb_target_group.web[0].arn
+    target_group_arn = aws_lb_target_group.web.arn
   }
 }
 
@@ -197,14 +191,12 @@ data "aws_iam_policy_document" "ecs_task_assume" {
 # Execution role: what ECS itself needs — pull the image, write logs, read the
 # secrets it injects into the container.
 resource "aws_iam_role" "execution" {
-  count              = var.create_service ? 1 : 0
   name               = "${var.name_prefix}-execution"
   assume_role_policy = data.aws_iam_policy_document.ecs_task_assume.json
 }
 
 resource "aws_iam_role_policy_attachment" "execution_managed" {
-  count      = var.create_service ? 1 : 0
-  role       = aws_iam_role.execution[0].name
+  role       = aws_iam_role.execution.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
@@ -218,15 +210,13 @@ data "aws_iam_policy_document" "execution_secrets" {
 }
 
 resource "aws_iam_role_policy" "execution_secrets" {
-  count  = var.create_service ? 1 : 0
   name   = "read-secrets"
-  role   = aws_iam_role.execution[0].id
+  role   = aws_iam_role.execution.id
   policy = data.aws_iam_policy_document.execution_secrets.json
 }
 
 # Task role: what the application code itself can do at runtime.
 resource "aws_iam_role" "app_task" {
-  count              = var.create_service ? 1 : 0
   name               = "${var.name_prefix}-app-task"
   assume_role_policy = data.aws_iam_policy_document.ecs_task_assume.json
 }
@@ -253,17 +243,15 @@ data "aws_iam_policy_document" "app_task" {
 }
 
 resource "aws_iam_role_policy" "app_task" {
-  count  = var.create_service ? 1 : 0
   name   = "runtime"
-  role   = aws_iam_role.app_task[0].id
+  role   = aws_iam_role.app_task.id
   policy = data.aws_iam_policy_document.app_task.json
 }
 
 # --- ECS -------------------------------------------------------------------
 
 resource "aws_ecs_cluster" "main" {
-  count = var.create_service ? 1 : 0
-  name  = var.name_prefix
+  name = var.name_prefix
 
   setting {
     name  = "containerInsights"
@@ -272,14 +260,13 @@ resource "aws_ecs_cluster" "main" {
 }
 
 resource "aws_ecs_task_definition" "web" {
-  count                    = var.create_service ? 1 : 0
   family                   = "${var.name_prefix}-web"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   cpu                      = "256"
   memory                   = "512"
-  execution_role_arn       = aws_iam_role.execution[0].arn
-  task_role_arn            = aws_iam_role.app_task[0].arn
+  execution_role_arn       = aws_iam_role.execution.arn
+  task_role_arn            = aws_iam_role.app_task.arn
 
   runtime_platform {
     operating_system_family = "LINUX"
@@ -340,10 +327,9 @@ resource "aws_ecs_task_definition" "web" {
 }
 
 resource "aws_ecs_service" "web" {
-  count           = var.create_service ? 1 : 0
   name            = "${var.name_prefix}-web"
-  cluster         = aws_ecs_cluster.main[0].id
-  task_definition = aws_ecs_task_definition.web[0].arn
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.web.arn
   launch_type     = "FARGATE"
 
   # Exactly one task. This is NOT a cost decision: six setInterval sweeps
@@ -368,12 +354,12 @@ resource "aws_ecs_service" "web" {
 
   network_configuration {
     subnets          = data.aws_subnets.default.ids
-    security_groups  = [aws_security_group.task[0].id]
+    security_groups  = [aws_security_group.task.id]
     assign_public_ip = true # no NAT gateway — see header
   }
 
   load_balancer {
-    target_group_arn = aws_lb_target_group.web[0].arn
+    target_group_arn = aws_lb_target_group.web.arn
     container_name   = local.container_name
     container_port   = var.container_port
   }
