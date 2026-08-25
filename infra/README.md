@@ -70,18 +70,17 @@ creates the secret but never writes real values into it — those go in out of
 band so they never land in Terraform state. `nvc360-staging/app-config` currently
 holds a **placeholder value only**.
 
-**GitHub OIDC, no access keys in CI.** The deploy role trusts a single
-`repo:<owner>/<repo>:ref:refs/heads/main` subject, so no long-lived AWS key is
-stored in GitHub. The OIDC provider was created by hand and then imported into
-Terraform state, so `terraform plan` is clean.
+**GitHub OIDC, no access keys in CI.** The deploy role trusts exactly one
+subject — `repo:rempsen/NVC360V4-5823-0110:ref:refs/heads/main` — so no
+long-lived AWS key is stored in GitHub. The OIDC provider was created by hand
+and then imported into Terraform state, so `terraform plan` is clean.
 
-> ⚠️ **Known defect:** `var.github_repo` still defaults to
-> `rempsen/NVC360V4-7630`, which is not this repository. The real remote is
-> `rempsen/NVC360V4-5823-0110`. Until that default is corrected **and applied**,
-> the deploy role's trust condition will refuse the real repository's OIDC token
-> and CD will fail at the credentials step. The same stale string is also a
-> `Repo` tag in `versions.tf`. This has never been exercised because
-> `create_service = false` and no deploy has run.
+Note for anyone reading old commits: `var.github_repo` defaulted to
+`rempsen/NVC360V4-7630` until 2026-08-25. That is not this repository, and the
+deploy role's trust condition was built from it, so CD would have failed at the
+credentials step the first time it ran. It was never caught because
+`create_service = false` and no deploy had executed. Corrected and applied —
+the live trust policy and all resource tags now carry the real repo.
 
 ## Cost gates
 
@@ -163,12 +162,10 @@ Eight tagged resources. **No ECS cluster exists and nothing is running.**
 | S3 `nvc360-staging-uploads-293174400261` | Staging uploads |
 | S3 `nvc360-tfstate-293174400261` | Terraform state, versioned, native locking |
 | CloudWatch `/nvc360/nvc360-staging/app` | Log group |
-| IAM role `nvc360-staging-github-deploy` + GitHub OIDC provider | CD identity — see the `github_repo` defect above |
+| IAM role `nvc360-staging-github-deploy` + GitHub OIDC provider | CD identity. Trusts `repo:rempsen/NVC360V4-5823-0110:ref:refs/heads/main` only |
 
 ## Not done yet
 
-- **Correct `var.github_repo`** to `rempsen/NVC360V4-5823-0110` and apply, or CD
-  cannot authenticate. Highest-priority item in this directory.
 - Populating `nvc360-staging/app-config` with real staging values — needs
   test-mode Stripe, Twilio and Resend credentials.
 - Turning on staging compute (`create_service = true` plus a first image push,

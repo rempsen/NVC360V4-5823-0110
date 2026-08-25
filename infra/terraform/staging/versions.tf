@@ -32,7 +32,7 @@ provider "aws" {
       Project     = "nvc360"
       Environment = "staging"
       ManagedBy   = "terraform"
-      Repo        = "rempsen/NVC360V4-7630"
+      Repo        = "rempsen/NVC360V4-5823-0110"
     }
   }
 }
