@@ -42,3 +42,9 @@ output "database_endpoint" {
   description = "Staging Postgres endpoint."
   value       = module.nvc360.database_endpoint
 }
+
+output "better_auth_secret" {
+  description = "Generated BETTER_AUTH_SECRET value — read with -raw and set it as that key in the app-config secret."
+  value       = module.nvc360.better_auth_secret
+  sensitive   = true
+}

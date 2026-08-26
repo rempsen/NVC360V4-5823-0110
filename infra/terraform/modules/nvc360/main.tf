@@ -118,25 +118,37 @@ resource "aws_s3_bucket_cors_configuration" "uploads" {
 # than one secret per key: Secrets Manager bills per secret per month, and this
 # app has ~30 config keys. The container reads the whole blob at boot.
 #
-# Terraform creates the secret but deliberately does NOT set its value — real
-# credentials are written out of band (CLI or console) so they never enter
-# Terraform state, which is stored in S3 and readable by anyone with state
-# access. ignore_changes keeps Terraform from fighting those manual writes.
+# Terraform seeds this once — every key local.secret_keys expects (service.tf)
+# gets a "" placeholder so the ECS task can actually pull secrets and start,
+# plus a real generated BETTER_AUTH_SECRET — but does not manage it afterward.
+# Developers update real values (Stripe, Twilio, Turso, etc.) directly via the
+# AWS console or `aws secretsmanager put-secret-value`, never through this
+# file or a tfvars file; ignore_changes keeps Terraform from reverting those
+# edits back to placeholders on the next apply.
 # ---------------------------------------------------------------------------
 resource "aws_secretsmanager_secret" "app_config" {
   name        = "${var.name_prefix}/app-config"
-  description = "Runtime env for the staging container, as a JSON object. Values are set out of band, never through Terraform."
+  description = "Runtime env for the staging container, as a JSON object. Update via the AWS console or `aws secretsmanager put-secret-value`, not Terraform."
 
   # Staging secrets should be re-creatable immediately, not held for 30 days.
   recovery_window_in_days = 0
 }
 
-resource "aws_secretsmanager_secret_version" "app_config_placeholder" {
+# better-auth's session/cookie signing key. Pure random material — unlike the
+# other app-config keys, it needs no third-party account, so Terraform
+# generates it as part of the initial seed value below.
+resource "random_password" "better_auth_secret" {
+  length  = 44
+  special = false # avoids escaping pitfalls in shell/JSON handling downstream
+}
+
+resource "aws_secretsmanager_secret_version" "app_config" {
   secret_id = aws_secretsmanager_secret.app_config.id
 
-  secret_string = jsonencode({
-    PLACEHOLDER = "Replace via: aws secretsmanager put-secret-value --secret-id ${var.name_prefix}/app-config --secret-string file://staging.json"
-  })
+  secret_string = jsonencode(merge(
+    { for k in local.secret_keys : k => "" }, # every key the container expects exists
+    { BETTER_AUTH_SECRET = random_password.better_auth_secret.result },
+  ))
 
   lifecycle {
     ignore_changes = [secret_string]
@@ -177,10 +189,39 @@ data "aws_iam_policy_document" "github_assume" {
 
     # Only this repo, and only its main branch — not every branch, and not
     # pull requests from forks.
+    #
+    # AWS requires a Federated-OIDC trust policy to scope on `sub` (or
+    # job_workflow_ref) — a policy that only used repository_id/ref claims
+    # was rejected at apply time with "must evaluate ... sub ... which is
+    # not scoped to all". So `sub` stays, but wildcarded on the human-readable
+    # owner/repo names and pinned on the numeric IDs instead: GitHub appends
+    # "@<id>" disambiguators to renamed repos/owners in `sub` (this repo was
+    # renamed from NVC360V4-7630), which silently broke the old exact-name
+    # StringLike match. repository_id/repository_owner_id are stable across
+    # any future rename, so matching on them is the durable part; the ref
+    # restriction lives in both the sub pattern and its own claim below.
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repo}:ref:refs/heads/main"]
+      values   = ["repo:*@${var.github_repository_owner_id}/*@${var.github_repository_id}:ref:refs/heads/main"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:repository_id"
+      values   = [var.github_repository_id]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:repository_owner_id"
+      values   = [var.github_repository_owner_id]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:ref"
+      values   = ["refs/heads/main"]
     }
   }
 }
@@ -215,15 +256,51 @@ data "aws_iam_policy_document" "github_deploy" {
     resources = [aws_ecr_repository.web.arn]
   }
 
+  # RegisterTaskDefinition and DescribeTaskDefinition don't support
+  # resource-level restriction (AWS requires "*" for both).
   statement {
-    sid    = "DeployService"
+    sid    = "EcsTaskDefinitions"
     effect = "Allow"
     actions = [
-      "apprunner:StartDeployment",
-      "apprunner:DescribeService",
-      "apprunner:ListServices",
-      "apprunner:ListOperations",
+      "ecs:RegisterTaskDefinition",
+      "ecs:DescribeTaskDefinition",
     ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "EcsDeploy"
+    effect = "Allow"
+    actions = [
+      "ecs:DescribeServices",
+      "ecs:UpdateService",
+    ]
+    resources = ["arn:aws:ecs:${var.region}:${local.account_id}:service/${var.name_prefix}/${var.name_prefix}-web"]
+  }
+
+  # The rolling deploy's new task definition revision references these roles;
+  # ECS itself (not the deploy role) launches the task, so this is scoped to
+  # exactly the two roles the task definition uses and to the ECS service
+  # principal only.
+  statement {
+    sid       = "PassEcsRoles"
+    effect    = "Allow"
+    actions   = ["iam:PassRole"]
+    resources = [aws_iam_role.execution.arn, aws_iam_role.app_task.arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["ecs-tasks.amazonaws.com"]
+    }
+  }
+
+  # The smoke-test step reads the ALB's DNS name. elbv2 Describe* actions
+  # don't support resource-level restriction either.
+  statement {
+    sid       = "DescribeLoadBalancer"
+    effect    = "Allow"
+    actions   = ["elasticloadbalancing:DescribeLoadBalancers"]
     resources = ["*"]
   }
 }

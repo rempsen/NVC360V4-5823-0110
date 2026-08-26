@@ -106,7 +106,5 @@ packages/web/uploads
 tfplan
 crash.log
 crash.*.log
-# Variable files can carry credentials. terraform.tfvars here holds only cost
-# gates and is committed deliberately via the exception below.
+# Variable files can carry credentials.
 *.auto.tfvars
-!infra/terraform/staging/terraform.tfvars

@@ -42,3 +42,9 @@ output "database_endpoint" {
   description = "Staging Postgres endpoint."
   value       = aws_db_instance.postgres.endpoint
 }
+
+output "better_auth_secret" {
+  description = "Generated BETTER_AUTH_SECRET value — read with -raw and set it as that key in the app-config secret."
+  value       = random_password.better_auth_secret.result
+  sensitive   = true
+}

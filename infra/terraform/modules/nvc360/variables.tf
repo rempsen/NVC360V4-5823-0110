@@ -11,9 +11,30 @@ variable "name_prefix" {
 }
 
 variable "github_repo" {
-  description = "owner/repo allowed to assume the CI deploy role via OIDC."
+  description = "owner/repo allowed to assume the CI deploy role via OIDC. Human-readable only — the trust policy matches on the stable IDs below, not this string, so renaming the repo again does not require an apply here (only updating this description/tag)."
   type        = string
   default     = "rempsen/NVC360V4-5823-0110"
+}
+
+variable "github_repository_id" {
+  description = <<-EOT
+    Numeric GitHub repository ID for the OIDC trust policy. GitHub's `sub`
+    claim appends "@<repository_id>" to the repo name once a repo has been
+    renamed (this one was, from NVC360V4-7630), so matching on the plain
+    "owner/repo" string in `sub` silently stops working. Matching on
+    repository_id/repository_owner_id instead is immune to future renames.
+    Found via CloudTrail on the actual token presented by a failed
+    AssumeRoleWithWebIdentity call; also readable from
+    `gh api repos/rempsen/NVC360V4-5823-0110 --jq .id`.
+  EOT
+  type        = string
+  default     = "1330189422"
+}
+
+variable "github_repository_owner_id" {
+  description = "Numeric GitHub owner (user/org) ID for the OIDC trust policy — see github_repository_id for why this is matched instead of the owner name."
+  type        = string
+  default     = "15948680"
 }
 
 variable "container_port" {

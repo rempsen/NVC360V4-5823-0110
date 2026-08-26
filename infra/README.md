@@ -66,9 +66,14 @@ unset. Do not reintroduce the AWS SDK server-side: it pulled ~570 modules /
 
 **One secret, not thirty.** Secrets Manager bills per secret per month and this
 app has ~30 config keys, so runtime config is a single JSON blob. Terraform
-creates the secret but never writes real values into it — those go in out of
-band so they never land in Terraform state. `nvc360-staging/app-config` currently
-holds a **placeholder value only**.
+seeds it once — every key the container expects gets a `""` placeholder so
+the ECS task can actually pull secrets and start, plus a real generated
+`BETTER_AUTH_SECRET` (the only key that needs no third-party account) — and
+then steps back: real credentials (Stripe, Twilio, Turso, etc.) are set
+directly via the AWS console or `aws secretsmanager put-secret-value
+--secret-id nvc360-staging/app-config --secret-string file://staging.json`,
+never through Terraform or a tfvars file. `ignore_changes` on that resource
+keeps `terraform apply` from ever reverting those edits back to placeholders.
 
 **GitHub OIDC, no access keys in CI.** The deploy role trusts exactly one
 subject — `repo:rempsen/NVC360V4-5823-0110:ref:refs/heads/main` — so no
@@ -157,7 +162,7 @@ Eight tagged resources. **No ECS cluster exists and nothing is running.**
 |---|---|
 | RDS `nvc360-staging-postgres` | Postgres 16.13, db.t4g.micro, 20 GB gp3, encrypted, not publicly accessible, 7-day backups, `available` |
 | Secret `nvc360-staging/postgres-url` | Live. Machine-generated password, never typed by a human |
-| Secret `nvc360-staging/app-config` | Placeholder value only — still needs populating |
+| Secret `nvc360-staging/app-config` | Terraform-seeded placeholders (`BETTER_AUTH_SECRET` is real) — other keys need real values set via the AWS console/CLI |
 | ECR `nvc360-staging-web` | Empty until the first CI push |
 | S3 `nvc360-staging-uploads-293174400261` | Staging uploads |
 | S3 `nvc360-tfstate-293174400261` | Terraform state, versioned, native locking |
@@ -166,8 +171,10 @@ Eight tagged resources. **No ECS cluster exists and nothing is running.**
 
 ## Not done yet
 
-- Populating `nvc360-staging/app-config` with real staging values — needs
-  test-mode Stripe, Twilio and Resend credentials.
+- Setting real values (test-mode Stripe, Twilio, Resend, Google, Turso, etc.
+  credentials) on `nvc360-staging/app-config` via the AWS console or
+  `aws secretsmanager put-secret-value` — every key besides
+  `BETTER_AUTH_SECRET` is still a `""` placeholder until someone does.
 - A first image push to ECR so the ECS service (~$25/month, created
   unconditionally now) has something to run.
 - ACM certificate and a `staging.nvc360.com` hostname before any real data goes
