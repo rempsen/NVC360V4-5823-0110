@@ -21,10 +21,9 @@
  */
 import { describe, it, expect, beforeAll } from "bun:test";
 import { Hono } from "hono";
-import { getTableConfig, type SQLiteColumn } from "drizzle-orm/sqlite-core";
+import { ensureSchema } from "../../database/__tests__/setup";
 
-process.env.DATABASE_URL = ":memory:";
-process.env.DATABASE_AUTH_TOKEN = "";
+await ensureSchema();
 
 const { db } = await import("../../database/index");
 const schema = await import("../../database/schema");
@@ -60,64 +59,32 @@ app.onError((err, c) => {
   return c.json({ error: { code: "internal", message: String((err as Error).message) } }, 500);
 });
 
-function ddlFor(table: any): string {
-  const cfg = getTableConfig(table);
-  const cols = cfg.columns.map((col: SQLiteColumn) => {
-    const parts = [`"${col.name}"`, col.getSQLType()];
-    if (col.primary) parts.push("PRIMARY KEY");
-    const dflt = (col as any).default;
-    let lit: string | null = null;
-    if (dflt !== undefined) {
-      lit =
-        typeof dflt === "string" ? `'${dflt.replace(/'/g, "''")}'`
-        : typeof dflt === "boolean" ? (dflt ? "1" : "0")
-        : typeof dflt === "number" ? String(dflt)
-        : null;
-    }
-    if (col.notNull && (lit !== null || col.primary)) parts.push("NOT NULL");
-    if (lit !== null) parts.push(`DEFAULT ${lit}`);
-    return parts.join(" ");
-  });
-  return `CREATE TABLE IF NOT EXISTS "${cfg.name}" (${cols.join(", ")})`;
-}
-
 beforeAll(async () => {
   const sql = (db as any).$client;
-  for (const t of [
-    schema.companySettings, schema.bookings, schema.services, schema.invoices,
-    schema.serviceZones, schema.properties, schema.jobEvents, schema.user,
-    // fireEvent() runs on create; give it its tables so the accepted-booking
-    // case doesn't spew caught "no such table" noise. No provider credentials
-    // exist under `bun test`, so nothing can actually be sent.
-    schema.notificationRules, schema.notificationChannels,
-    schema.notificationDeliveries, schema.notifications, schema.automationRules,
-  ]) {
-    await sql.execute(ddlFor(t));
-  }
 
-  await sql.execute({
-    sql: "INSERT OR IGNORE INTO company_settings (id, company_id, default_region) VALUES (?,?,?)",
-    args: ["zonetest-settings", Z, "MB"],
-  });
-  await sql.execute({
-    sql: "INSERT OR IGNORE INTO services (id, company_id, name, category, base_price) VALUES (?,?,?,?,?)",
-    args: ["svc-z", Z, "Zone service", "hvac", 100],
-  });
-  await sql.execute({
-    sql: "INSERT OR IGNORE INTO user (id, name, email, email_verified, company_id, role) VALUES (?,?,?,?,?,?)",
-    args: [CUST, "Zone Customer", "zonecust@t.test", 0, Z, "customer"],
-  });
+  await sql.query(
+    "INSERT INTO company_settings (id, company_id, default_region) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+    ["zonetest-settings", Z, "MB"],
+  );
+  await sql.query(
+    "INSERT INTO services (id, company_id, name, category, base_price) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
+    ["svc-z", Z, "Zone service", "hvac", 100],
+  );
+  await sql.query(
+    `INSERT INTO "user" (id, name, email, email_verified, company_id, role) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`,
+    [CUST, "Zone Customer", "zonecust@t.test", false, Z, "customer"],
+  );
   // One ACTIVE zone, plus an INACTIVE one that must not grant access.
-  await sql.execute({
-    sql: "INSERT OR IGNORE INTO service_zones (id, company_id, name, polygon, active) VALUES (?,?,?,?,?)",
-    args: ["zone-active", Z, "Winnipeg", JSON.stringify(ZONE_POLY), 1],
-  });
-  await sql.execute({
-    sql: "INSERT OR IGNORE INTO service_zones (id, company_id, name, polygon, active) VALUES (?,?,?,?,?)",
-    args: ["zone-off", Z, "Toronto (off)", JSON.stringify([
+  await sql.query(
+    "INSERT INTO service_zones (id, company_id, name, polygon, active) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
+    ["zone-active", Z, "Winnipeg", JSON.stringify(ZONE_POLY), true],
+  );
+  await sql.query(
+    "INSERT INTO service_zones (id, company_id, name, polygon, active) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
+    ["zone-off", Z, "Toronto (off)", JSON.stringify([
       [43.60, -79.45], [43.75, -79.45], [43.75, -79.30], [43.60, -79.30],
-    ]), 0],
-  });
+    ]), false],
+  );
 });
 
 function createAsCustomer(coords: { lat: number; lng: number } | null, address = "1 Test St") {

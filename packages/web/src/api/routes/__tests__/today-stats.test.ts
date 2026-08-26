@@ -18,13 +18,11 @@
  */
 import { describe, it, expect, beforeAll } from "bun:test";
 import { Hono } from "hono";
-import { getTableConfig, type SQLiteColumn } from "drizzle-orm/sqlite-core";
+import { ensureSchema } from "../../database/__tests__/setup";
 
-process.env.DATABASE_URL = ":memory:";
-process.env.DATABASE_AUTH_TOKEN = "";
+await ensureSchema();
 
 const { db } = await import("../../database/index");
-const schema = await import("../../database/schema");
 const { bookingsRoutes } = await import("../bookings");
 const { clearCompanyTimeZoneCache } = await import("../../../services/company-tz");
 const { zonedTimeToInstant, zonedParts } = await import("../../../shared/tz");
@@ -51,27 +49,6 @@ app.onError((err, c) => {
   return c.json({ error: { code: "internal", message: String((err as Error).message) } }, 500);
 });
 
-function ddlFor(table: any): string {
-  const cfg = getTableConfig(table);
-  const cols = cfg.columns.map((col: SQLiteColumn) => {
-    const parts = [`"${col.name}"`, col.getSQLType()];
-    if (col.primary) parts.push("PRIMARY KEY");
-    const dflt = (col as any).default;
-    let lit: string | null = null;
-    if (dflt !== undefined) {
-      lit =
-        typeof dflt === "string" ? `'${dflt.replace(/'/g, "''")}'`
-        : typeof dflt === "boolean" ? (dflt ? "1" : "0")
-        : typeof dflt === "number" ? String(dflt)
-        : null;
-    }
-    if (col.notNull && (lit !== null || col.primary)) parts.push("NOT NULL");
-    if (lit !== null) parts.push(`DEFAULT ${lit}`);
-    return parts.join(" ");
-  });
-  return `CREATE TABLE IF NOT EXISTS "${cfg.name}" (${cols.join(", ")})`;
-}
-
 /**
  * Fixtures are anchored to the tenant's CURRENT local date, so the assertions
  * stay meaningful whenever the suite runs (a fixed date would quietly stop
@@ -83,30 +60,33 @@ const localAt = (dayOffset: number, hour: number, minute = 0) =>
 
 beforeAll(async () => {
   const sql = (db as any).$client;
-  for (const t of [
-    schema.companySettings, schema.bookings, schema.services, schema.riders,
-    schema.user, schema.invoices, schema.serviceZones, schema.properties,
-    schema.jobEvents,
-  ]) {
-    await sql.execute(ddlFor(t));
-  }
+
+  // FK targets: bookings.customer_id and riders.user_id both reference user.id.
+  await sql.query(
+    "INSERT INTO \"user\" (id, name, email, email_verified, role, company_id) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING",
+    [USER, "Technician", "tds-tech@t.test", true, "rider", WPG_CO],
+  );
+  await sql.query(
+    "INSERT INTO \"user\" (id, name, email, email_verified, role, company_id) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING",
+    ["tds-cust", "Customer", "tds-cust@t.test", true, "customer", WPG_CO],
+  );
 
   for (const [co, tz, rider] of [
     [WPG_CO, TZ, RIDER_WPG],
     [UTC_CO, "UTC", RIDER_UTC],
   ] as const) {
-    await sql.execute({
-      sql: "INSERT OR IGNORE INTO company_settings (id, company_id, timezone) VALUES (?,?,?)",
-      args: [`tds-settings-${co}`, co, tz],
-    });
-    await sql.execute({
-      sql: "INSERT OR IGNORE INTO riders (id, company_id, user_id) VALUES (?,?,?)",
-      args: [rider, co, USER],
-    });
-    await sql.execute({
-      sql: "INSERT OR IGNORE INTO services (id, company_id, name, category, base_price) VALUES (?,?,?,?,?)",
-      args: [`tds-svc-${co}`, co, "Service", "hvac", 100],
-    });
+    await sql.query(
+      "INSERT INTO company_settings (id, company_id, timezone) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+      [`tds-settings-${co}`, co, tz],
+    );
+    await sql.query(
+      "INSERT INTO riders (id, company_id, user_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+      [rider, co, USER],
+    );
+    await sql.query(
+      "INSERT INTO services (id, company_id, name, category, base_price) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
+      [`tds-svc-${co}`, co, "Service", "hvac", 100],
+    );
 
     // Three jobs on the technician's LOCAL day (Aug 11 in Winnipeg):
     //   08:00 completed $120 — before the UTC window opened
@@ -119,21 +99,21 @@ beforeAll(async () => {
       // and one that belongs to the NEXT local day, which must never count
     ];
     for (const [id, h, m, status, price] of jobs) {
-      await sql.execute({
-        sql: `INSERT OR IGNORE INTO bookings
+      await sql.query(
+        `INSERT INTO bookings
                 (id, company_id, customer_id, service_id, title, status, scheduled_at, address, rider_id, price, public_token)
-              VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-        args: [id, co, "tds-cust", `tds-svc-${co}`, "Job", status,
-          localAt(0, h, m).getTime(), "1 Test St", rider, price, `tok-${id}`],
-      });
+              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING`,
+        [id, co, "tds-cust", `tds-svc-${co}`, "Job", status,
+          localAt(0, h, m), "1 Test St", rider, price, `tok-${id}`],
+      );
     }
-    await sql.execute({
-      sql: `INSERT OR IGNORE INTO bookings
+    await sql.query(
+      `INSERT INTO bookings
               (id, company_id, customer_id, service_id, title, status, scheduled_at, address, rider_id, price, public_token)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-      args: [`tds-job-tomorrow-${co}`, co, "tds-cust", `tds-svc-${co}`, "Job", "completed",
-        localAt(1, 10, 0).getTime(), "1 Test St", rider, 500, `tok-tomorrow-${co}`],
-    });
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING`,
+      [`tds-job-tomorrow-${co}`, co, "tds-cust", `tds-svc-${co}`, "Job", "completed",
+        localAt(1, 10, 0), "1 Test St", rider, 500, `tok-tomorrow-${co}`],
+    );
   }
   clearCompanyTimeZoneCache();
 });

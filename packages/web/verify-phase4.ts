@@ -8,7 +8,7 @@
  * Run from packages/web:
  *   bun --env-file=../../.env verify-phase4.ts
  */
-import { createClient } from "@libsql/client";
+import { Pool } from "pg";
 
 const BASE = "http://localhost:4200";
 const EMAIL = "dan@nvc360.com";
@@ -17,10 +17,7 @@ const COMPANY = "default";
 const CUSTOMER = "6G8OQVJnUNnG388iGQs6Lw5sO5Q8nEQT";
 const SERVICE = "52f2fc46-310a-45a5-9c0b-91c2941437cf";
 
-const db = createClient({
-  url: process.env.DATABASE_URL!,
-  authToken: process.env.DATABASE_AUTH_TOKEN,
-});
+const db = new Pool({ connectionString: process.env.DATABASE_URL! });
 
 let pass = 0;
 let fail = 0;
@@ -40,21 +37,21 @@ const tok = () => crypto.randomUUID().replace(/-/g, "").slice(0, 12);
 async function makeBooking(companyId: string, title: string) {
   const id = rid();
   const token = tok();
-  await db.execute({
-    sql: `insert into bookings
+  await db.query(
+    `insert into bookings
       (id, customer_id, service_id, rider_id, status, address, title, public_token, company_id, created_at, scheduled_at)
-      values (?, ?, ?, NULL, 'pending', ?, ?, ?, ?, ?, ?)`,
-    args: [id, CUSTOMER, SERVICE, "1 Verify St", title, token, companyId, Date.now(), Date.now()],
-  });
+      values ($1, $2, $3, NULL, 'pending', $4, $5, $6, $7, $8, $9)`,
+    [id, CUSTOMER, SERVICE, "1 Verify St", title, token, companyId, Date.now(), Date.now()],
+  );
   return { id, token };
 }
 
 async function cleanup(bookingIds: string[]) {
   for (const b of bookingIds) {
-    await db.execute({ sql: "delete from messages where booking_id = ?", args: [b] });
-    await db.execute({ sql: "delete from notifications where booking_id = ?", args: [b] });
-    await db.execute({ sql: "delete from job_events where booking_id = ?", args: [b] });
-    await db.execute({ sql: "delete from bookings where id = ?", args: [b] });
+    await db.query("delete from messages where booking_id = $1", [b]);
+    await db.query("delete from notifications where booking_id = $1", [b]);
+    await db.query("delete from job_events where booking_id = $1", [b]);
+    await db.query("delete from bookings where id = $1", [b]);
   }
 }
 
@@ -133,12 +130,12 @@ try {
   check("unread thread sorts to the top", j1.threads?.[0]?.unread > 0, j1.threads?.[0]?.key);
 
   // ── 4. office notification created for admins of THIS tenant ────────────
-  const notif = await db.execute({
-    sql: `select n.id, n.user_id, u.role, u.company_id
+  const notif = await db.query(
+    `select n.id, n.user_id, u.role, u.company_id
             from notifications n join user u on u.id = n.user_id
-           where n.booking_id = ?`,
-    args: [bk.id],
-  });
+           where n.booking_id = $1`,
+    [bk.id],
+  );
   check("office notification row(s) created for the homeowner reply", notif.rows.length > 0, notif.rows.length);
   check(
     "every notified user is an admin/superadmin in the same company",
@@ -149,10 +146,10 @@ try {
   // ── 5. reading the inbox does NOT mark anything read ────────────────────
   await fetch(`${BASE}/api/messages/inbox`, { headers: auth });
   await fetch(`${BASE}/api/messages/inbox`, { headers: auth });
-  const stillUnread = await db.execute({
-    sql: "select read from messages where booking_id = ? and sender_role = 'client'",
-    args: [bk.id],
-  });
+  const stillUnread = await db.query(
+    "select read from messages where booking_id = $1 and sender_role = 'client'",
+    [bk.id],
+  );
   check(
     "polling GET /inbox leaves messages unread (fetch ≠ mark-read)",
     stillUnread.rows.every((r: any) => !r.read),
@@ -161,10 +158,10 @@ try {
 
   // reading the job thread itself must also not mark it read
   await fetch(`${BASE}/api/messages/${bk.id}`, { headers: auth });
-  const afterThreadGet = await db.execute({
-    sql: "select read from messages where booking_id = ? and sender_role = 'client'",
-    args: [bk.id],
-  });
+  const afterThreadGet = await db.query(
+    "select read from messages where booking_id = $1 and sender_role = 'client'",
+    [bk.id],
+  );
   check(
     "GET /api/messages/:bookingId leaves messages unread",
     afterThreadGet.rows.every((r: any) => !r.read),
@@ -212,10 +209,10 @@ try {
 
   // ── 8. tenant isolation ─────────────────────────────────────────────────
   const otherCompany = `verify-tenant-${tok()}`;
-  await db.execute({
-    sql: "insert into companies (id, name, created_at) values (?, ?, ?)",
-    args: [otherCompany, "Phase4 Verify Tenant", Date.now()],
-  }).catch(() => {});
+  await db.query(
+    "insert into companies (id, name, created_at) values ($1, $2, $3)",
+    [otherCompany, "Phase4 Verify Tenant", Date.now()],
+  ).catch(() => {});
   const other = await makeBooking(otherCompany, "Other Tenant Job");
   created.push(other.id);
   await fetch(`${BASE}/api/track/${other.token}/messages`, {
@@ -230,16 +227,16 @@ try {
     !(j4.threads ?? []).some((t: any) => t.bookingId === other.id),
     (j4.threads ?? []).map((t: any) => t.bookingId).filter(Boolean).slice(0, 5),
   );
-  const crossNotif = await db.execute({
-    sql: `select u.company_id from notifications n join user u on u.id = n.user_id where n.booking_id = ?`,
-    args: [other.id],
-  });
+  const crossNotif = await db.query(
+    `select u.company_id from notifications n join user u on u.id = n.user_id where n.booking_id = $1`,
+    [other.id],
+  );
   check(
     "no cross-tenant notifications leaked to default admins",
     crossNotif.rows.every((r: any) => r.company_id === otherCompany),
     crossNotif.rows.map((r: any) => r.company_id),
   );
-  await db.execute({ sql: "delete from companies where id = ?", args: [otherCompany] }).catch(() => {});
+  await db.query("delete from companies where id = $1", [otherCompany]).catch(() => {});
 
   // ── 9. SSE stream ───────────────────────────────────────────────────────
   const ctrl = new AbortController();

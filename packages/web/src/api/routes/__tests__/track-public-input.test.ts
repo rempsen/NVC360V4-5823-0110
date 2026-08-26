@@ -25,17 +25,16 @@
  */
 import { describe, it, expect, beforeAll, beforeEach } from "bun:test";
 import { Hono } from "hono";
-import { getTableConfig, type SQLiteColumn } from "drizzle-orm/sqlite-core";
+import { ensureSchema } from "../../database/__tests__/setup";
 
-process.env.DATABASE_URL = ":memory:";
-process.env.DATABASE_AUTH_TOKEN = "";
 // The public write limiter (10/min per token by default) is deliberately tight;
 // it is read once at module load, so raise it here or the suite trips its own
 // budget. The real limit is proven live against the running server.
 process.env.RL_TRACK_WRITE_LIMIT = "10000";
 
+await ensureSchema();
+
 const { db } = await import("../../database/index");
-const schema = await import("../../database/schema");
 const { trackRoutes } = await import("../track");
 const { AppError } = await import("../../lib/errors");
 
@@ -56,43 +55,22 @@ app.onError((err, c) => {
   return c.json({ error: { code: "internal", message: String((err as Error).message) } }, 500);
 });
 
-function ddlFor(table: any): string {
-  const cfg = getTableConfig(table);
-  const cols = cfg.columns.map((col: SQLiteColumn) => {
-    const parts = [`"${col.name}"`, col.getSQLType()];
-    if (col.primary) parts.push("PRIMARY KEY");
-    const dflt = (col as any).default;
-    let lit: string | null = null;
-    if (dflt !== undefined) {
-      lit =
-        typeof dflt === "string" ? `'${dflt.replace(/'/g, "''")}'`
-        : typeof dflt === "boolean" ? (dflt ? "1" : "0")
-        : typeof dflt === "number" ? String(dflt)
-        : null;
-    }
-    if (col.notNull && (lit !== null || col.primary)) parts.push("NOT NULL");
-    if (lit !== null) parts.push(`DEFAULT ${lit}`);
-    return parts.join(" ");
-  });
-  return `CREATE TABLE IF NOT EXISTS "${cfg.name}" (${cols.join(", ")})`;
-}
-
 const sqlClient = () => (db as any).$client;
 
 async function seedJob(id: string, token: string, status: string) {
   const s = sqlClient();
-  await s.execute({ sql: "DELETE FROM bookings WHERE id = ?", args: [id] });
-  await s.execute({
-    sql: `INSERT INTO bookings
+  await s.query("DELETE FROM bookings WHERE id = $1", [id]);
+  await s.query(
+    `INSERT INTO bookings
             (id, company_id, customer_id, service_id, title, status, assign_status,
              scheduled_at, address, rider_id, price, public_token, finished_at)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    args: [
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+    [
       id, CO, CUST, SVC, "Furnace repair", status, "unassigned",
-      Date.now() - 3_600_000, "1 Test St", null, 250, token,
-      status === "completed" ? Date.now() : null,
+      new Date(Date.now() - 3_600_000), "1 Test St", null, 250, token,
+      status === "completed" ? new Date() : null,
     ],
-  });
+  );
 }
 
 /** Raw POST so malformed (non-JSON) bodies can be exercised too. */
@@ -106,44 +84,36 @@ function post(path: string, body: string) {
 const postJson = (path: string, body: unknown) => post(path, JSON.stringify(body));
 
 async function messages(id: string) {
-  const r = await sqlClient().execute({
-    sql: "SELECT sender_name, body FROM messages WHERE booking_id = ?",
-    args: [id],
-  });
+  const r = await sqlClient().query(
+    "SELECT sender_name, body FROM messages WHERE booking_id = $1",
+    [id],
+  );
   return r.rows as any[];
 }
 async function reviews(id: string) {
-  const r = await sqlClient().execute({
-    sql: "SELECT rating, comment FROM reviews WHERE booking_id = ?",
-    args: [id],
-  });
+  const r = await sqlClient().query(
+    "SELECT rating, comment FROM reviews WHERE booking_id = $1",
+    [id],
+  );
   return r.rows as any[];
 }
 
 beforeAll(async () => {
   const s = sqlClient();
-  for (const t of [
-    schema.companySettings, schema.bookings, schema.services, schema.riders,
-    schema.user, schema.messages, schema.reviews, schema.notifications,
-    schema.notificationRules, schema.notificationDeliveries, schema.jobEvents,
-    schema.trackingPings, schema.properties, schema.memberships,
-  ]) {
-    await s.execute(ddlFor(t));
-  }
-  await s.execute({
-    sql: "INSERT OR IGNORE INTO user (id, company_id, name, email, role, email_verified) VALUES (?,?,?,?,?,0)",
-    args: [CUST, CO, "Customer One", "trk-cust@t.test", "customer"],
-  });
-  await s.execute({
-    sql: "INSERT OR IGNORE INTO services (id, company_id, name, category, base_price) VALUES (?,?,?,?,?)",
-    args: [SVC, CO, "Furnace repair", "hvac", 250],
-  });
+  await s.query(
+    "INSERT INTO \"user\" (id, company_id, name, email, role, email_verified) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING",
+    [CUST, CO, "Customer One", "trk-cust@t.test", "customer", false],
+  );
+  await s.query(
+    "INSERT INTO services (id, company_id, name, category, base_price) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
+    [SVC, CO, "Furnace repair", "hvac", 250],
+  );
 });
 
 beforeEach(async () => {
   const s = sqlClient();
-  await s.execute({ sql: "DELETE FROM messages WHERE company_id = ?", args: [CO] });
-  await s.execute({ sql: "DELETE FROM reviews WHERE company_id = ?", args: [CO] });
+  await s.query("DELETE FROM messages WHERE company_id = $1", [CO]);
+  await s.query("DELETE FROM reviews WHERE company_id = $1", [CO]);
   await seedJob(LIVE, LIVE_TOKEN, "enroute");
   await seedJob(DONE, DONE_TOKEN, "completed");
 });

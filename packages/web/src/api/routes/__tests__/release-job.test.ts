@@ -19,18 +19,18 @@
  *    cancel a work order that wasn't theirs. It now requires office role or
  *    ownership.
  *
- * Harness: ephemeral in-memory libsql, ids prefixed "rel-". No notification
- * rules are seeded, so fireEvent resolves zero recipients and sends nothing.
+ * Harness: shared local Postgres (see ../../database/__tests__/setup.ts),
+ * full drizzle migration applied once per process, ids prefixed "rel-". No
+ * notification rules are seeded, so fireEvent resolves zero recipients and
+ * sends nothing.
  */
 import { describe, it, expect, beforeAll, beforeEach } from "bun:test";
 import { Hono } from "hono";
-import { getTableConfig, type SQLiteColumn } from "drizzle-orm/sqlite-core";
+import { ensureSchema } from "../../database/__tests__/setup";
 
-process.env.DATABASE_URL = ":memory:";
-process.env.DATABASE_AUTH_TOKEN = "";
+await ensureSchema();
 
 const { db } = await import("../../database/index");
-const schema = await import("../../database/schema");
 const { bookingsRoutes } = await import("../bookings");
 const { AppError } = await import("../../lib/errors");
 
@@ -59,27 +59,6 @@ app.onError((err, c) => {
   return c.json({ error: { code: "internal", message: String((err as Error).message) } }, 500);
 });
 
-function ddlFor(table: any): string {
-  const cfg = getTableConfig(table);
-  const cols = cfg.columns.map((col: SQLiteColumn) => {
-    const parts = [`"${col.name}"`, col.getSQLType()];
-    if (col.primary) parts.push("PRIMARY KEY");
-    const dflt = (col as any).default;
-    let lit: string | null = null;
-    if (dflt !== undefined) {
-      lit =
-        typeof dflt === "string" ? `'${dflt.replace(/'/g, "''")}'`
-        : typeof dflt === "boolean" ? (dflt ? "1" : "0")
-        : typeof dflt === "number" ? String(dflt)
-        : null;
-    }
-    if (col.notNull && (lit !== null || col.primary)) parts.push("NOT NULL");
-    if (lit !== null) parts.push(`DEFAULT ${lit}`);
-    return parts.join(" ");
-  });
-  return `CREATE TABLE IF NOT EXISTS "${cfg.name}" (${cols.join(", ")})`;
-}
-
 const sqlClient = () => (db as any).$client;
 
 /** A fresh job in a given state, assigned to HOLDER_RIDER unless told otherwise. */
@@ -91,29 +70,29 @@ async function seedJob(opts: {
   customerId?: string;
 }) {
   const s = sqlClient();
-  await s.execute({ sql: "DELETE FROM bookings WHERE id = ?", args: [opts.id] });
-  await s.execute({
-    sql: `INSERT INTO bookings
+  await s.query("DELETE FROM bookings WHERE id = $1", [opts.id]);
+  await s.query(
+    `INSERT INTO bookings
             (id, company_id, customer_id, service_id, title, status, assign_status, scheduled_at,
              address, rider_id, price, public_token, enroute_at, started_at, clock_state,
              on_site_minutes, mileage_km, eta_mins)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    args: [
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+    [
       opts.id, CO, opts.customerId ?? CUST, SVC, "Furnace repair", opts.status,
-      opts.assignStatus ?? "accepted", Date.now() + 3_600_000, "1 Test St",
+      opts.assignStatus ?? "accepted", new Date(Date.now() + 3_600_000), "1 Test St",
       opts.riderId === undefined ? HOLDER_RIDER : opts.riderId, 250, `tok-${opts.id}`,
-      Date.now() - 1_800_000, Date.now() - 600_000, "running", 12, 8.4, 14,
+      new Date(Date.now() - 1_800_000), new Date(Date.now() - 600_000), "running", 12, 8.4, 14,
     ],
-  });
+  );
 }
 
 async function row(id: string) {
-  const r = await sqlClient().execute({ sql: "SELECT * FROM bookings WHERE id = ?", args: [id] });
+  const r = await sqlClient().query("SELECT * FROM bookings WHERE id = $1", [id]);
   return r.rows[0] as any;
 }
 
 async function riderStatus(id: string) {
-  const r = await sqlClient().execute({ sql: "SELECT status FROM riders WHERE id = ?", args: [id] });
+  const r = await sqlClient().query("SELECT status FROM riders WHERE id = $1", [id]);
   return (r.rows[0] as any)?.status as string;
 }
 
@@ -144,18 +123,10 @@ function cancel(id: string, user: string, role = "customer") {
 
 beforeAll(async () => {
   const s = sqlClient();
-  for (const t of [
-    schema.companySettings, schema.bookings, schema.services, schema.riders,
-    schema.user, schema.invoices, schema.serviceZones, schema.properties, schema.jobEvents,
-    schema.notificationRules, schema.notifications, schema.notificationDeliveries,
-    schema.webhookEndpoints, schema.automationRules, schema.reviews,
-    schema.notificationChannels, schema.trackingPings, schema.memberships,
-  ]) {
-    await s.execute(ddlFor(t));
-  }
-  // NOTE: deliberately no `companies` row. bun test shares one in-memory db
-  // across files, and tenant.test.ts asserts the exact company registry — a
-  // fixture company here would break it. Nothing under test reads the name.
+  // NOTE: deliberately no `companies` row. Postgres is shared across test
+  // files in one process, and tenant.test.ts asserts the exact company
+  // registry — a fixture company here would break it. Nothing under test
+  // reads the name.
   for (const [id, name, role] of [
     [HOLDER_USER, "Holder Tech", "rider"],
     [OTHER_USER, "Other Tech", "rider"],
@@ -163,34 +134,34 @@ beforeAll(async () => {
     [CUST, "Customer One", "customer"],
     [CUST2, "Customer Two", "customer"],
   ] as const) {
-    await s.execute({
-      sql: "INSERT OR IGNORE INTO user (id, company_id, name, email, role, email_verified) VALUES (?,?,?,?,?,0)",
-      args: [id, CO, name, `${id}@t.test`, role],
-    });
+    await s.query(
+      `INSERT INTO "user" (id, company_id, name, email, role, email_verified) VALUES ($1,$2,$3,$4,$5,false) ON CONFLICT DO NOTHING`,
+      [id, CO, name, `${id}@t.test`, role],
+    );
   }
   for (const [rid, uid] of [
     [HOLDER_RIDER, HOLDER_USER],
     [OTHER_RIDER, OTHER_USER],
   ] as const) {
-    await s.execute({
-      sql: "INSERT OR IGNORE INTO riders (id, company_id, user_id, status) VALUES (?,?,?,?)",
-      args: [rid, CO, uid, "onsite"],
-    });
+    await s.query(
+      "INSERT INTO riders (id, company_id, user_id, status) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+      [rid, CO, uid, "onsite"],
+    );
   }
-  await s.execute({
-    sql: "INSERT OR IGNORE INTO services (id, company_id, name, category, base_price) VALUES (?,?,?,?,?)",
-    args: [SVC, CO, "Furnace repair", "hvac", 250],
-  });
+  await s.query(
+    "INSERT INTO services (id, company_id, name, category, base_price) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
+    [SVC, CO, "Furnace repair", "hvac", 250],
+  );
 });
 
 beforeEach(async () => {
-  await sqlClient().execute({
+  await sqlClient().query(
     // fresh GPS heartbeat: presence downgrades a tech with a stale device to
     // "offline" regardless of jobs, so without this the freed-tech assertion
     // would be testing liveness, not the release.
-    sql: "UPDATE riders SET status = 'onsite', location_updated_at = ? WHERE company_id = ?",
-    args: [Date.now(), CO],
-  });
+    "UPDATE riders SET status = 'onsite', location_updated_at = $1 WHERE company_id = $2",
+    [new Date(), CO],
+  );
 });
 
 describe("POST /bookings/:id/release", () => {
@@ -277,10 +248,7 @@ describe("POST /bookings/:id/release", () => {
   it("keeps the release out of the customer's view of the job", async () => {
     await seedJob({ id: "rel-job-7", status: "enroute" });
     await release("rel-job-7", HOLDER_USER, { reason: "unsafe_site", note: "dog off leash" });
-    const ev = await sqlClient().execute({
-      sql: "SELECT kind, customer_visible, detail FROM job_events WHERE booking_id = ?",
-      args: ["rel-job-7"],
-    });
+    const ev = await sqlClient().query("SELECT kind, customer_visible, detail FROM job_events WHERE booking_id = $1", ["rel-job-7"]);
     const released = (ev.rows as any[]).find((r) => r.kind === "released");
     expect(released).toBeTruthy();
     expect(Number(released.customer_visible)).toBe(0);

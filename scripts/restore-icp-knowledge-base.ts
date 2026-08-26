@@ -15,16 +15,13 @@
 // Apply:
 //   bun --env-file=.env scripts/restore-icp-knowledge-base.ts --apply
 
-import { createClient } from "@libsql/client";
+import { Pool } from "pg";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const APPLY = process.argv.includes("--apply");
 
-const client = createClient({
-  url: process.env.DATABASE_URL!,
-  authToken: process.env.DATABASE_AUTH_TOKEN,
-});
+const client = new Pool({ connectionString: process.env.DATABASE_URL! });
 
 const file = JSON.parse(
   readFileSync(join(import.meta.dir, "icp-knowledge-base.json"), "utf8"),
@@ -42,7 +39,7 @@ if (file.rows.length !== file.rowCount)
   );
 
 const existing = new Set(
-  (await client.execute("SELECT industry FROM icp_knowledge_base")).rows.map(
+  (await client.query("SELECT industry FROM icp_knowledge_base")).rows.map(
     (r) => String((r as any).industry),
   ),
 );
@@ -57,12 +54,12 @@ for (const r of file.rows) {
   console.log(`${isNew ? "CREATE" : "UPDATE"}  ${r.industry}`);
   if (!APPLY) continue;
 
-  await client.execute({
-    sql: `INSERT INTO icp_knowledge_base
+  await client.query(
+    `INSERT INTO icp_knowledge_base
             (industry, summary, best_practices, workflow_notes, terminology_notes,
              tone_refinement, notification_refinement, compliance_notes, sources,
              researched_by, researched_at, updated_at)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
           ON CONFLICT(industry) DO UPDATE SET
             summary = excluded.summary,
             best_practices = excluded.best_practices,
@@ -75,7 +72,7 @@ for (const r of file.rows) {
             researched_by = excluded.researched_by,
             researched_at = excluded.researched_at,
             updated_at = excluded.updated_at`,
-    args: [
+    [
       r.industry as string,
       (r.summary ?? "") as string,
       (r.best_practices ?? "") as string,
@@ -89,7 +86,7 @@ for (const r of file.rows) {
       (r.researched_at ?? null) as number | null,
       now,
     ],
-  });
+  );
 }
 
 const orphans = [...existing].filter(
@@ -103,3 +100,5 @@ if (orphans.length)
   console.log(
     `note: ${orphans.length} row(s) in the database are not in the export and were left alone: ${orphans.join(", ")}`,
   );
+
+await client.end();

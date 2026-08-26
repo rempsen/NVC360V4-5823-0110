@@ -17,19 +17,17 @@
  *    completed/cancelled/deleted jobs, the tech's own sent messages, and
  *    suspended companies are all excluded.
  *
- * Harness matches the sibling suites: ephemeral in-memory libsql, DDL derived
- * from drizzle so it can't drift from prod, disjoint ids so it coexists with
- * other files in Bun's shared ":memory:" store.
+ * Harness matches the sibling suites: shared local Postgres (see
+ * ../../database/__tests__/setup.ts), full drizzle migration applied once per
+ * process, disjoint ids so it coexists with other files.
  */
 import { describe, it, expect, beforeAll } from "bun:test";
 import { Hono } from "hono";
-import { getTableConfig, type SQLiteColumn } from "drizzle-orm/sqlite-core";
+import { ensureSchema } from "../../database/__tests__/setup";
 
-process.env.DATABASE_URL = ":memory:";
-process.env.DATABASE_AUTH_TOKEN = "";
+await ensureSchema();
 
 const { db } = await import("../../database/index");
-const schema = await import("../../database/schema");
 const { meRoutes } = await import("../me");
 
 // Disjoint ids, prefixed so they cannot collide with sibling suites.
@@ -50,51 +48,40 @@ const app = new Hono().use("*", async (c, next) => {
 });
 app.route("/me", meRoutes);
 
-function ddlFor(table: any): string {
-  const cfg = getTableConfig(table);
-  const cols = cfg.columns.map((col: SQLiteColumn) => {
-    const parts = [`"${col.name}"`, col.getSQLType()];
-    if (col.primary) parts.push("PRIMARY KEY");
-    const dflt = (col as any).default;
-    let lit: string | null = null;
-    if (dflt !== undefined) {
-      lit =
-        typeof dflt === "string" ? `'${dflt.replace(/'/g, "''")}'`
-        : typeof dflt === "boolean" ? (dflt ? "1" : "0")
-        : typeof dflt === "number" ? String(dflt)
-        : null;
-    }
-    if (col.notNull && (lit !== null || col.primary)) parts.push("NOT NULL");
-    if (lit !== null) parts.push(`DEFAULT ${lit}`);
-    return parts.join(" ");
-  });
-  return `CREATE TABLE IF NOT EXISTS "${cfg.name}" (${cols.join(", ")})`;
-}
-
 let sql: any;
 
 beforeAll(async () => {
   sql = (db as any).$client;
-  await sql.execute(ddlFor(schema.companies));
-  await sql.execute(ddlFor(schema.memberships));
-  await sql.execute(ddlFor(schema.riders));
-  await sql.execute(ddlFor(schema.bookings));
-  await sql.execute(ddlFor(schema.messages));
 
   const co = (id: string, name: string, status: string) =>
-    sql.execute({
-      sql: "INSERT OR IGNORE INTO companies (id, name, status) VALUES (?,?,?)",
-      args: [id, name, status],
-    });
+    sql.query("INSERT INTO companies (id, name, status) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", [id, name, status]);
   await co(ACME, "Acme Facilities", "active");
   await co(BOLT, "Bolt Mechanical", "active");
   await co(GONE, "Zed Suspended Co", "suspended");
 
+  // Users/service referenced by memberships/riders/bookings — Postgres
+  // enforces the FK that libsql's derived DDL never had.
+  for (const [id, name] of [
+    [TECH, "Tech"],
+    [SOLO, "Solo"],
+    [OUTSIDER, "Outsider"],
+    ["cust-x", "Cust X"],
+  ] as const) {
+    await sql.query(
+      `INSERT INTO "user" (id, name, email, role, company_id) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
+      [id, name, `${id}@t.test`, "customer", ACME],
+    );
+  }
+  await sql.query(
+    "INSERT INTO services (id, company_id, name, category) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+    ["svc-x", ACME, "General", "general"],
+  );
+
   const member = (id: string, user: string, company: string, status: string, staffType = "tech") =>
-    sql.execute({
-      sql: "INSERT OR IGNORE INTO memberships (id, user_id, company_id, role, status, staff_type) VALUES (?,?,?,?,?,?)",
-      args: [id, user, company, "rider", status, staffType],
-    });
+    sql.query(
+      "INSERT INTO memberships (id, user_id, company_id, role, status, staff_type) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING",
+      [id, user, company, "rider", status, staffType],
+    );
   // The multi-company tech: active at Acme + Bolt, and at a suspended company.
   await member("m-tech-acme", TECH, ACME, "active");
   await member("m-tech-bolt", TECH, BOLT, "active", "driver");
@@ -105,10 +92,7 @@ beforeAll(async () => {
   await member("m-out-bolt", OUTSIDER, BOLT, "invited");
 
   const rider = (id: string, user: string, company: string) =>
-    sql.execute({
-      sql: "INSERT OR IGNORE INTO riders (id, user_id, company_id) VALUES (?,?,?)",
-      args: [id, user, company],
-    });
+    sql.query("INSERT INTO riders (id, user_id, company_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", [id, user, company]);
   await rider("r-tech-acme", TECH, ACME);
   await rider("r-tech-bolt", TECH, BOLT);
   await rider("r-tech-gone", TECH, GONE);
@@ -122,10 +106,10 @@ beforeAll(async () => {
     assignStatus: string,
     deletedAt: number | null = null,
   ) =>
-    sql.execute({
-      sql: "INSERT OR IGNORE INTO bookings (id, company_id, customer_id, service_id, rider_id, title, status, assign_status, address, scheduled_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-      args: [id, company, "cust-x", "svc-x", riderId, "Job", status, assignStatus, "1 Main St", Date.now(), deletedAt],
-    });
+    sql.query(
+      "INSERT INTO bookings (id, company_id, customer_id, service_id, rider_id, title, status, assign_status, address, scheduled_at, deleted_at, public_token) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT DO NOTHING",
+      [id, company, "cust-x", "svc-x", riderId, "Job", status, assignStatus, "1 Main St", new Date(Date.now()), deletedAt === null ? null : new Date(deletedAt), `tok-${id}`],
+    );
 
   // ---- Acme: ONE genuine pending offer, plus every shape that must NOT count.
   await booking("nb-acme-offer", ACME, "r-tech-acme", "assigned", "offered");
@@ -155,10 +139,10 @@ beforeAll(async () => {
     bookingId: string | null = null,
     readByTech = 0,
   ) =>
-    sql.execute({
-      sql: "INSERT OR IGNORE INTO messages (id, company_id, rider_id, booking_id, sender_role, sender_name, body, read, read_by_tech) VALUES (?,?,?,?,?,?,?,?,?)",
-      args: [id, company, riderId, bookingId, senderRole, "Dispatcher", "hello", read, readByTech],
-    });
+    sql.query(
+      "INSERT INTO messages (id, company_id, rider_id, booking_id, sender_role, sender_name, body, read, read_by_tech) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING",
+      [id, company, riderId, bookingId, senderRole, "Dispatcher", "hello", !!read, !!readByTech],
+    );
 
   // ---- Acme direct thread: 2 unread from dispatch.
   await msg("nm-acme-1", ACME, "r-tech-acme", "dispatch", 0);
@@ -388,14 +372,11 @@ describe("GET /me/notifications — a company with no rider identity", () => {
   it("reports zero rather than failing when the caller holds a non-field role there", async () => {
     // Office staff at one company, tech at another: no rider row means there is
     // nothing for the driver app to badge, and it must not error the whole call.
-    await sql.execute({
-      sql: "INSERT OR IGNORE INTO companies (id, name, status) VALUES (?,?,?)",
-      args: ["notif-office", "Office Only Co", "active"],
-    });
-    await sql.execute({
-      sql: "INSERT OR IGNORE INTO memberships (id, user_id, company_id, role, status, staff_type) VALUES (?,?,?,?,?,?)",
-      args: ["m-tech-office", TECH, "notif-office", "admin", "active", ""],
-    });
+    await sql.query("INSERT INTO companies (id, name, status) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", ["notif-office", "Office Only Co", "active"]);
+    await sql.query(
+      "INSERT INTO memberships (id, user_id, company_id, role, status, staff_type) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING",
+      ["m-tech-office", TECH, "notif-office", "admin", "active", ""],
+    );
     const s = await get({ user: TECH, company: ACME });
     expect(at(s, "notif-office")).toMatchObject({ unreadMessages: 0, pendingOffers: 0, total: 0 });
     // and the real counts are unaffected

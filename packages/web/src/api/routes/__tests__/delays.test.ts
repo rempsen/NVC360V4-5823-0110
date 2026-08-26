@@ -20,12 +20,12 @@
  */
 import { describe, it, expect, beforeAll, beforeEach } from "bun:test";
 import { Hono } from "hono";
-import { getTableConfig, type SQLiteColumn } from "drizzle-orm/sqlite-core";
+import { ensureSchema } from "../../database/__tests__/setup";
 
-process.env.DATABASE_URL = ":memory:";
-process.env.DATABASE_AUTH_TOKEN = "";
 process.env.RESEND_API_KEY = "";
 process.env.TWILIO_AUTH_TOKEN = "";
+
+await ensureSchema();
 
 const { db } = await import("../../database/index");
 const schema = await import("../../database/schema");
@@ -63,27 +63,6 @@ app.onError((err, c) => {
   return c.json({ error: { code: "internal", message: String((err as Error).message) } }, 500);
 });
 
-function ddlFor(table: any): string {
-  const cfg = getTableConfig(table);
-  const cols = cfg.columns.map((col: SQLiteColumn) => {
-    const parts = [`"${col.name}"`, col.getSQLType()];
-    if (col.primary) parts.push("PRIMARY KEY");
-    const dflt = (col as any).default;
-    let lit: string | null = null;
-    if (dflt !== undefined) {
-      lit =
-        typeof dflt === "string" ? `'${dflt.replace(/'/g, "''")}'`
-        : typeof dflt === "boolean" ? (dflt ? "1" : "0")
-        : typeof dflt === "number" ? String(dflt)
-        : null;
-    }
-    if (col.notNull && (lit !== null || col.primary)) parts.push("NOT NULL");
-    if (lit !== null) parts.push(`DEFAULT ${lit}`);
-    return parts.join(" ");
-  });
-  return `CREATE TABLE IF NOT EXISTS "${cfg.name}" (${cols.join(", ")})`;
-}
-
 const sqlClient = () => (db as any).$client;
 
 async function setPolicy(
@@ -91,20 +70,20 @@ async function setPolicy(
   p: { enabled?: boolean; thresholdMins?: number; autoSendAfterMins?: number } = {},
 ) {
   const s = sqlClient();
-  await s.execute({ sql: "DELETE FROM company_settings WHERE company_id = ?", args: [companyId] });
-  await s.execute({
-    sql: `INSERT INTO company_settings
+  await s.query("DELETE FROM company_settings WHERE company_id = $1", [companyId]);
+  await s.query(
+    `INSERT INTO company_settings
             (id, company_id, delay_notice_enabled, delay_notice_threshold_mins,
              delay_notice_auto_send_after_mins)
-          VALUES (?,?,?,?,?)`,
-    args: [
+          VALUES ($1,$2,$3,$4,$5)`,
+    [
       `cs-${companyId}`,
       companyId,
-      p.enabled === false ? 0 : 1,
+      p.enabled === false ? false : true,
       p.thresholdMins ?? 15,
       p.autoSendAfterMins ?? 10,
     ],
-  });
+  );
 }
 
 /** A job `minsLate` minutes past its promised time (negative = still ahead). */
@@ -123,29 +102,29 @@ async function seedBooking(opts: {
 }) {
   const s = sqlClient();
   const co = opts.companyId ?? CO;
-  await s.execute({ sql: "DELETE FROM bookings WHERE id = ?", args: [opts.id] });
+  await s.query("DELETE FROM bookings WHERE id = $1", [opts.id]);
   const sched =
     opts.scheduledAt === null
       ? null
       : (opts.scheduledAt ?? Date.now() - (opts.minsLate ?? 20) * MIN);
-  await s.execute({
-    sql: `INSERT INTO bookings
+  await s.query(
+    `INSERT INTO bookings
             (id, company_id, customer_id, service_id, title, status, assign_status, scheduled_at,
              address, rider_id, price, public_token, eta_mins,
              delay_flagged_at, delay_flagged_mins, delay_notified_at, delay_notified_mins, delay_muted)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    args: [
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+    [
       opts.id, co, CUST, SVC, "Furnace repair",
-      opts.status ?? "assigned", "accepted", sched, "1 Test St", RIDER, 250,
+      opts.status ?? "assigned", "accepted", sched === null ? null : new Date(sched), "1 Test St", RIDER, 250,
       `dlytok-${opts.id}`, opts.etaMins ?? null,
-      opts.flaggedAt ?? null, opts.flaggedMins ?? null,
-      opts.notifiedAt ?? null, opts.notifiedMins ?? null, opts.muted ? 1 : 0,
+      opts.flaggedAt == null ? null : new Date(opts.flaggedAt), opts.flaggedMins ?? null,
+      opts.notifiedAt == null ? null : new Date(opts.notifiedAt), opts.notifiedMins ?? null, opts.muted ? true : false,
     ],
-  });
+  );
 }
 
 async function bookingRow(id: string) {
-  const r = await sqlClient().execute({ sql: "SELECT * FROM bookings WHERE id = ?", args: [id] });
+  const r = await sqlClient().query("SELECT * FROM bookings WHERE id = $1", [id]);
   return r.rows[0] as any;
 }
 
@@ -167,33 +146,25 @@ const asCustomer: Who = { user: CUST, role: "customer" };
 
 beforeAll(async () => {
   const s = sqlClient();
-  for (const t of [
-    schema.companySettings, schema.bookings, schema.services, schema.riders, schema.user,
-    schema.jobEvents, schema.notificationRules, schema.notifications,
-    schema.notificationDeliveries, schema.notificationChannels, schema.webhookEndpoints,
-    schema.automationRules, schema.auditLog, schema.properties, schema.bookingChangeRequests,
-  ]) {
-    await s.execute(ddlFor(t));
-  }
   for (const [id, name, role, co] of [
     [CUST, "Customer One", "customer", CO],
     [ADMIN, "Office", "admin", CO],
     [ADMIN2, "Office Two", "admin", CO2],
     [TECH_USER, "Tech", "rider", CO],
   ] as const) {
-    await s.execute({
-      sql: "INSERT OR IGNORE INTO user (id, company_id, name, email, role, email_verified) VALUES (?,?,?,?,?,0)",
-      args: [id, co, name, `${id}@example.test`, role],
-    });
+    await s.query(
+      'INSERT INTO "user" (id, company_id, name, email, role, email_verified) VALUES ($1,$2,$3,$4,$5,false) ON CONFLICT DO NOTHING',
+      [id, co, name, `${id}@example.test`, role],
+    );
   }
-  await s.execute({
-    sql: "INSERT OR IGNORE INTO riders (id, company_id, user_id, status) VALUES (?,?,?,?)",
-    args: [RIDER, CO, TECH_USER, "online"],
-  });
-  await s.execute({
-    sql: "INSERT OR IGNORE INTO services (id, company_id, name, category, base_price) VALUES (?,?,?,?,?)",
-    args: [SVC, CO, "Furnace repair", "hvac", 250],
-  });
+  await s.query(
+    "INSERT INTO riders (id, company_id, user_id, status) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+    [RIDER, CO, TECH_USER, "online"],
+  );
+  await s.query(
+    "INSERT INTO services (id, company_id, name, category, base_price) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
+    [SVC, CO, "Furnace repair", "hvac", 250],
+  );
   for (const co of [CO, CO2]) {
     await db.insert(schema.notificationRules).values({
       companyId: co, event: "delayed", recipient: "office",
@@ -203,7 +174,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  await sqlClient().execute("DELETE FROM bookings");
+  await sqlClient().query("DELETE FROM bookings");
   await setPolicy(CO);
   await setPolicy(CO2);
 });
@@ -251,7 +222,15 @@ describe("sweep — detection", () => {
     expect((await sweepDelays()).flagged).toBe(0);
   });
 
-  it("ignores a job with no promised time rather than guessing one", async () => {
+  // Postgres migration (2026-08-26): bookings.scheduledAt is a real NOT NULL
+  // column with no default now — the DB itself refuses to create a booking
+  // with a null appointment time, so this scenario is no longer reachable via
+  // any insert path (the old SQLite test fixture only allowed it because its
+  // ad-hoc DDL derivation silently dropped NOT NULL for columns without a
+  // literal default). The app-level defensive check this test exercised is
+  // left in place as harmless belt-and-suspenders, but the test itself can no
+  // longer simulate its premise, so it's skipped rather than deleted.
+  it.skip("ignores a job with no promised time rather than guessing one", async () => {
     await seedBooking({ id: "dly-b5", scheduledAt: null });
     expect((await sweepDelays()).flagged).toBe(0);
   });
@@ -321,10 +300,10 @@ describe("sweep — the grace period", () => {
   it("writes a job-event so there's a record of what the customer was told", async () => {
     await seedBooking({ id: "dly-g5", minsLate: 25, flaggedAt: Date.now() - 11 * MIN });
     await sweepDelays();
-    const ev = await sqlClient().execute({
-      sql: "SELECT * FROM job_events WHERE booking_id = ? AND kind = 'delayed'",
-      args: ["dly-g5"],
-    });
+    const ev = await sqlClient().query(
+      "SELECT * FROM job_events WHERE booking_id = $1 AND kind = 'delayed'",
+      ["dly-g5"],
+    );
     expect(ev.rows.length).toBe(1);
   });
 });
@@ -485,10 +464,10 @@ describe("send is compare-and-set — a customer is never told twice", () => {
       sendDelayNotice({ companyId: CO, bookingId: "dly-r2", slipMins: 25, expectNotifiedAt: null }),
       sendDelayNotice({ companyId: CO, bookingId: "dly-r2", slipMins: 25, expectNotifiedAt: null }),
     ]);
-    const r = await sqlClient().execute({
-      sql: "SELECT COUNT(*) AS n FROM job_events WHERE booking_id = ? AND kind = 'delayed'",
-      args: ["dly-r2"],
-    });
+    const r = await sqlClient().query(
+      "SELECT COUNT(*) AS n FROM job_events WHERE booking_id = $1 AND kind = 'delayed'",
+      ["dly-r2"],
+    );
     expect(Number(r.rows[0].n)).toBe(1);
   });
 
@@ -559,10 +538,10 @@ describe("send is compare-and-set — a customer is never told twice", () => {
     await seedBooking({ id: "dly-r8", minsLate: 30, flaggedAt: Date.now() - 60 * MIN });
     const [s1, s2] = await Promise.all([sweepDelays(), sweepDelays()]);
     expect(s1.notified + s2.notified).toBe(1);
-    const r = await sqlClient().execute({
-      sql: "SELECT COUNT(*) AS n FROM job_events WHERE booking_id = ? AND kind = 'delayed'",
-      args: ["dly-r8"],
-    });
+    const r = await sqlClient().query(
+      "SELECT COUNT(*) AS n FROM job_events WHERE booking_id = $1 AND kind = 'delayed'",
+      ["dly-r8"],
+    );
     expect(Number(r.rows[0].n)).toBe(1);
   });
 });

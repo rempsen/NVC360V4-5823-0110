@@ -29,7 +29,6 @@ locals {
   # supplies credentials) and S3_ENDPOINT (unset = real AWS S3).
   secret_keys = [
     "DATABASE_URL",
-    "DATABASE_AUTH_TOKEN",
     "BETTER_AUTH_SECRET",
     "GOOGLE_CLIENT_ID",
     "GOOGLE_CLIENT_SECRET",

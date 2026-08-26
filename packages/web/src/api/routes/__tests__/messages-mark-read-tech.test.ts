@@ -21,19 +21,17 @@
  *    a message from the tech who actually needs to see it, so a booking that
  *    isn't theirs is 404 (not 403 — a 403 would confirm the id exists).
  *
- * Harness matches the sibling suites: ephemeral in-memory libsql, DDL derived
- * from drizzle so it can't drift from prod, disjoint ids so it coexists with
- * other files in Bun's shared ":memory:" store.
+ * Harness matches the sibling suites: shared local Postgres (see
+ * ../../database/__tests__/setup.ts), full drizzle migration applied once per
+ * process, disjoint ids so it coexists with other files.
  */
 import { describe, it, expect, beforeAll } from "bun:test";
 import { Hono } from "hono";
-import { getTableConfig, type SQLiteColumn } from "drizzle-orm/sqlite-core";
+import { ensureSchema } from "../../database/__tests__/setup";
 
-process.env.DATABASE_URL = ":memory:";
-process.env.DATABASE_AUTH_TOKEN = "";
+await ensureSchema();
 
 const { db } = await import("../../database/index");
-const schema = await import("../../database/schema");
 const { messagesRoutes } = await import("../messages");
 const { meRoutes } = await import("../me");
 
@@ -58,35 +56,11 @@ const app = new Hono().use("*", async (c, next) => {
 app.route("/messages", messagesRoutes);
 app.route("/me", meRoutes);
 
-function ddlFor(table: any): string {
-  const cfg = getTableConfig(table);
-  const cols = cfg.columns.map((col: SQLiteColumn) => {
-    const parts = [`"${col.name}"`, col.getSQLType()];
-    if (col.primary) parts.push("PRIMARY KEY");
-    const dflt = (col as any).default;
-    let lit: string | null = null;
-    if (dflt !== undefined) {
-      lit =
-        typeof dflt === "string" ? `'${dflt.replace(/'/g, "''")}'`
-        : typeof dflt === "boolean" ? (dflt ? "1" : "0")
-        : typeof dflt === "number" ? String(dflt)
-        : null;
-    }
-    if (col.notNull && (lit !== null || col.primary)) parts.push("NOT NULL");
-    if (lit !== null) parts.push(`DEFAULT ${lit}`);
-    return parts.join(" ");
-  });
-  return `CREATE TABLE IF NOT EXISTS "${cfg.name}" (${cols.join(", ")})`;
-}
-
 let sql: any;
 
 /** Read one message row back — used only to prove which flag moved. */
 async function flags(id: string): Promise<{ read: number; readByTech: number }> {
-  const r = await sql.execute({
-    sql: "SELECT read, read_by_tech FROM messages WHERE id = ?",
-    args: [id],
-  });
+  const r = await sql.query("SELECT read, read_by_tech FROM messages WHERE id = $1", [id]);
   const row = r.rows[0];
   return { read: Number(row.read), readByTech: Number(row.read_by_tech) };
 }
@@ -120,47 +94,52 @@ function ack(bookingId: string, opts: { user?: string; role?: string } = {}) {
 
 beforeAll(async () => {
   sql = (db as any).$client;
-  await sql.execute(ddlFor(schema.companies));
-  await sql.execute(ddlFor(schema.memberships));
-  await sql.execute(ddlFor(schema.riders));
-  await sql.execute(ddlFor(schema.bookings));
-  await sql.execute(ddlFor(schema.messages));
-  await sql.execute(ddlFor(schema.user));
 
-  await sql.execute({
-    sql: "INSERT OR IGNORE INTO companies (id, name, status) VALUES (?,?,?)",
-    args: [CO, "Mark Read Tech Co", "active"],
-  });
+  await sql.query("INSERT INTO companies (id, name, status) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", [CO, "Mark Read Tech Co", "active"]);
+
+  // Users/service referenced by memberships/riders/bookings — Postgres
+  // enforces the FK that libsql's derived DDL never had.
+  for (const [id, name] of [
+    [MINE, "Mine"],
+    [OTHER, "Other"],
+    ["mrt-cust", "Cust"],
+  ] as const) {
+    await sql.query(
+      `INSERT INTO "user" (id, name, email, role, company_id) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
+      [id, name, `${id}@t.test`, "customer", CO],
+    );
+  }
+  await sql.query(
+    "INSERT INTO services (id, company_id, name, category) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+    ["mrt-svc", CO, "Boiler service", "hvac"],
+  );
 
   const member = (id: string, user: string) =>
-    sql.execute({
-      sql: "INSERT OR IGNORE INTO memberships (id, user_id, company_id, role, status, staff_type) VALUES (?,?,?,?,?,?)",
-      args: [id, user, CO, "rider", "active", "tech"],
-    });
+    sql.query(
+      "INSERT INTO memberships (id, user_id, company_id, role, status, staff_type) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING",
+      [id, user, CO, "rider", "active", "tech"],
+    );
   await member("mrt-m-mine", MINE);
   await member("mrt-m-other", OTHER);
 
   const rider = (id: string, user: string) =>
-    sql.execute({
-      sql: "INSERT OR IGNORE INTO riders (id, user_id, company_id) VALUES (?,?,?)",
-      args: [id, user, CO],
-    });
+    sql.query("INSERT INTO riders (id, user_id, company_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", [id, user, CO]);
   await rider(R_MINE, MINE);
   await rider(R_OTHER, OTHER);
 
   const booking = (id: string, riderId: string) =>
-    sql.execute({
-      sql: "INSERT OR IGNORE INTO bookings (id, company_id, customer_id, service_id, rider_id, title, status, assign_status, address, scheduled_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-      args: [id, CO, "mrt-cust", "mrt-svc", riderId, "Boiler service", "in_progress", "accepted", "9 Elm St", Date.now()],
-    });
+    sql.query(
+      "INSERT INTO bookings (id, company_id, customer_id, service_id, rider_id, title, status, assign_status, address, scheduled_at, public_token) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING",
+      [id, CO, "mrt-cust", "mrt-svc", riderId, "Boiler service", "in_progress", "accepted", "9 Elm St", new Date(), `tok-${id}`],
+    );
   await booking(JOB, R_MINE);
   await booking(JOB_OTHER, R_OTHER);
 
   const msg = (id: string, riderId: string, bookingId: string, senderRole: string) =>
-    sql.execute({
-      sql: "INSERT OR IGNORE INTO messages (id, company_id, rider_id, booking_id, sender_role, sender_name, body, read, read_by_tech) VALUES (?,?,?,?,?,?,?,0,0)",
-      args: [id, CO, riderId, bookingId, senderRole, senderRole, "hello"],
-    });
+    sql.query(
+      "INSERT INTO messages (id, company_id, rider_id, booking_id, sender_role, sender_name, body, read, read_by_tech) VALUES ($1,$2,$3,$4,$5,$6,$7,false,false) ON CONFLICT DO NOTHING",
+      [id, CO, riderId, bookingId, senderRole, senderRole, "hello"],
+    );
   // The tech's own job thread: dispatcher + customer + one of the tech's own.
   await msg("mrt-m-dispatch", R_MINE, JOB, "dispatch");
   await msg("mrt-m-client", R_MINE, JOB, "client");

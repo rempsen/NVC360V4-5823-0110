@@ -12,13 +12,11 @@
  * Harness: ephemeral in-memory libsql, ids prefixed "qh-".
  */
 import { describe, it, expect, beforeAll } from "bun:test";
-import { getTableConfig, type SQLiteColumn } from "drizzle-orm/sqlite-core";
+import { ensureSchema } from "../../api/database/__tests__/setup";
 
-process.env.DATABASE_URL = ":memory:";
-process.env.DATABASE_AUTH_TOKEN = "";
+await ensureSchema();
 
 const { db } = await import("../../api/database/index");
-const schema = await import("../../api/database/schema");
 const { channelAllowed } = await import("../dispatch");
 const { clearCompanyTimeZoneCache } = await import("../company-tz");
 const { zonedTimeToInstant } = await import("../../shared/tz");
@@ -27,48 +25,24 @@ const WPG_CO = "qh-winnipeg-co"; // America/Winnipeg, UTC-5 in August
 const SYD_CO = "qh-sydney-co"; // Australia/Sydney, UTC+10 in August
 const BAD_CO = "qh-badzone-co"; // unusable timezone string
 
-function ddlFor(table: any): string {
-  const cfg = getTableConfig(table);
-  const cols = cfg.columns.map((col: SQLiteColumn) => {
-    const parts = [`"${col.name}"`, col.getSQLType()];
-    if (col.primary) parts.push("PRIMARY KEY");
-    const dflt = (col as any).default;
-    let lit: string | null = null;
-    if (dflt !== undefined) {
-      lit =
-        typeof dflt === "string" ? `'${dflt.replace(/'/g, "''")}'`
-        : typeof dflt === "boolean" ? (dflt ? "1" : "0")
-        : typeof dflt === "number" ? String(dflt)
-        : null;
-    }
-    if (col.notNull && (lit !== null || col.primary)) parts.push("NOT NULL");
-    if (lit !== null) parts.push(`DEFAULT ${lit}`);
-    return parts.join(" ");
-  });
-  return `CREATE TABLE IF NOT EXISTS "${cfg.name}" (${cols.join(", ")})`;
-}
-
 beforeAll(async () => {
   const sql = (db as any).$client;
-  for (const t of [schema.companySettings, schema.notificationChannels]) {
-    await sql.execute(ddlFor(t));
-  }
   const settings: Array<[string, string]> = [
     [WPG_CO, "America/Winnipeg"],
     [SYD_CO, "Australia/Sydney"],
     [BAD_CO, "Mars/Olympus_Mons"],
   ];
   for (const [co, tz] of settings) {
-    await sql.execute({
-      sql: "INSERT OR IGNORE INTO company_settings (id, company_id, timezone) VALUES (?,?,?)",
-      args: [`qh-settings-${co}`, co, tz],
-    });
-    await sql.execute({
-      sql: `INSERT OR IGNORE INTO notification_channels
+    await sql.query(
+      "INSERT INTO company_settings (id, company_id, timezone) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+      [`qh-settings-${co}`, co, tz],
+    );
+    await sql.query(
+      `INSERT INTO notification_channels
               (id, company_id, quiet_hours_enabled, quiet_start, quiet_end, quiet_channels)
-            VALUES (?,?,?,?,?,?)`,
-      args: [`qh-chan-${co}`, co, 1, "21:00", "08:00", "sms,email"],
-    });
+            VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`,
+      [`qh-chan-${co}`, co, true, "21:00", "08:00", "sms,email"],
+    );
   }
   clearCompanyTimeZoneCache();
 });

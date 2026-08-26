@@ -25,19 +25,17 @@
  *  - One broken tenant must degrade to an empty entry, not blank the screen.
  *  - Totals are computed over the FULL history even when the row list is capped.
  *
- * Harness matches the sibling suites: ephemeral in-memory libsql, DDL derived
- * from drizzle so it cannot drift from prod, disjoint ids so it coexists with
- * other files in Bun's shared ":memory:" store.
+ * Harness matches the sibling suites: shared local Postgres (see
+ * ../../database/__tests__/setup.ts), full drizzle migration applied once per
+ * process, disjoint ids so it coexists with other files.
  */
 import { describe, it, expect, beforeAll } from "bun:test";
 import { Hono } from "hono";
-import { getTableConfig, type SQLiteColumn } from "drizzle-orm/sqlite-core";
+import { ensureSchema } from "../../database/__tests__/setup";
 
-process.env.DATABASE_URL = ":memory:";
-process.env.DATABASE_AUTH_TOKEN = "";
+await ensureSchema();
 
 const { db } = await import("../../database/index");
-const schema = await import("../../database/schema");
 const { meRoutes } = await import("../me");
 
 // Disjoint ids, prefixed so they cannot collide with sibling suites.
@@ -58,56 +56,42 @@ const app = new Hono().use("*", async (c, next) => {
 });
 app.route("/me", meRoutes);
 
-function ddlFor(table: any): string {
-  const cfg = getTableConfig(table);
-  const cols = cfg.columns.map((col: SQLiteColumn) => {
-    const parts = [`"${col.name}"`, col.getSQLType()];
-    if (col.primary) parts.push("PRIMARY KEY");
-    const dflt = (col as any).default;
-    let lit: string | null = null;
-    if (dflt !== undefined) {
-      lit =
-        typeof dflt === "string" ? `'${dflt.replace(/'/g, "''")}'`
-        : typeof dflt === "boolean" ? (dflt ? "1" : "0")
-        : typeof dflt === "number" ? String(dflt)
-        : null;
-    }
-    if (col.notNull && (lit !== null || col.primary)) parts.push("NOT NULL");
-    if (lit !== null) parts.push(`DEFAULT ${lit}`);
-    return parts.join(" ");
-  });
-  return `CREATE TABLE IF NOT EXISTS "${cfg.name}" (${cols.join(", ")})`;
-}
-
 let sql: any;
 const DAY = 86_400_000;
 const now = Date.now();
 
+// ms-epoch -> Date for real Postgres timestamp columns (scheduled_at,
+// finished_at, deleted_at, period_start/period_end all migrated off bigint).
+const d = (ms: number | null) => (ms === null ? null : new Date(ms));
+
 beforeAll(async () => {
   sql = (db as any).$client;
-  await sql.execute(ddlFor(schema.companies));
-  await sql.execute(ddlFor(schema.memberships));
-  await sql.execute(ddlFor(schema.riders));
-  await sql.execute(ddlFor(schema.bookings));
-  await sql.execute(ddlFor(schema.services));
-  await sql.execute(ddlFor(schema.payouts));
-  await sql.execute(ddlFor(schema.user));
 
   const co = (id: string, name: string, status: string) =>
-    sql.execute({
-      sql: "INSERT OR IGNORE INTO companies (id, name, status) VALUES (?,?,?)",
-      args: [id, name, status],
-    });
+    sql.query("INSERT INTO companies (id, name, status) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", [id, name, status]);
   await co(ACME, "Acme Facilities", "active");
   await co(BOLT, "Bolt Mechanical", "active");
   await co(GONE, "Zed Suspended Co", "suspended");
   await co(OTHERCO, "Outside Co", "active");
 
+  // Users referenced by memberships/riders/bookings — Postgres enforces the FK
+  // that libsql's derived DDL never had.
+  for (const [id, name] of [
+    [TECH, "Tech"],
+    [SOLO, "Solo"],
+    ["ecust-x", "Cust X"],
+  ] as const) {
+    await sql.query(
+      `INSERT INTO "user" (id, name, email, role, company_id) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
+      [id, name, `${id}@t.test`, "customer", ACME],
+    );
+  }
+
   const member = (id: string, user: string, company: string, status: string) =>
-    sql.execute({
-      sql: "INSERT OR IGNORE INTO memberships (id, user_id, company_id, role, status, staff_type) VALUES (?,?,?,?,?,?)",
-      args: [id, user, company, "rider", status, "tech"],
-    });
+    sql.query(
+      "INSERT INTO memberships (id, user_id, company_id, role, status, staff_type) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING",
+      [id, user, company, "rider", status, "tech"],
+    );
   // Multi-roster tech: active at Acme + Bolt, active at a SUSPENDED company,
   // and merely INVITED (not accepted) at a fourth.
   await member("em-tech-acme", TECH, ACME, "active");
@@ -119,24 +103,24 @@ beforeAll(async () => {
   // Per (user, company) rider rows, each with its OWN rating — the point of
   // showing rating per employer instead of one blended star.
   const rider = (id: string, user: string, company: string, rating: number) =>
-    sql.execute({
-      sql: "INSERT OR IGNORE INTO riders (id, user_id, company_id, rating) VALUES (?,?,?,?)",
-      args: [id, user, company, rating],
-    });
+    sql.query(
+      "INSERT INTO riders (id, user_id, company_id, rating) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+      [id, user, company, rating],
+    );
   await rider("er-tech-acme", TECH, ACME, 5);
   await rider("er-tech-bolt", TECH, BOLT, 4.9);
   await rider("er-tech-gone", TECH, GONE, 3.1);
   await rider("er-tech-out", TECH, OTHERCO, 2.2);
   await rider("er-solo-acme", SOLO, ACME, 4.4);
 
-  await sql.execute({
-    sql: "INSERT OR IGNORE INTO services (id, company_id, name, category) VALUES (?,?,?,?)",
-    args: ["esvc-measure", BOLT, "Site Visit & Measurement", "general"],
-  });
-  await sql.execute({
-    sql: "INSERT OR IGNORE INTO user (id, name, email, role, company_id) VALUES (?,?,?,?,?)",
-    args: ["ecust-1", "Curran Stachan", "curran@t.test", "customer", BOLT],
-  });
+  await sql.query(
+    "INSERT INTO services (id, company_id, name, category) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+    ["esvc-measure", BOLT, "Site Visit & Measurement", "general"],
+  );
+  await sql.query(
+    `INSERT INTO "user" (id, name, email, role, company_id) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
+    ["ecust-1", "Curran Stachan", "curran@t.test", "customer", BOLT],
+  );
 
   const booking = (
     id: string,
@@ -147,23 +131,26 @@ beforeAll(async () => {
     finishedAt: number | null,
     opts: { deletedAt?: number | null; serviceId?: string | null; customerId?: string | null } = {},
   ) =>
-    sql.execute({
-      sql: "INSERT OR IGNORE INTO bookings (id, company_id, customer_id, service_id, rider_id, title, status, address, scheduled_at, finished_at, price, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-      args: [
+    sql.query(
+      "INSERT INTO bookings (id, company_id, customer_id, service_id, rider_id, title, status, address, scheduled_at, finished_at, price, deleted_at, public_token) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT DO NOTHING",
+      [
         id,
         company,
         opts.customerId ?? "ecust-x",
-        opts.serviceId ?? null,
+        // service_id is NOT NULL — fall back to the seeded default service
+        // when the test doesn't care which one.
+        opts.serviceId ?? "esvc-measure",
         riderId,
         "Job",
         status,
         "1 Main St",
-        finishedAt,
-        finishedAt,
+        d(finishedAt ?? Date.now()),
+        d(finishedAt),
         price,
-        opts.deletedAt ?? null,
+        d(opts.deletedAt ?? null),
+        `tok-${id}`,
       ],
-    });
+    );
 
   // ---- Acme: two completed jobs inside the last week, one older.
   await booking("eb-acme-1", ACME, "er-tech-acme", "completed", 100, now - 1 * DAY);
@@ -199,10 +186,10 @@ beforeAll(async () => {
     status: string,
     end: number,
   ) =>
-    sql.execute({
-      sql: "INSERT OR IGNORE INTO payouts (id, company_id, rider_id, period_start, period_end, jobs_count, gross, net, status) VALUES (?,?,?,?,?,?,?,?,?)",
-      args: [id, company, riderId, end - 7 * DAY, end, 2, gross, net, status],
-    });
+    sql.query(
+      "INSERT INTO payouts (id, company_id, rider_id, period_start, period_end, jobs_count, gross, net, status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING",
+      [id, company, riderId, d(end - 7 * DAY), d(end), 2, gross, net, status],
+    );
   await payout("ep-acme-paid", ACME, "er-tech-acme", 80, 100, "paid", now - 5 * DAY);
   await payout("ep-bolt-pending", BOLT, "er-tech-bolt", 240, 300, "pending", now - 1 * DAY);
   await payout("ep-gone-paid", GONE, "er-tech-gone", 4000, 5000, "paid", now - 1 * DAY);

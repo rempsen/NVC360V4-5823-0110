@@ -3,22 +3,22 @@ resource "dockercompose_stack" "nvc360-v4" {
   working_dir = path.module
 
   service {
-    name     = "db"
-    image    = "ghcr.io/tursodatabase/libsql-server:latest"
-    restart  = "unless-stopped"
-    platform = "linux/amd64"
+    name    = "db"
+    image   = "postgres:16-alpine"
+    restart = "unless-stopped"
 
     ports = [
-      "8080:8080",
-      "5001:5001",
+      "5432:5432",
     ]
 
     environment = {
-      SQLD_NODE = "primary"
+      POSTGRES_USER     = "nvc360"
+      POSTGRES_PASSWORD = "nvc360_local"
+      POSTGRES_DB       = "nvc360"
     }
 
     volumes = [
-      "sqld-data:/var/lib/sqld",
+      "pgdata:/var/lib/postgresql/data",
     ]
   }
 
@@ -34,7 +34,7 @@ resource "dockercompose_stack" "nvc360-v4" {
     ]
 
     environment = {
-      DATABASE_URL    = "http://db:8080"
+      DATABASE_URL    = "postgresql://nvc360:nvc360_local@db:5432/nvc360"
       BETTER_AUTH_URL = "http://localhost:5173"
       REDIS_URL       = "redis://redis:6379"
     }
@@ -57,7 +57,7 @@ resource "dockercompose_stack" "nvc360-v4" {
   }
 
   volume {
-    name = "sqld-data"
+    name = "pgdata"
   }
 
   volume {

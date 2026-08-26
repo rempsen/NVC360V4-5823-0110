@@ -17,13 +17,11 @@
  */
 import { describe, it, expect, beforeAll } from "bun:test";
 import { Hono } from "hono";
-import { getTableConfig, type SQLiteColumn } from "drizzle-orm/sqlite-core";
+import { ensureSchema } from "../../database/__tests__/setup";
 
-process.env.DATABASE_URL = ":memory:";
-process.env.DATABASE_AUTH_TOKEN = "";
+await ensureSchema();
 
 const { db } = await import("../../database/index");
-const schema = await import("../../database/schema");
 const { bookingsRoutes } = await import("../bookings");
 const { AppError } = await import("../../lib/errors");
 
@@ -49,65 +47,44 @@ app.onError((err, c) => {
   return c.json({ error: { code: "internal", message: String((err as Error).message) } }, 500);
 });
 
-function ddlFor(table: any): string {
-  const cfg = getTableConfig(table);
-  const cols = cfg.columns.map((col: SQLiteColumn) => {
-    const parts = [`"${col.name}"`, col.getSQLType()];
-    if (col.primary) parts.push("PRIMARY KEY");
-    const dflt = (col as any).default;
-    let lit: string | null = null;
-    if (dflt !== undefined) {
-      lit =
-        typeof dflt === "string" ? `'${dflt.replace(/'/g, "''")}'`
-        : typeof dflt === "boolean" ? (dflt ? "1" : "0")
-        : typeof dflt === "number" ? String(dflt)
-        : null;
-    }
-    if (col.notNull && (lit !== null || col.primary)) parts.push("NOT NULL");
-    if (lit !== null) parts.push(`DEFAULT ${lit}`);
-    return parts.join(" ");
-  });
-  return `CREATE TABLE IF NOT EXISTS "${cfg.name}" (${cols.join(", ")})`;
-}
-
 let sql: any;
 
 beforeAll(async () => {
   sql = (db as any).$client;
-  await sql.execute(ddlFor(schema.companies));
-  await sql.execute(ddlFor(schema.riders));
-  await sql.execute(ddlFor(schema.bookings));
-  await sql.execute(ddlFor(schema.services));
-  await sql.execute(ddlFor(schema.user));
 
-  await sql.execute({
-    sql: "INSERT OR IGNORE INTO companies (id, name, status) VALUES (?,?,?)",
-    args: [CO, "Soft Delete Co", "active"],
-  });
-  await sql.execute({
-    sql: "INSERT OR IGNORE INTO riders (id, user_id, company_id) VALUES (?,?,?)",
-    args: [RIDER, RIDER_USER, CO],
-  });
-  await sql.execute({
-    sql: "INSERT OR IGNORE INTO services (id, company_id, name, category) VALUES (?,?,?,?)",
-    args: [SVC, CO, "Furnace repair", "hvac"],
-  });
-  await sql.execute({
-    sql: "INSERT OR IGNORE INTO user (id, name, email, role, company_id) VALUES (?,?,?,?,?)",
-    args: [CUST_USER, "Pat Customer", "pat.sdel@t.test", "customer", CO],
-  });
+  await sql.query(
+    "INSERT INTO companies (id, name, status) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+    [CO, "Soft Delete Co", "active"],
+  );
+  await sql.query(
+    `INSERT INTO "user" (id, name, email, role, company_id) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
+    [RIDER_USER, "Rider User", "rider.sdel@t.test", "rider", CO],
+  );
+  await sql.query(
+    "INSERT INTO riders (id, user_id, company_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+    [RIDER, RIDER_USER, CO],
+  );
+  await sql.query(
+    "INSERT INTO services (id, company_id, name, category) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+    [SVC, CO, "Furnace repair", "hvac"],
+  );
+  await sql.query(
+    `INSERT INTO "user" (id, name, email, role, company_id) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
+    [CUST_USER, "Pat Customer", "pat.sdel@t.test", "customer", CO],
+  );
 
   const booking = (id: string, status: string, deletedAt: number | null) =>
-    sql.execute({
-      sql: `INSERT OR IGNORE INTO bookings
+    sql.query(
+      `INSERT INTO bookings
               (id, company_id, customer_id, service_id, rider_id, title, status,
-               address, scheduled_at, finished_at, price, deleted_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-      args: [
+               address, scheduled_at, finished_at, price, deleted_at, public_token)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT DO NOTHING`,
+      [
         id, CO, CUST_USER, SVC, RIDER, "Furnace repair", status,
-        "1 Test St", Date.now(), status === "completed" ? Date.now() : null, 250, deletedAt,
+        "1 Test St", new Date(), status === "completed" ? new Date() : null, 250,
+        deletedAt === null ? null : new Date(deletedAt), `sdeltok-${id}`,
       ],
-    });
+    );
 
   await booking("sdel-live-1", "completed", null);
   await booking("sdel-live-2", "assigned", null);
@@ -151,10 +128,10 @@ describe("GET /api/bookings hides soft-deleted jobs from every role", () => {
   it("the deleted rows really are in the table — the filter is what hides them", async () => {
     // Without this, all three tests above would also pass if the seed had
     // silently failed to insert the deleted rows at all.
-    const r = await sql.execute({
-      sql: "SELECT COUNT(*) AS n FROM bookings WHERE company_id = ? AND deleted_at IS NOT NULL",
-      args: [CO],
-    });
+    const r = await sql.query(
+      "SELECT COUNT(*) AS n FROM bookings WHERE company_id = $1 AND deleted_at IS NOT NULL",
+      [CO],
+    );
     expect(Number((r.rows[0] as any).n)).toBe(2);
   });
 });

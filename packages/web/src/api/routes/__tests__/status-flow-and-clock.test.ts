@@ -24,18 +24,18 @@
  *    `inside_geofence`. Leaving the site was then never detected and the clock
  *    kept billing after the tech drove away.
  *
- * Harness: ephemeral in-memory libsql, ids prefixed "sfc-". No notification
- * rules are seeded, so fireEvent resolves zero recipients and sends nothing.
+ * Harness: shared local Postgres (see ../../database/__tests__/setup.ts),
+ * full drizzle migration applied once per process, ids prefixed "sfc-". No
+ * notification rules are seeded, so fireEvent resolves zero recipients and
+ * sends nothing.
  */
 import { describe, it, expect, beforeAll } from "bun:test";
 import { Hono } from "hono";
-import { getTableConfig, type SQLiteColumn } from "drizzle-orm/sqlite-core";
+import { ensureSchema } from "../../database/__tests__/setup";
 
-process.env.DATABASE_URL = ":memory:";
-process.env.DATABASE_AUTH_TOKEN = "";
+await ensureSchema();
 
 const { db } = await import("../../database/index");
-const schema = await import("../../database/schema");
 const { bookingsRoutes } = await import("../bookings");
 const { pauseClock, resumeClock, applyBookingStatus, StatusTransitionError } = await import(
   "../../../services/booking-status"
@@ -63,27 +63,6 @@ app.onError((err, c) => {
   return c.json({ error: { code: "internal", message: String((err as Error).message) } }, 500);
 });
 
-function ddlFor(table: any): string {
-  const cfg = getTableConfig(table);
-  const cols = cfg.columns.map((col: SQLiteColumn) => {
-    const parts = [`"${col.name}"`, col.getSQLType()];
-    if (col.primary) parts.push("PRIMARY KEY");
-    const dflt = (col as any).default;
-    let lit: string | null = null;
-    if (dflt !== undefined) {
-      lit =
-        typeof dflt === "string" ? `'${dflt.replace(/'/g, "''")}'`
-        : typeof dflt === "boolean" ? (dflt ? "1" : "0")
-        : typeof dflt === "number" ? String(dflt)
-        : null;
-    }
-    if (col.notNull && (lit !== null || col.primary)) parts.push("NOT NULL");
-    if (lit !== null) parts.push(`DEFAULT ${lit}`);
-    return parts.join(" ");
-  });
-  return `CREATE TABLE IF NOT EXISTS "${cfg.name}" (${cols.join(", ")})`;
-}
-
 const sqlClient = () => (db as any).$client;
 
 async function seedJob(opts: {
@@ -96,28 +75,29 @@ async function seedJob(opts: {
   accumulatedMs?: number;
 }) {
   const s = sqlClient();
-  await s.execute({ sql: "DELETE FROM bookings WHERE id = ?", args: [opts.id] });
-  await s.execute({
-    sql: `INSERT INTO bookings
+  const d = (ms: number | null) => (ms === null ? null : new Date(ms));
+  await s.query("DELETE FROM bookings WHERE id = $1", [opts.id]);
+  await s.query(
+    `INSERT INTO bookings
             (id, company_id, customer_id, service_id, title, status, assign_status, scheduled_at,
              address, lat, lng, rider_id, price, public_token, enroute_at, started_at, clock_state,
              last_resume_at, inside_geofence, accumulated_ms, on_site_minutes, mileage_km)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    args: [
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+    [
       opts.id, CO, CUST, SVC, "Rooftop unit service", opts.status, "accepted",
-      Date.now() + 3_600_000, "1 Test Plaza", 43.6532, -79.3832, RIDER, 250, `sfc-tok-${opts.id}`,
-      opts.enrouteAt === undefined ? Date.now() - 1_800_000 : opts.enrouteAt,
-      opts.startedAt === undefined ? null : opts.startedAt,
+      d(Date.now() + 3_600_000), "1 Test Plaza", 43.6532, -79.3832, RIDER, 250, `sfc-tok-${opts.id}`,
+      opts.enrouteAt === undefined ? d(Date.now() - 1_800_000) : d(opts.enrouteAt),
+      opts.startedAt === undefined ? null : d(opts.startedAt),
       opts.clockState ?? "idle",
-      opts.clockState === "running" ? Date.now() - 60_000 : null,
-      opts.insideGeofence ? 1 : 0,
+      opts.clockState === "running" ? d(Date.now() - 60_000) : null,
+      !!opts.insideGeofence,
       opts.accumulatedMs ?? 0, 0, 0,
     ],
-  });
+  );
 }
 
 async function row(id: string) {
-  const r = await sqlClient().execute({ sql: "SELECT * FROM bookings WHERE id = ?", args: [id] });
+  const r = await sqlClient().query("SELECT * FROM bookings WHERE id = $1", [id]);
   return r.rows[0] as any;
 }
 
@@ -135,34 +115,24 @@ function setStatus(id: string, status: string, role = "rider", user = TECH_USER)
 
 beforeAll(async () => {
   const s = sqlClient();
-  for (const t of [
-    schema.companySettings, schema.bookings, schema.services, schema.riders,
-    schema.user, schema.invoices, schema.serviceZones, schema.properties, schema.jobEvents,
-    schema.notificationRules, schema.notifications, schema.notificationDeliveries,
-    schema.webhookEndpoints, schema.automationRules, schema.reviews,
-    schema.notificationChannels, schema.trackingPings, schema.memberships,
-    schema.scheduledTasks,
-  ]) {
-    await s.execute(ddlFor(t));
-  }
   for (const [id, name, role] of [
     [TECH_USER, "Field Tech", "rider"],
     [ADMIN_USER, "Office", "admin"],
     [CUST, "Customer", "customer"],
   ] as const) {
-    await s.execute({
-      sql: "INSERT OR IGNORE INTO user (id, company_id, name, email, role, email_verified) VALUES (?,?,?,?,?,0)",
-      args: [id, CO, name, `${id}@t.test`, role],
-    });
+    await s.query(
+      `INSERT INTO "user" (id, company_id, name, email, role, email_verified) VALUES ($1,$2,$3,$4,$5,false) ON CONFLICT DO NOTHING`,
+      [id, CO, name, `${id}@t.test`, role],
+    );
   }
-  await s.execute({
-    sql: "INSERT OR IGNORE INTO riders (id, company_id, user_id, status) VALUES (?,?,?,?)",
-    args: [RIDER, CO, TECH_USER, "enroute"],
-  });
-  await s.execute({
-    sql: "INSERT OR IGNORE INTO services (id, company_id, name, category, base_price) VALUES (?,?,?,?,?)",
-    args: [SVC, CO, "Rooftop unit service", "hvac", 250],
-  });
+  await s.query(
+    "INSERT INTO riders (id, company_id, user_id, status) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+    [RIDER, CO, TECH_USER, "enroute"],
+  );
+  await s.query(
+    "INSERT INTO services (id, company_id, name, category, base_price) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
+    [SVC, CO, "Rooftop unit service", "hvac", 250],
+  );
 });
 
 describe("POST /bookings/:id/status — stage guard", () => {
@@ -228,7 +198,7 @@ describe("on-site clock vs the geofence", () => {
     const b = await row("sfc-manual");
     expect(b.clock_state).toBe("running");
     // The bug: this used to be 1, so the very next ping paused the clock.
-    expect(b.inside_geofence).toBe(0);
+    expect(b.inside_geofence).toBe(false);
   });
 
   it("marks the geofence flag when the arrival came FROM the geofence", async () => {
@@ -236,7 +206,7 @@ describe("on-site clock vs the geofence", () => {
     await applyBookingStatus(CO, "sfc-auto", "arrived", { byGeofence: true });
     const b = await row("sfc-auto");
     expect(b.clock_state).toBe("running");
-    expect(b.inside_geofence).toBe(1);
+    expect(b.inside_geofence).toBe(true);
   });
 
   it("does not pause a manually-arrived tech who GPS has never seen inside the radius", async () => {
@@ -246,7 +216,7 @@ describe("on-site clock vs the geofence", () => {
     // flag correctly false that branch cannot fire. Prove the state is the one
     // that keeps the tech's clock running.
     const b = await row("sfc-nopause");
-    expect(b.inside_geofence).toBe(0);
+    expect(b.inside_geofence).toBe(false);
     expect(b.clock_state).toBe("running");
   });
 
@@ -255,7 +225,7 @@ describe("on-site clock vs the geofence", () => {
     await resumeClock(CO, "sfc-late");
     // Used to early-return and leave this at 0, which killed exit detection for
     // the rest of the job.
-    expect((await row("sfc-late")).inside_geofence).toBe(1);
+    expect((await row("sfc-late")).inside_geofence).toBe(true);
   });
 
   it("then detects the tech leaving and banks the time", async () => {
@@ -263,7 +233,7 @@ describe("on-site clock vs the geofence", () => {
     await pauseClock(CO, "sfc-leave");
     const b = await row("sfc-leave");
     expect(b.clock_state).toBe("paused");
-    expect(b.inside_geofence).toBe(0);
+    expect(b.inside_geofence).toBe(false);
     expect(Number(b.accumulated_ms)).toBeGreaterThan(0);
   });
 

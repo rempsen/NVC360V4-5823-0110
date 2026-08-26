@@ -85,7 +85,7 @@ export async function cancelTasks(opts: {
       .update(schema.scheduledTasks)
       .set({ status: "cancelled", completedAt: new Date() })
       .where(and(...conds));
-    return (res as any)?.rowsAffected ?? 0;
+    return (res as any)?.rowCount ?? 0;
   } catch (e) {
     console.error("[scheduler] cancel failed", e);
     return 0;
@@ -103,8 +103,8 @@ async function claim(id: string): Promise<boolean> {
     .where(
       and(eq(schema.scheduledTasks.id, id), eq(schema.scheduledTasks.status, "pending")),
     );
-  // libsql returns rowsAffected; if another instance claimed it first this is 0
-  return ((res as any)?.rowsAffected ?? 0) > 0;
+  // pg returns rowCount; if another instance claimed it first this is 0
+  return ((res as any)?.rowCount ?? 0) > 0;
 }
 
 /** Run one pass over due tasks. Exported for tests / manual invocation. */

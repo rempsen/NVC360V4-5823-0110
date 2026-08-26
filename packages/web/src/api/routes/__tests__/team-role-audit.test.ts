@@ -15,19 +15,19 @@
  *     doesn't fill with noise that hides the real events
  *   - the entry is stamped with the acting tenant, not "default"
  *
- * Ephemeral in-memory libsql; ids prefixed "tra-".
+ * Shared local Postgres (see ../../database/__tests__/setup.ts); ids prefixed
+ * "tra-".
  */
 import { describe, it, expect, beforeAll, beforeEach } from "bun:test";
 import { Hono } from "hono";
-import { getTableConfig, type SQLiteColumn } from "drizzle-orm/sqlite-core";
+import { ensureSchema } from "../../database/__tests__/setup";
 
-process.env.DATABASE_URL = ":memory:";
-process.env.DATABASE_AUTH_TOKEN = "";
 process.env.RESEND_API_KEY = "";
 process.env.TWILIO_AUTH_TOKEN = "";
 
+await ensureSchema();
+
 const { db } = await import("../../database/index");
-const schema = await import("../../database/schema");
 const { teamRoutes } = await import("../team");
 
 const CO = "tra-co";
@@ -44,46 +44,25 @@ const app = new Hono().use("*", async (c, next) => {
 });
 app.route("/team", teamRoutes);
 
-function ddlFor(table: any): string {
-  const cfg = getTableConfig(table);
-  const cols = cfg.columns.map((col: SQLiteColumn) => {
-    const parts = [`"${col.name}"`, col.getSQLType()];
-    if (col.primary) parts.push("PRIMARY KEY");
-    const dflt = (col as any).default;
-    let lit: string | null = null;
-    if (dflt !== undefined) {
-      lit =
-        typeof dflt === "string" ? `'${dflt.replace(/'/g, "''")}'`
-        : typeof dflt === "boolean" ? (dflt ? "1" : "0")
-        : typeof dflt === "number" ? String(dflt)
-        : null;
-    }
-    if (col.notNull && (lit !== null || col.primary)) parts.push("NOT NULL");
-    if (lit !== null) parts.push(`DEFAULT ${lit}`);
-    return parts.join(" ");
-  });
-  return `CREATE TABLE IF NOT EXISTS "${cfg.name}" (${cols.join(", ")})`;
-}
-
 const sql = () => (db as any).$client;
 
 async function seedTarget(role: string) {
   const s = sql();
-  await s.execute({ sql: "DELETE FROM user WHERE id = ?", args: [TARGET] });
-  await s.execute({ sql: "DELETE FROM memberships WHERE user_id = ?", args: [TARGET] });
-  await s.execute({ sql: "DELETE FROM audit_log", args: [] });
-  await s.execute({
-    sql: "INSERT INTO user (id, name, email, email_verified, role, company_id) VALUES (?,?,?,?,?,?)",
-    args: [TARGET, "Joel Tetreault", "joel@nvc360.com", 1, role, CO],
-  });
-  await s.execute({
-    sql: "INSERT INTO memberships (id, user_id, company_id, role, status) VALUES (?,?,?,?,?)",
-    args: [`m-${TARGET}`, TARGET, CO, role, "active"],
-  });
+  await s.query(`DELETE FROM "user" WHERE id = $1`, [TARGET]);
+  await s.query("DELETE FROM memberships WHERE user_id = $1", [TARGET]);
+  await s.query("DELETE FROM audit_log");
+  await s.query(
+    `INSERT INTO "user" (id, name, email, email_verified, role, company_id) VALUES ($1,$2,$3,$4,$5,$6)`,
+    [TARGET, "Joel Tetreault", "joel@nvc360.com", true, role, CO],
+  );
+  await s.query(
+    "INSERT INTO memberships (id, user_id, company_id, role, status) VALUES ($1,$2,$3,$4,$5)",
+    [`m-${TARGET}`, TARGET, CO, role, "active"],
+  );
 }
 
 async function auditRows() {
-  const r = await sql().execute("SELECT * FROM audit_log ORDER BY created_at DESC");
+  const r = await sql().query("SELECT * FROM audit_log ORDER BY created_at DESC");
   return r.rows as any[];
 }
 
@@ -100,18 +79,14 @@ function patch(body: unknown, opts: { company?: string } = {}) {
 
 beforeAll(async () => {
   const s = sql();
-  await s.execute(ddlFor(schema.user));
-  await s.execute(ddlFor(schema.memberships));
-  await s.execute(ddlFor(schema.auditLog));
-  await s.execute(ddlFor(schema.riders));
-  await s.execute({
-    sql: "INSERT OR IGNORE INTO user (id, name, email, email_verified, role, company_id) VALUES (?,?,?,?,?,?)",
-    args: [BOSS, "Dana Boss", "boss@nvc360.com", 1, "superadmin", CO],
-  });
-  await s.execute({
-    sql: "INSERT OR IGNORE INTO memberships (id, user_id, company_id, role, status) VALUES (?,?,?,?,?)",
-    args: [`m-${BOSS}`, BOSS, CO, "superadmin", "active"],
-  });
+  await s.query(
+    `INSERT INTO "user" (id, name, email, email_verified, role, company_id) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`,
+    [BOSS, "Dana Boss", "boss@nvc360.com", true, "superadmin", CO],
+  );
+  await s.query(
+    "INSERT INTO memberships (id, user_id, company_id, role, status) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
+    [`m-${BOSS}`, BOSS, CO, "superadmin", "active"],
+  );
 });
 
 describe("role changes are audited", () => {

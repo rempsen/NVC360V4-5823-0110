@@ -1,9 +1,9 @@
 /**
  * Tenant-isolation guarantees for the `tdb` facade.
  *
- * These tests run against a throwaway in-memory libsql database (the same client
- * the `tdb` helper closes over, via DATABASE_URL=:memory:). They assert the
- * non-negotiable invariants of multi-tenancy:
+ * These tests run against the shared local Postgres (see
+ * ../database/__tests__/setup.ts) that the `tdb` helper closes over. They
+ * assert the non-negotiable invariants of multi-tenancy:
  *
  *   1. Reads on a tenant table NEVER see another company's rows.
  *   2. Inserts auto-stamp the active companyId (callers can't spoof it).
@@ -14,12 +14,9 @@
  */
 import { describe, it, expect, beforeAll } from "bun:test";
 import { eq } from "drizzle-orm";
-import { getTableConfig, type SQLiteColumn } from "drizzle-orm/sqlite-core";
+import { ensureSchema } from "./setup";
 
-// Bind the database client to an ephemeral in-memory store BEFORE importing
-// the modules that read DATABASE_URL at construction time.
-process.env.DATABASE_URL = ":memory:";
-process.env.DATABASE_AUTH_TOKEN = "";
+await ensureSchema();
 
 const { db } = await import("../index");
 const { tdb } = await import("../tenant");
@@ -28,47 +25,14 @@ const schema = await import("../schema");
 const A = "company-a";
 const B = "company-b";
 
-/**
- * Derive a SQLite CREATE TABLE statement straight from the drizzle table config.
- * This keeps the in-memory test schema in lock-step with the real schema — column
- * names/types can never drift out of sync the way a hand-written DDL would.
- */
-function ddlFor(table: any): string {
-  const cfg = getTableConfig(table);
-  const cols = cfg.columns.map((col: SQLiteColumn) => {
-    const parts = [`"${col.name}"`, col.getSQLType()];
-    if (col.primary) parts.push("PRIMARY KEY");
-    const dflt = (col as any).default;
-    let lit: string | null = null;
-    if (dflt !== undefined) {
-      lit =
-        typeof dflt === "string" ? `'${dflt.replace(/'/g, "''")}'`
-        : typeof dflt === "boolean" ? (dflt ? "1" : "0")
-        : typeof dflt === "number" ? String(dflt)
-        : null;
-    }
-    // Only enforce NOT NULL when we can also supply a default — columns backed by
-    // a runtime $defaultFn (created_at, uuid id) have no literal here, so we relax
-    // NOT NULL in the test fixture rather than fight an unrepresentable default.
-    if (col.notNull && (lit !== null || col.primary)) parts.push("NOT NULL");
-    if (lit !== null) parts.push(`DEFAULT ${lit}`);
-    return parts.join(" ");
-  });
-  // IF NOT EXISTS: Bun shares one in-memory libsql store across test files, so a
-  // sibling file may have already created a shared table (e.g. services).
-  return `CREATE TABLE IF NOT EXISTS "${cfg.name}" (${cols.join(", ")})`;
-}
-
 beforeAll(async () => {
   const sql = (db as any).$client;
-  await sql.execute(ddlFor(schema.services));
-  await sql.execute(ddlFor(schema.rolePermissions));
 
   // Seed each company with one service.
-  await sql.execute({ sql: "INSERT INTO services (id, company_id, name, category) VALUES (?,?,?,?)", args: ["a1", A, "A wash", "cleaning"] });
-  await sql.execute({ sql: "INSERT INTO services (id, company_id, name, category) VALUES (?,?,?,?)", args: ["b1", B, "B wash", "cleaning"] });
+  await sql.query("INSERT INTO services (id, company_id, name, category) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING", ["a1", A, "A wash", "cleaning"]);
+  await sql.query("INSERT INTO services (id, company_id, name, category) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING", ["b1", B, "B wash", "cleaning"]);
   // Global table row (no tenant).
-  await sql.execute({ sql: "INSERT INTO role_permissions (role, perms) VALUES (?,?)", args: ["admin", "[\"*\"]"] });
+  await sql.query("INSERT INTO role_permissions (role, perms) VALUES ($1,$2) ON CONFLICT DO NOTHING", ["admin", "[\"*\"]"]);
 });
 
 describe("tdb read isolation", () => {
@@ -94,6 +58,7 @@ describe("tdb write isolation", () => {
   it("insert auto-stamps the active companyId and ignores a spoofed one", async () => {
     const [row] = await tdb(A).insert(schema.services, {
       name: "stamped",
+      category: "cleaning", // required — not the field under test, just a valid row
       // attempt to plant the row in company B — the helper must override this
       companyId: B as any,
     } as any);
@@ -154,19 +119,23 @@ describe("global tables + fail-closed", () => {
 describe("isolation holds across more sensitive tables", () => {
   beforeAll(async () => {
     const sql = (db as any).$client;
-    await sql.execute(ddlFor(schema.invoices));
-    await sql.execute(ddlFor(schema.messages));
-    await sql.execute(ddlFor(schema.apiKeys));
+
+    // invoices.bookingId/customerId are real FKs now (Postgres enforces them;
+    // the old ad-hoc SQLite test DDL silently never did) — scaffold the
+    // minimum valid user + booking row for both invoices to reference. Not
+    // under test here, just satisfying constraints.
+    await sql.query('INSERT INTO "user" (id, name, email) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', ["scaffold-user", "Scaffold Customer", "scaffold@example.com"]);
+    await sql.query("INSERT INTO bookings (id, customer_id, service_id, scheduled_at, address, public_token) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING", ["scaffold-booking", "scaffold-user", "a1", new Date(), "123 Test St", "scaffoldtoken1"]);
 
     // money — invoices
-    await sql.execute({ sql: "INSERT INTO invoices (id, company_id, total) VALUES (?,?,?)", args: ["inv-a", A, 500] });
-    await sql.execute({ sql: "INSERT INTO invoices (id, company_id, total) VALUES (?,?,?)", args: ["inv-b", B, 999] });
+    await sql.query("INSERT INTO invoices (id, company_id, booking_id, customer_id, number, amount, total) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING", ["inv-a", A, "scaffold-booking", "scaffold-user", "INV-A-1", 500, 500]);
+    await sql.query("INSERT INTO invoices (id, company_id, booking_id, customer_id, number, amount, total) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING", ["inv-b", B, "scaffold-booking", "scaffold-user", "INV-B-1", 999, 999]);
     // comms — messages
-    await sql.execute({ sql: "INSERT INTO messages (id, company_id, body) VALUES (?,?,?)", args: ["msg-a", A, "A secret"] });
-    await sql.execute({ sql: "INSERT INTO messages (id, company_id, body) VALUES (?,?,?)", args: ["msg-b", B, "B secret"] });
+    await sql.query("INSERT INTO messages (id, company_id, sender_role, body) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING", ["msg-a", A, "client", "A secret"]);
+    await sql.query("INSERT INTO messages (id, company_id, sender_role, body) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING", ["msg-b", B, "client", "B secret"]);
     // credentials — api keys (the keys themselves must be tenant-isolated too)
-    await sql.execute({ sql: "INSERT INTO api_keys (id, company_id, label, hashed_key) VALUES (?,?,?,?)", args: ["key-a", A, "A key", "hasha"] });
-    await sql.execute({ sql: "INSERT INTO api_keys (id, company_id, label, hashed_key) VALUES (?,?,?,?)", args: ["key-b", B, "B key", "hashb"] });
+    await sql.query("INSERT INTO api_keys (id, company_id, label, hashed_key) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING", ["key-a", A, "A key", "hasha"]);
+    await sql.query("INSERT INTO api_keys (id, company_id, label, hashed_key) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING", ["key-b", B, "B key", "hashb"]);
   });
 
   it("invoices (money) never cross tenants", async () => {
@@ -194,14 +163,12 @@ describe("isolation holds across more sensitive tables", () => {
 describe("B2B tenant registry (companies)", () => {
   beforeAll(async () => {
     const sql = (db as any).$client;
-    await sql.execute(ddlFor(schema.companies));
-    await sql.execute(ddlFor(schema.companySettings));
     // two provisioned tenants
-    await sql.execute({ sql: "INSERT INTO companies (id, name) VALUES (?,?)", args: [A, "Company A"] });
-    await sql.execute({ sql: "INSERT INTO companies (id, name) VALUES (?,?)", args: [B, "Company B"] });
+    await sql.query("INSERT INTO companies (id, name) VALUES ($1,$2) ON CONFLICT DO NOTHING", [A, "Company A"]);
+    await sql.query("INSERT INTO companies (id, name) VALUES ($1,$2) ON CONFLICT DO NOTHING", [B, "Company B"]);
     // per-tenant settings rows (PK = slug to avoid the legacy 'default' collision)
-    await sql.execute({ sql: "INSERT INTO company_settings (id, company_id, name) VALUES (?,?,?)", args: [A, A, "Settings A"] });
-    await sql.execute({ sql: "INSERT INTO company_settings (id, company_id, name) VALUES (?,?,?)", args: [B, B, "Settings B"] });
+    await sql.query("INSERT INTO company_settings (id, company_id, name) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", [A, A, "Settings A"]);
+    await sql.query("INSERT INTO company_settings (id, company_id, name) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", [B, B, "Settings B"]);
   });
 
   it("companies is GLOBAL — every tenant context sees the full registry", async () => {

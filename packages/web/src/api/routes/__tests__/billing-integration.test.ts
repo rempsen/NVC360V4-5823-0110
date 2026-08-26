@@ -17,14 +17,11 @@
  */
 import { describe, it, expect, beforeAll } from "bun:test";
 import { Hono } from "hono";
-import { getTableConfig, type SQLiteColumn } from "drizzle-orm/sqlite-core";
+import { ensureSchema } from "../../database/__tests__/setup";
 
-// Must be set BEFORE importing the database module (it reads env at import).
-process.env.DATABASE_URL = ":memory:";
-process.env.DATABASE_AUTH_TOKEN = "";
+await ensureSchema();
 
 const { db } = await import("../../database/index");
-const schema = await import("../../database/schema");
 const { paymentsRoutes } = await import("../payments");
 const { AppError } = await import("../../lib/errors");
 
@@ -56,53 +53,40 @@ app.onError((err, c) => {
   return c.json({ error: { code: "internal", message: "error" } }, 500);
 });
 
-function ddlFor(table: any): string {
-  const cfg = getTableConfig(table);
-  const cols = cfg.columns.map((col: SQLiteColumn) => {
-    const parts = [`"${col.name}"`, col.getSQLType()];
-    if (col.primary) parts.push("PRIMARY KEY");
-    const dflt = (col as any).default;
-    let lit: string | null = null;
-    if (dflt !== undefined) {
-      lit =
-        typeof dflt === "string" ? `'${dflt.replace(/'/g, "''")}'`
-        : typeof dflt === "boolean" ? (dflt ? "1" : "0")
-        : typeof dflt === "number" ? String(dflt)
-        : null;
-    }
-    if (col.notNull && (lit !== null || col.primary)) parts.push("NOT NULL");
-    if (lit !== null) parts.push(`DEFAULT ${lit}`);
-    return parts.join(" ");
-  });
-  return `CREATE TABLE IF NOT EXISTS "${cfg.name}" (${cols.join(", ")})`;
-}
-
 beforeAll(async () => {
   const sql = (db as any).$client;
-  await sql.execute(ddlFor(schema.bookings));
-  await sql.execute(ddlFor(schema.invoices));
-  await sql.execute(ddlFor(schema.paymentLedger));
-  await sql.execute(ddlFor(schema.riders));
+  const now = new Date();
+
+  // Referenced users (bookings.customerId / riders.userId both FK -> user.id).
+  for (const [id, co] of [["cust-a", A], ["cust-b", B], ["u-rider-a", A], ["u-rider-a2", A]] as const) {
+    await sql.query(
+      `INSERT INTO "user" (id, name, email, role, company_id) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
+      [id, id, `${id}@t.test`, "customer", co],
+    );
+  }
+  // Referenced services (bookings.serviceId FK -> services.id).
+  await sql.query("INSERT INTO services (id, company_id, name, category) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING", ["svc-a", A, "A service", "hvac"]);
+  await sql.query("INSERT INTO services (id, company_id, name, category) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING", ["svc-b", B, "B service", "hvac"]);
 
   // One booking + one PAID invoice per company. Company A's invoice has a
   // ledger charge entry; both companies' data live side by side so the
   // isolation assertions are meaningful (a leak would surface the other's row).
-  await sql.execute({ sql: "INSERT OR IGNORE INTO bookings (id, company_id, customer_id, service_id, title, status, address, price) VALUES (?,?,?,?,?,?,?,?)", args: ["bk-pa", A, "cust-a", "svc-a", "A job", "completed", "", 100] });
-  await sql.execute({ sql: "INSERT OR IGNORE INTO bookings (id, company_id, customer_id, service_id, title, status, address, price) VALUES (?,?,?,?,?,?,?,?)", args: ["bk-pb", B, "cust-b", "svc-b", "B job", "completed", "", 250] });
+  await sql.query("INSERT INTO bookings (id, company_id, customer_id, service_id, title, status, address, price, scheduled_at, public_token) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING", ["bk-pa", A, "cust-a", "svc-a", "A job", "completed", "", 100, now, "paytok-bk-pa"]);
+  await sql.query("INSERT INTO bookings (id, company_id, customer_id, service_id, title, status, address, price, scheduled_at, public_token) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING", ["bk-pb", B, "cust-b", "svc-b", "B job", "completed", "", 250, now, "paytok-bk-pb"]);
 
   // Company A also has a booking that has NOT been invoiced yet (the normal
   // state of every job before billing runs) and one assigned to a technician.
-  await sql.execute({ sql: "INSERT OR IGNORE INTO bookings (id, company_id, customer_id, service_id, title, status, address, price) VALUES (?,?,?,?,?,?,?,?)", args: ["bk-pa-noinv", A, "cust-a", "svc-a", "A uninvoiced job", "confirmed", "", 100] });
-  await sql.execute({ sql: "INSERT OR IGNORE INTO bookings (id, company_id, customer_id, service_id, title, status, address, price, rider_id) VALUES (?,?,?,?,?,?,?,?,?)", args: ["bk-pa-rider", A, "cust-a", "svc-a", "A assigned job", "completed", "", 100, "rider-pa"] });
-  await sql.execute({ sql: "INSERT OR IGNORE INTO riders (id, user_id, company_id) VALUES (?,?,?)", args: ["rider-pa", "u-rider-a", A] });
-  await sql.execute({ sql: "INSERT OR IGNORE INTO riders (id, user_id, company_id) VALUES (?,?,?)", args: ["rider-pa2", "u-rider-a2", A] });
-  await sql.execute({ sql: "INSERT OR IGNORE INTO invoices (id, company_id, booking_id, customer_id, number, amount, tax, total, status, currency) VALUES (?,?,?,?,?,?,?,?,?,?)", args: ["inv-pa-rider", A, "bk-pa-rider", "cust-a", "INV-A-002", 100, 0, 100, "unpaid", "cad"] });
+  await sql.query("INSERT INTO bookings (id, company_id, customer_id, service_id, title, status, address, price, scheduled_at, public_token) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING", ["bk-pa-noinv", A, "cust-a", "svc-a", "A uninvoiced job", "confirmed", "", 100, now, "paytok-bk-pa-noinv"]);
+  await sql.query("INSERT INTO riders (id, user_id, company_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", ["rider-pa", "u-rider-a", A]);
+  await sql.query("INSERT INTO riders (id, user_id, company_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", ["rider-pa2", "u-rider-a2", A]);
+  await sql.query("INSERT INTO bookings (id, company_id, customer_id, service_id, title, status, address, price, rider_id, scheduled_at, public_token) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING", ["bk-pa-rider", A, "cust-a", "svc-a", "A assigned job", "completed", "", 100, "rider-pa", now, "paytok-bk-pa-rider"]);
+  await sql.query("INSERT INTO invoices (id, company_id, booking_id, customer_id, number, amount, tax, total, status, currency) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING", ["inv-pa-rider", A, "bk-pa-rider", "cust-a", "INV-A-002", 100, 0, 100, "unpaid", "cad"]);
 
-  await sql.execute({ sql: "INSERT OR IGNORE INTO invoices (id, company_id, booking_id, customer_id, number, amount, tax, total, status, currency) VALUES (?,?,?,?,?,?,?,?,?,?)", args: ["inv-pa", A, "bk-pa", "cust-a", "INV-A-001", 100, 0, 100, "paid", "cad"] });
-  await sql.execute({ sql: "INSERT OR IGNORE INTO invoices (id, company_id, booking_id, customer_id, number, amount, tax, total, status, currency) VALUES (?,?,?,?,?,?,?,?,?,?)", args: ["inv-pb", B, "bk-pb", "cust-b", "INV-B-001", 250, 0, 250, "unpaid", "cad"] });
+  await sql.query("INSERT INTO invoices (id, company_id, booking_id, customer_id, number, amount, tax, total, status, currency) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING", ["inv-pa", A, "bk-pa", "cust-a", "INV-A-001", 100, 0, 100, "paid", "cad"]);
+  await sql.query("INSERT INTO invoices (id, company_id, booking_id, customer_id, number, amount, tax, total, status, currency) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING", ["inv-pb", B, "bk-pb", "cust-b", "INV-B-001", 250, 0, 250, "unpaid", "cad"]);
 
-  await sql.execute({ sql: "INSERT OR IGNORE INTO payment_ledger (id, company_id, invoice_id, booking_id, kind, amount, currency, status, memo) VALUES (?,?,?,?,?,?,?,?,?)", args: ["led-pa", A, "inv-pa", "bk-pa", "charge", 100, "cad", "succeeded", "A paid"] });
-  await sql.execute({ sql: "INSERT OR IGNORE INTO payment_ledger (id, company_id, invoice_id, booking_id, kind, amount, currency, status, memo) VALUES (?,?,?,?,?,?,?,?,?)", args: ["led-pb", B, "inv-pb", "bk-pb", "charge", 250, "cad", "succeeded", "B paid"] });
+  await sql.query("INSERT INTO payment_ledger (id, company_id, invoice_id, booking_id, kind, amount, currency, status, memo) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING", ["led-pa", A, "inv-pa", "bk-pa", "charge", 100, "cad", "succeeded", "A paid"]);
+  await sql.query("INSERT INTO payment_ledger (id, company_id, invoice_id, booking_id, kind, amount, currency, status, memo) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING", ["led-pb", B, "inv-pb", "bk-pb", "charge", 250, "cad", "succeeded", "B paid"]);
 });
 
 /** Tiny helper: call the mounted app as a given tenant/user. */

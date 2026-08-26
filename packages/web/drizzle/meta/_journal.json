@@ -1,103 +1,12 @@
 {
   "version": "7",
-  "dialect": "sqlite",
+  "dialect": "postgresql",
   "entries": [
     {
       "idx": 0,
-      "version": "6",
-      "when": 1783090028951,
-      "tag": "0000_baseline_0000",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "6",
-      "when": 1785188118602,
-      "tag": "0001_icp_expansion_terminology",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "6",
-      "when": 1785188908222,
-      "tag": "0002_icp_knowledge_base",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "6",
-      "when": 1785270373285,
-      "tag": "0003_closed_genesis",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "6",
-      "when": 1786053468363,
-      "tag": "0004_noisy_richard_fisk",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "6",
-      "when": 1786055095950,
-      "tag": "0005_lush_lord_hawal",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "6",
-      "when": 1786067924321,
-      "tag": "0006_salty_terror",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "6",
-      "when": 1786399236339,
-      "tag": "0007_memberships",
-      "breakpoints": true
-    },
-    {
-      "idx": 8,
-      "version": "6",
-      "when": 1786400885524,
-      "tag": "0008_customer_profile_fields",
-      "breakpoints": true
-    },
-    {
-      "idx": 9,
-      "version": "6",
-      "when": 1786631348826,
-      "tag": "0009_panoramic_lord_tyger",
-      "breakpoints": true
-    },
-    {
-      "idx": 10,
-      "version": "6",
-      "when": 1786714869860,
-      "tag": "0010_spotty_warlock",
-      "breakpoints": true
-    },
-    {
-      "idx": 11,
-      "version": "6",
-      "when": 1786830268671,
-      "tag": "0011_wild_zarek",
-      "breakpoints": true
-    },
-    {
-      "idx": 12,
-      "version": "6",
-      "when": 1787058680984,
-      "tag": "0012_fast_gargoyle",
-      "breakpoints": true
-    },
-    {
-      "idx": 13,
-      "version": "6",
-      "when": 1787062601428,
-      "tag": "0013_cooing_spacker_dave",
+      "version": "7",
+      "when": 1787707561700,
+      "tag": "0000_pg_baseline",
       "breakpoints": true
     }
   ]

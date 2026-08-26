@@ -44,13 +44,11 @@
  */
 import { describe, it, expect, beforeAll, beforeEach } from "bun:test";
 import { Hono } from "hono";
-import { getTableConfig, type SQLiteColumn } from "drizzle-orm/sqlite-core";
+import { ensureSchema } from "../../database/__tests__/setup";
 
-process.env.DATABASE_URL = ":memory:";
-process.env.DATABASE_AUTH_TOKEN = "";
+await ensureSchema();
 
 const { db } = await import("../../database/index");
-const schema = await import("../../database/schema");
 const { bookingsRoutes } = await import("../bookings");
 const { payoutsRoutes } = await import("../payouts");
 const { reportsRoutes } = await import("../reports");
@@ -84,27 +82,6 @@ app.onError((err, c) => {
   return c.json({ error: { code: "internal", message: String((err as Error).message) } }, 500);
 });
 
-function ddlFor(table: any): string {
-  const cfg = getTableConfig(table);
-  const cols = cfg.columns.map((col: SQLiteColumn) => {
-    const parts = [`"${col.name}"`, col.getSQLType()];
-    if (col.primary) parts.push("PRIMARY KEY");
-    const dflt = (col as any).default;
-    let lit: string | null = null;
-    if (dflt !== undefined) {
-      lit =
-        typeof dflt === "string" ? `'${dflt.replace(/'/g, "''")}'`
-        : typeof dflt === "boolean" ? (dflt ? "1" : "0")
-        : typeof dflt === "number" ? String(dflt)
-        : null;
-    }
-    if (col.notNull && (lit !== null || col.primary)) parts.push("NOT NULL");
-    if (lit !== null) parts.push(`DEFAULT ${lit}`);
-    return parts.join(" ");
-  });
-  return `CREATE TABLE IF NOT EXISTS "${cfg.name}" (${cols.join(", ")})`;
-}
-
 const sqlClient = () => (db as any).$client;
 
 async function seedJob(opts: {
@@ -124,37 +101,38 @@ async function seedJob(opts: {
   const s = sqlClient();
   const subtotal = opts.subtotal ?? 250;
   const tax = opts.taxAmount ?? 0;
-  await s.execute({ sql: "DELETE FROM bookings WHERE id = ?", args: [opts.id] });
-  await s.execute({
-    sql: `INSERT INTO bookings
+  await s.query("DELETE FROM bookings WHERE id = $1", [opts.id]);
+  const toDate = (v: number | null) => (v === null || v === undefined ? null : new Date(v));
+  await s.query(
+    `INSERT INTO bookings
             (id, company_id, customer_id, service_id, title, status, assign_status, scheduled_at,
              address, lat, lng, rider_id, price, subtotal, tax_amount, total, payment_status,
              public_token, enroute_at, started_at, accepted_at, clock_state, last_resume_at,
              inside_geofence, accumulated_ms, on_site_minutes, mileage_km, line_items)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    args: [
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)`,
+    [
       opts.id, CO, CUST, SVC, "Rooftop unit service", opts.status,
       opts.assignStatus ?? "accepted",
-      opts.scheduledAt ?? Date.now() + 3_600_000,
+      toDate(opts.scheduledAt ?? Date.now() + 3_600_000),
       "1 Test Plaza", 43.6532, -79.3832,
       opts.riderId === undefined ? RIDER : opts.riderId,
       subtotal + tax, subtotal, tax, subtotal + tax,
       opts.paymentStatus ?? "unpaid",
       `dap-tok-${opts.id}`,
-      opts.status === "enroute" || opts.status === "arrived" ? Date.now() - 1_800_000 : null,
-      opts.status === "arrived" ? Date.now() - 600_000 : null,
-      opts.assignStatus === "accepted" || opts.assignStatus === undefined ? Date.now() - 3_600_000 : null,
+      toDate(opts.status === "enroute" || opts.status === "arrived" ? Date.now() - 1_800_000 : null),
+      toDate(opts.status === "arrived" ? Date.now() - 600_000 : null),
+      toDate(opts.assignStatus === "accepted" || opts.assignStatus === undefined ? Date.now() - 3_600_000 : null),
       opts.clockState ?? "idle",
-      opts.clockState === "running" ? Date.now() - 60_000 : null,
-      opts.insideGeofence ? 1 : 0,
+      toDate(opts.clockState === "running" ? Date.now() - 60_000 : null),
+      opts.insideGeofence ? true : false,
       0, opts.onSiteMinutes ?? 0, 0,
       JSON.stringify(opts.lineItems ?? []),
     ],
-  });
+  );
 }
 
 async function row(id: string) {
-  const r = await sqlClient().execute({ sql: "SELECT * FROM bookings WHERE id = ?", args: [id] });
+  const r = await sqlClient().query("SELECT * FROM bookings WHERE id = $1", [id]);
   return r.rows[0] as any;
 }
 
@@ -177,47 +155,36 @@ const reschedule = (id: string, scheduledAt: number) =>
   req(`/bookings/${id}/schedule`, { method: "POST", json: { scheduledAt } });
 
 async function events(bookingId: string, kind: string) {
-  const r = await sqlClient().execute({
-    sql: "SELECT * FROM job_events WHERE booking_id = ? AND kind = ?",
-    args: [bookingId, kind],
-  });
+  const r = await sqlClient().query(
+    "SELECT * FROM job_events WHERE booking_id = $1 AND kind = $2",
+    [bookingId, kind],
+  );
   return r.rows as any[];
 }
 
 beforeAll(async () => {
   const s = sqlClient();
-  for (const t of [
-    schema.companySettings, schema.bookings, schema.services, schema.riders,
-    schema.user, schema.invoices, schema.serviceZones, schema.properties, schema.jobEvents,
-    schema.notificationRules, schema.notifications, schema.notificationDeliveries,
-    schema.webhookEndpoints, schema.automationRules, schema.reviews,
-    schema.notificationChannels, schema.trackingPings, schema.memberships,
-    schema.scheduledTasks, schema.payouts, schema.auditLog, schema.catalogItems,
-    schema.techShifts,
-  ]) {
-    await s.execute(ddlFor(t));
-  }
   for (const [id, name, role] of [
     [TECH_USER, "Field Tech", "rider"],
     [TECH2_USER, "Second Tech", "rider"],
     [ADMIN_USER, "Office", "admin"],
     [CUST, "Customer", "customer"],
   ] as const) {
-    await s.execute({
-      sql: "INSERT OR IGNORE INTO user (id, company_id, name, email, role, email_verified) VALUES (?,?,?,?,?,0)",
-      args: [id, CO, name, `${id}@t.test`, role],
-    });
+    await s.query(
+      'INSERT INTO "user" (id, company_id, name, email, role, email_verified) VALUES ($1,$2,$3,$4,$5,false) ON CONFLICT DO NOTHING',
+      [id, CO, name, `${id}@t.test`, role],
+    );
   }
   for (const [rid, uid] of [[RIDER, TECH_USER], [RIDER2, TECH2_USER]] as const) {
-    await s.execute({
-      sql: "INSERT OR IGNORE INTO riders (id, company_id, user_id, status) VALUES (?,?,?,?)",
-      args: [rid, CO, uid, "available"],
-    });
+    await s.query(
+      "INSERT INTO riders (id, company_id, user_id, status) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+      [rid, CO, uid, "available"],
+    );
   }
-  await s.execute({
-    sql: "INSERT OR IGNORE INTO services (id, company_id, name, category, base_price) VALUES (?,?,?,?,?)",
-    args: [SVC, CO, "Rooftop unit service", "hvac", 250],
-  });
+  await s.query(
+    "INSERT INTO services (id, company_id, name, category, base_price) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
+    [SVC, CO, "Rooftop unit service", "hvac", 250],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -290,7 +257,7 @@ describe("POST /bookings/:id/assign — dispatch guard", () => {
     expect(res.status).toBe(409);
     const after = await row("dap-same");
     expect(after.assign_status).toBe("accepted");
-    expect(after.accepted_at).toBe(before.accepted_at);
+    expect(after.accepted_at).toEqual(before.accepted_at);
   });
 
   it("is office-only — a technician cannot dispatch work to themselves", async () => {
@@ -335,9 +302,15 @@ describe("POST /bookings/:id/schedule — moving an appointment", () => {
 // 3. Payouts — the money
 // ---------------------------------------------------------------------------
 
+// pg returns NUMERIC columns as strings (unlike libsql, which returned plain
+// numbers) — coerce the money columns back to numbers for these raw-SQL reads.
+const NUMERIC_PAYOUT_COLS = ["gross", "fee", "net", "hourly_pay", "unit_pay"] as const;
 async function payoutRows() {
-  const r = await sqlClient().execute("SELECT * FROM payouts ORDER BY created_at");
-  return r.rows as any[];
+  const r = await sqlClient().query("SELECT * FROM payouts ORDER BY created_at");
+  return (r.rows as any[]).map((row) => {
+    for (const col of NUMERIC_PAYOUT_COLS) row[col] = Number(row[col]);
+    return row;
+  });
 }
 
 const unitLine = (cost: number, name = "Install") => ({
@@ -346,14 +319,14 @@ const unitLine = (cost: number, name = "Install") => ({
 });
 
 async function setRate(riderId: string, rate: number) {
-  await sqlClient().execute({ sql: "UPDATE riders SET pay_rate_per_hour = ? WHERE id = ?", args: [rate, riderId] });
+  await sqlClient().query("UPDATE riders SET pay_rate_per_hour = $1 WHERE id = $2", [rate, riderId]);
 }
 
 // Each pay-model case starts from a clean slate: no payouts, and none of the
 // other cases' probe jobs sitting unpaid in the window.
 async function resetPayouts() {
-  await sqlClient().execute("DELETE FROM payouts");
-  await sqlClient().execute("DELETE FROM bookings WHERE id LIKE 'dap-pay%'");
+  await sqlClient().query("DELETE FROM payouts");
+  await sqlClient().query("DELETE FROM bookings WHERE id LIKE 'dap-pay%'");
 }
 
 describe("POST /payouts/generate — real tech pay", () => {
@@ -476,7 +449,7 @@ describe("POST /payouts/:id/pay — marking a payout paid", () => {
     const paidAt = (await payoutRows()).find((x) => x.id === p.id)!.paid_at;
     const second = await req(`/payouts/${p.id}/pay`, { method: "POST" });
     expect(second.status).toBe(409);
-    expect((await payoutRows()).find((x) => x.id === p.id)!.paid_at).toBe(paidAt);
+    expect((await payoutRows()).find((x) => x.id === p.id)!.paid_at).toEqual(paidAt);
   });
 
   it("refuses to delete a payout that has already been paid", async () => {
@@ -489,10 +462,10 @@ describe("POST /payouts/:id/pay — marking a payout paid", () => {
   it("releases the jobs back to the next payout run when a pending payout is deleted", async () => {
     const pending = (await payoutRows()).find((x) => x.status === "pending")!;
     expect((await req(`/payouts/${pending.id}`, { method: "DELETE" })).status).toBe(200);
-    const r = await sqlClient().execute({
-      sql: "SELECT payout_id FROM bookings WHERE id = ?",
-      args: ["dap-pay-late"],
-    });
+    const r = await sqlClient().query(
+      "SELECT payout_id FROM bookings WHERE id = $1",
+      ["dap-pay-late"],
+    );
     expect((r.rows[0] as any).payout_id).toBeFalsy();
   });
 });
@@ -542,20 +515,20 @@ const SLOT = Date.UTC(2026, 8, 15, 18, 0, 0); // 2026-09-15 18:00Z
  */
 async function clearAvailabilityFixtures() {
   const s = sqlClient();
-  await s.execute(
+  await s.query(
     "DELETE FROM bookings WHERE id LIKE 'dap-av%' OR id LIKE 'dap-off%' OR id LIKE 'dap-mv%' OR id LIKE 'dap-cr%' OR id LIKE 'dap-pt%'",
   );
-  await s.execute("DELETE FROM tech_shifts");
+  await s.query("DELETE FROM tech_shifts");
 }
 
 async function seedTimeOff(id: string, riderId: string, dayMs: number, kind = "timeoff") {
   const s = sqlClient();
-  await s.execute({ sql: "DELETE FROM tech_shifts WHERE id = ?", args: [id] });
-  await s.execute({
-    sql: `INSERT INTO tech_shifts (id, company_id, rider_id, kind, date, start_min, end_min, note)
-          VALUES (?,?,?,?,?,?,?,?)`,
-    args: [id, CO, riderId, kind, dayMs, 540, 1020, "Vacation"],
-  });
+  await s.query("DELETE FROM tech_shifts WHERE id = $1", [id]);
+  await s.query(
+    `INSERT INTO tech_shifts (id, company_id, rider_id, kind, date, start_min, end_min, note)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [id, CO, riderId, kind, new Date(dayMs), 540, 1020, "Vacation"],
+  );
 }
 
 describe("dispatch respects the technician's other work", () => {
@@ -589,7 +562,7 @@ describe("dispatch respects the technician's other work", () => {
 
   it("does not count an archived job as a clash", async () => {
     await seedJob({ id: "dap-av-arch", status: "assigned", riderId: RIDER, scheduledAt: SLOT });
-    await sqlClient().execute({ sql: "UPDATE bookings SET deleted_at = ? WHERE id = ?", args: [Date.now(), "dap-av-arch"] });
+    await sqlClient().query("UPDATE bookings SET deleted_at = $1 WHERE id = $2", [new Date(), "dap-av-arch"]);
     await seedJob({ id: "dap-av-new4", status: "confirmed", assignStatus: "", riderId: null, scheduledAt: SLOT });
     expect((await assign("dap-av-new4", RIDER)).status).toBe(200);
   });
@@ -618,14 +591,14 @@ describe("dispatch respects booked time off", () => {
     const body = await res.json();
     expect(body.forceable).toBe(true);
     expect(body.message).toContain("time off");
-    await sqlClient().execute({ sql: "DELETE FROM tech_shifts WHERE id = ?", args: ["dap-off-1"] });
+    await sqlClient().query("DELETE FROM tech_shifts WHERE id = $1", ["dap-off-1"]);
   });
 
   it("ignores a regular shift row", async () => {
     await seedTimeOff("dap-off-2", RIDER, Date.UTC(2026, 8, 15, 5, 0, 0), "shift");
     await seedJob({ id: "dap-off-job2", status: "confirmed", assignStatus: "", riderId: null, scheduledAt: SLOT });
     expect((await assign("dap-off-job2", RIDER)).status).toBe(200);
-    await sqlClient().execute({ sql: "DELETE FROM tech_shifts WHERE id = ?", args: ["dap-off-2"] });
+    await sqlClient().query("DELETE FROM tech_shifts WHERE id = $1", ["dap-off-2"]);
   });
 });
 

@@ -25,8 +25,7 @@ import { describe, it, expect } from "bun:test";
 
 // These modules construct the DB client at import time; keep it ephemeral so a
 // pure copy test never reaches for real credentials.
-process.env.DATABASE_URL = ":memory:";
-process.env.DATABASE_AUTH_TOKEN = "";
+process.env.DATABASE_URL = "postgresql://placeholder:placeholder@localhost:5432/placeholder"; // never queried by this pure-logic test
 
 const { emailTemplates, money, emailLink } = await import("../email");
 

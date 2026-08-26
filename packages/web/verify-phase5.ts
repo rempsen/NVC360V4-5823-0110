@@ -8,7 +8,7 @@
  * Run from packages/web:
  *   bun --env-file=../../.env verify-phase5.ts
  */
-import { createClient } from "@libsql/client";
+import { Pool } from "pg";
 import {
   scoreCandidates,
   heuristicReasoning,
@@ -27,10 +27,7 @@ const COMPANY = "default";
 const CUSTOMER = "6G8OQVJnUNnG388iGQs6Lw5sO5Q8nEQT";
 const SERVICE = "52f2fc46-310a-45a5-9c0b-91c2941437cf";
 
-const db = createClient({
-  url: process.env.DATABASE_URL!,
-  authToken: process.env.DATABASE_AUTH_TOKEN,
-});
+const db = new Pool({ connectionString: process.env.DATABASE_URL! });
 
 let pass = 0;
 let fail = 0;
@@ -62,12 +59,12 @@ async function makeBooking(opts: {
 }) {
   const id = rid();
   const token = tok();
-  await db.execute({
-    sql: `insert into bookings
+  await db.query(
+    `insert into bookings
       (id, customer_id, service_id, rider_id, status, address, title, public_token,
        company_id, created_at, scheduled_at, started_at, lat, lng, priority)
-      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'normal')`,
-    args: [
+      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'normal')`,
+    [
       id,
       CUSTOMER,
       SERVICE,
@@ -83,16 +80,16 @@ async function makeBooking(opts: {
       opts.lat ?? 43.6532,
       opts.lng ?? -79.3832,
     ],
-  });
+  );
   return { id, token };
 }
 
 async function cleanup(ids: string[]) {
   for (const b of ids) {
-    await db.execute({ sql: "delete from messages where booking_id = ?", args: [b] });
-    await db.execute({ sql: "delete from notifications where booking_id = ?", args: [b] });
-    await db.execute({ sql: "delete from job_events where booking_id = ?", args: [b] });
-    await db.execute({ sql: "delete from bookings where id = ?", args: [b] });
+    await db.query("delete from messages where booking_id = $1", [b]);
+    await db.query("delete from notifications where booking_id = $1", [b]);
+    await db.query("delete from job_events where booking_id = $1", [b]);
+    await db.query("delete from bookings where id = $1", [b]);
   }
 }
 
@@ -246,10 +243,10 @@ try {
   check("typicalDurationMins returns a number or null (never throws)", typ === null || (typeof typ === "number" && typ > 0), typ);
   check("typicalDurationMins with no serviceId → null", (await typicalDurationMins(COMPANY, null)) === null);
 
-  const someTech = await db.execute({
-    sql: "select id from riders where company_id = ? limit 1",
-    args: [COMPANY],
-  });
+  const someTech = await db.query(
+    "select id from riders where company_id = $1 limit 1",
+    [COMPANY],
+  );
   const techId = (someTech.rows[0]?.id as string) ?? null;
   check("tenant has at least one technician to test workload with", !!techId);
 

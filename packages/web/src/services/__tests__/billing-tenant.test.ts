@@ -16,14 +16,9 @@
  */
 import { describe, it, expect, beforeAll } from "bun:test";
 import { eq } from "drizzle-orm";
-import { getTableConfig, type SQLiteColumn } from "drizzle-orm/sqlite-core";
+import { ensureSchema } from "../../api/database/__tests__/setup";
 
-// NOTE: Bun runs all test files in one process and libsql's ":memory:" store is
-// shared across them. DDL here is CREATE TABLE IF NOT EXISTS and seeds are
-// INSERT OR IGNORE with disjoint ids/companies from the sibling tenant.test.ts,
-// so the two files coexist in the shared store without collision.
-process.env.DATABASE_URL = ":memory:";
-process.env.DATABASE_AUTH_TOKEN = "";
+await ensureSchema();
 
 const { db } = await import("../../api/database/index");
 const schema = await import("../../api/database/schema");
@@ -32,53 +27,30 @@ const { resolveRegion, recomputeBooking, accrueTechPay } = await import("../bill
 const A = "billtest-company-a";
 const B = "billtest-company-b";
 
-function ddlFor(table: any): string {
-  const cfg = getTableConfig(table);
-  const cols = cfg.columns.map((col: SQLiteColumn) => {
-    const parts = [`"${col.name}"`, col.getSQLType()];
-    if (col.primary) parts.push("PRIMARY KEY");
-    const dflt = (col as any).default;
-    let lit: string | null = null;
-    if (dflt !== undefined) {
-      lit =
-        typeof dflt === "string" ? `'${dflt.replace(/'/g, "''")}'`
-        : typeof dflt === "boolean" ? (dflt ? "1" : "0")
-        : typeof dflt === "number" ? String(dflt)
-        : null;
-    }
-    if (col.notNull && (lit !== null || col.primary)) parts.push("NOT NULL");
-    if (lit !== null) parts.push(`DEFAULT ${lit}`);
-    return parts.join(" ");
-  });
-  // IF NOT EXISTS: the in-memory libsql client is a process-wide singleton, so a
-  // sibling test file may have already created a shared table (e.g. services).
-  return `CREATE TABLE IF NOT EXISTS "${cfg.name}" (${cols.join(", ")})`;
-}
-
 beforeAll(async () => {
   const sql = (db as any).$client;
-  await sql.execute(ddlFor(schema.companySettings));
-  await sql.execute(ddlFor(schema.bookings));
-  await sql.execute(ddlFor(schema.services));
-  await sql.execute(ddlFor(schema.taskTemplates));
-  await sql.execute(ddlFor(schema.riders));
+
+  // FK targets: bookings.customer_id and riders.user_id both reference user.id.
+  await sql.query("INSERT INTO \"user\" (id, name, email, email_verified, role, company_id) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING", ["cust-a", "Customer A", "cust-a@t.test", true, "customer", A]);
+  await sql.query("INSERT INTO \"user\" (id, name, email, email_verified, role, company_id) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING", ["cust-b", "Customer B", "cust-b@t.test", true, "customer", B]);
+  await sql.query("INSERT INTO \"user\" (id, name, email, email_verified, role, company_id) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING", ["u-b", "Rider B", "u-b@t.test", true, "rider", B]);
 
   // Company A: legacy "default" singleton — region MB. Company B: its OWN row → ON (Ontario).
-  await sql.execute({ sql: "INSERT OR IGNORE INTO company_settings (id, company_id, default_region) VALUES (?,?,?)", args: ["default", A, "MB"] });
-  await sql.execute({ sql: "INSERT OR IGNORE INTO company_settings (id, company_id, default_region) VALUES (?,?,?)", args: ["b-settings", B, "ON"] });
+  await sql.query("INSERT INTO company_settings (id, company_id, default_region) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", ["default", A, "MB"]);
+  await sql.query("INSERT INTO company_settings (id, company_id, default_region) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", ["b-settings", B, "ON"]);
 
   // A service per company (flat $100, no rate model).
-  await sql.execute({ sql: "INSERT OR IGNORE INTO services (id, company_id, name, category, base_price) VALUES (?,?,?,?,?)", args: ["svc-a", A, "A service", "hvac", 100] });
-  await sql.execute({ sql: "INSERT OR IGNORE INTO services (id, company_id, name, category, base_price) VALUES (?,?,?,?,?)", args: ["svc-b", B, "B service", "hvac", 100] });
+  await sql.query("INSERT INTO services (id, company_id, name, category, base_price) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING", ["svc-a", A, "A service", "hvac", 100]);
+  await sql.query("INSERT INTO services (id, company_id, name, category, base_price) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING", ["svc-b", B, "B service", "hvac", 100]);
 
   // A booking per company. No region on the booking, no parseable address region,
   // so resolveRegion() MUST fall through to the company default.
-  await sql.execute({ sql: "INSERT OR IGNORE INTO bookings (id, company_id, customer_id, service_id, title, status, address, price, on_site_minutes) VALUES (?,?,?,?,?,?,?,?,?)", args: ["bk-a", A, "cust-a", "svc-a", "A job", "completed", "", 100, 60] });
-  await sql.execute({ sql: "INSERT OR IGNORE INTO bookings (id, company_id, customer_id, service_id, title, status, address, price, on_site_minutes) VALUES (?,?,?,?,?,?,?,?,?)", args: ["bk-b", B, "cust-b", "svc-b", "B job", "completed", "", 100, 60] });
+  await sql.query("INSERT INTO bookings (id, company_id, customer_id, service_id, title, status, address, price, on_site_minutes, scheduled_at, public_token) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING", ["bk-a", A, "cust-a", "svc-a", "A job", "completed", "", 100, 60, new Date(), "billtest-tok-a"]);
+  await sql.query("INSERT INTO bookings (id, company_id, customer_id, service_id, title, status, address, price, on_site_minutes, scheduled_at, public_token) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING", ["bk-b", B, "cust-b", "svc-b", "B job", "completed", "", 100, 60, new Date(), "billtest-tok-b"]);
 
   // Rider for company B (to exercise accrueTechPay scoping).
-  await sql.execute({ sql: "INSERT OR IGNORE INTO riders (id, company_id, user_id, status, pay_rate_per_hour) VALUES (?,?,?,?,?)", args: ["rider-b", B, "u-b", "available", 40] });
-  await sql.execute({ sql: "UPDATE bookings SET rider_id = ? WHERE id = ?", args: ["rider-b", "bk-b"] });
+  await sql.query("INSERT INTO riders (id, company_id, user_id, status, pay_rate_per_hour) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING", ["rider-b", B, "u-b", "available", 40]);
+  await sql.query("UPDATE bookings SET rider_id = $1 WHERE id = $2", ["rider-b", "bk-b"]);
 });
 
 describe("billing service tenant isolation", () => {

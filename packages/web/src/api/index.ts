@@ -56,7 +56,6 @@ import { superadminRoutes } from "./routes/superadmin";
 import { formsRoutes } from "./routes/forms";
 import { publicFormsRoutes } from "./routes/public-forms";
 
-
 // CORS allowlist: comma-separated origins in CORS_ORIGINS. "*" allows all
 // (dev only). Credentials are only echoed for explicitly-allowed origins.
 const CORS_ORIGINS = (process.env.CORS_ORIGINS ?? "*")
@@ -221,7 +220,7 @@ const app = new Hono<{ Variables: Variables }>()
     try {
       const { db } = await import("./database");
       const { sql } = await import("drizzle-orm");
-      await db.run(sql`select 1`);
+      await db.execute(sql`select 1`);
       checks.database = "ok";
     } catch (e) {
       ok = false;

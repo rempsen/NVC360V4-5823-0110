@@ -17,8 +17,7 @@
  */
 import { describe, it, expect } from "bun:test";
 
-process.env.DATABASE_URL = ":memory:";
-process.env.DATABASE_AUTH_TOKEN = "";
+process.env.DATABASE_URL = "postgresql://placeholder:placeholder@localhost:5432/placeholder"; // never queried by this pure-logic test
 
 const { pickSender } = await import("../sender");
 

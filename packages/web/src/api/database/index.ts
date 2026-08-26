@@ -1,34 +1,32 @@
-import { drizzle } from "drizzle-orm/libsql";
-import { createClient, type Client, type InValue } from "@libsql/client";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { Pool } from "pg";
 import * as schema from "./schema";
 
 /**
- * Turso (libsql) over HTTP can drop its keep-alive socket, surfacing as
- * `ECONNRESET` / "socket connection was closed unexpectedly". A bare client has
- * no retry, so a single dropped socket turns into a 500 on every downstream
- * read (e.g. /api/auth/get-session), which intermittently strips the
- * superadmin role off the session and hides superadmin-only UI.
+ * RDS Postgres over a pooled connection can still drop a socket mid-request
+ * (a failover, a maintenance blip, a cold start racing the pool's first
+ * connect). A bare pool has no retry, so a single dropped connection turns
+ * into a 500 on every downstream read (e.g. /api/auth/get-session), which
+ * intermittently strips the superadmin role off the session and hides
+ * superadmin-only UI.
  *
  * This is especially visible right after a cold start (server restart / host
- * resume): the very first statements race the socket coming up.
+ * resume): the very first statements race the pool's first connection coming up.
  *
- * We wrap the client so transient connection errors are retried with an
+ * We wrap the pool so transient connection errors are retried with an
  * exponential backoff + jitter. Retries are safe here: the failures we catch
  * happen at the transport layer before the statement is applied.
  */
 const TRANSIENT = [
   "ECONNRESET",
-  "socket connection was closed",
-  "stream closed",
-  "fetch failed",
-  "Hrana",
-  "WebSocket",
   "ETIMEDOUT",
   "ECONNREFUSED",
   "EPIPE",
   "EAI_AGAIN", // transient DNS failure during cold start
-  "Client network socket disconnected",
-  "and 503", // libsql surfaces upstream 503s as "... and 503 ..."
+  "Connection terminated",
+  "connection terminated unexpectedly",
+  "57P03", // Postgres: cannot connect now (starting up / in recovery)
+  "and 503",
   "502",
   "503",
   "504",
@@ -82,54 +80,36 @@ async function withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
   throw lastErr;
 }
 
-const raw = createClient({
-  url: process.env.DATABASE_URL!,
-  authToken: process.env.DATABASE_AUTH_TOKEN,
-});
+const rawPool = new Pool({ connectionString: process.env.DATABASE_URL! });
 
 /**
- * Proxy the libsql client so `execute` / `batch` transparently retry transient
- * transport failures. Everything else passes through untouched.
+ * Proxy the pool so `query` transparently retries transient connection
+ * failures. Everything else (connect, end, event emitter methods drizzle
+ * doesn't use directly) passes through untouched.
  */
-const client = new Proxy(raw, {
+const pool = new Proxy(rawPool, {
   get(target, prop, receiver) {
-    if (prop === "execute") {
-      return (
-        stmt:
-          | string
-          | { sql: string; args?: InValue[] | Record<string, InValue> },
-        args?: InValue[] | Record<string, InValue>,
-      ) =>
-        withRetry(
-          () =>
-            (target.execute as (...a: unknown[]) => Promise<unknown>)(
-              stmt,
-              args,
-            ),
-          "execute",
-        );
-    }
-    if (prop === "batch") {
+    if (prop === "query") {
       return (...a: unknown[]) =>
         withRetry(
-          () => (target.batch as (...x: unknown[]) => Promise<unknown>)(...a),
-          "batch",
+          () => (target.query as (...x: unknown[]) => Promise<unknown>)(...a),
+          "query",
         );
     }
     return Reflect.get(target, prop, receiver);
   },
-}) as Client;
+}) as Pool;
 
-export const db = drizzle(client, { schema });
+export const db = drizzle(pool, { schema });
 
 /**
  * Warm-up / liveness ping. Called on server boot so the very first real user
- * request never races a cold socket. Also reusable by the /ready probe.
+ * request never races a cold connection. Also reusable by the /ready probe.
  * Returns true if the DB answered, false otherwise (never throws).
  */
 export async function pingDb(): Promise<boolean> {
   try {
-    await client.execute("select 1");
+    await pool.query("select 1");
     return true;
   } catch (err) {
     console.warn("[db] warm-up ping failed:", (err as Error)?.message ?? err);

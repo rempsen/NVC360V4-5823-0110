@@ -24,7 +24,6 @@
   },
   "dependencies": {
     "@better-auth/expo": "1.4.22",
-    "@libsql/client": "^0.17.2",
     "@radix-ui/react-slot": "^1.2.4",
     "@runablehq/website-runtime": "^0.10.0",
     "@sentry/node": "^10.69.0",
@@ -44,6 +43,7 @@
     "lucide-react": "^0.577.0",
     "motion": "^12.40.0",
     "pdf-lib": "^1.17.1",
+    "pg": "^8.16.3",
     "posthog-node": "^5.35.13",
     "react": "19.1.0",
     "react-dom": "19.1.0",
@@ -61,6 +61,7 @@
     "@tailwindcss/vite": "^4.2.1",
     "@types/jsdom": "^28.0.1",
     "@types/node": "^25.3.5",
+    "@types/pg": "^8.15.6",
     "@types/react": "19.1.17",
     "@types/react-dom": "19.1.11",
     "@vitejs/plugin-react": "5.1.4",

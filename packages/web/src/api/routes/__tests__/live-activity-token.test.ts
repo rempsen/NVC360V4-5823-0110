@@ -16,15 +16,14 @@
  */
 import { describe, it, expect, beforeAll, beforeEach } from "bun:test";
 import { Hono } from "hono";
-import { getTableConfig, type SQLiteColumn } from "drizzle-orm/sqlite-core";
+import { ensureSchema } from "../../database/__tests__/setup";
 
-process.env.DATABASE_URL = ":memory:";
-process.env.DATABASE_AUTH_TOKEN = "";
 process.env.RESEND_API_KEY = "";
 process.env.TWILIO_AUTH_TOKEN = "";
 
+await ensureSchema();
+
 const { db } = await import("../../database/index");
-const schema = await import("../../database/schema");
 const { trackingRoutes } = await import("../tracking");
 const { readLiveActivityTokens } = await import("../../../services/apns");
 
@@ -40,44 +39,35 @@ const app = new Hono().use("*", async (c, next) => {
 });
 app.route("/track", trackingRoutes);
 
-function ddlFor(table: any): string {
-  const cfg = getTableConfig(table);
-  const cols = cfg.columns.map((col: SQLiteColumn) => {
-    const parts = [`"${col.name}"`, col.getSQLType()];
-    if (col.primary) parts.push("PRIMARY KEY");
-    const dflt = (col as any).default;
-    let lit: string | null = null;
-    if (dflt !== undefined) {
-      lit =
-        typeof dflt === "string" ? `'${dflt.replace(/'/g, "''")}'`
-        : typeof dflt === "boolean" ? (dflt ? "1" : "0")
-        : typeof dflt === "number" ? String(dflt)
-        : null;
-    }
-    if (col.notNull && (lit !== null || col.primary)) parts.push("NOT NULL");
-    if (lit !== null) parts.push(`DEFAULT ${lit}`);
-    return parts.join(" ");
-  });
-  return `CREATE TABLE IF NOT EXISTS "${cfg.name}" (${cols.join(", ")})`;
-}
-
 const sqlClient = () => (db as any).$client;
+
+beforeAll(async () => {
+  const s = sqlClient();
+  await s.query(
+    'INSERT INTO "user" (id, company_id, name, email, role, email_verified) VALUES ($1,$2,$3,$4,$5,false) ON CONFLICT DO NOTHING',
+    ["lat-cust", CO, "Live Activity Customer", "lat-cust@t.test", "customer"],
+  );
+  await s.query(
+    "INSERT INTO services (id, company_id, name, category, base_price) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
+    ["lat-svc", CO, "Live activity service", "hvac", 100],
+  );
+});
 
 async function seedBooking(fieldData: string) {
   const s = sqlClient();
-  await s.execute({ sql: "DELETE FROM bookings WHERE id = ?", args: [BOOKING] });
-  await s.execute({
-    sql: `INSERT INTO bookings (id, company_id, customer_id, service_id, address, status, field_data)
-          VALUES (?,?,?,?,?,?,?)`,
-    args: [BOOKING, CO, "lat-cust", "lat-svc", "1 Test St", "enroute", fieldData],
-  });
+  await s.query("DELETE FROM bookings WHERE id = $1", [BOOKING]);
+  await s.query(
+    `INSERT INTO bookings (id, company_id, customer_id, service_id, address, status, field_data, scheduled_at, public_token)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+    [BOOKING, CO, "lat-cust", "lat-svc", "1 Test St", "enroute", fieldData, new Date(), `${BOOKING}-tok`],
+  );
 }
 
 async function readFieldData(): Promise<string> {
-  const r = await sqlClient().execute({
-    sql: "SELECT field_data FROM bookings WHERE id = ?",
-    args: [BOOKING],
-  });
+  const r = await sqlClient().query(
+    "SELECT field_data FROM bookings WHERE id = $1",
+    [BOOKING],
+  );
   return String(r.rows[0].field_data);
 }
 
@@ -88,13 +78,6 @@ function register(type: "start" | "update", token: string) {
     body: JSON.stringify({ token, type }),
   });
 }
-
-beforeAll(async () => {
-  const s = sqlClient();
-  for (const t of [schema.bookings, schema.services, schema.riders, schema.user, schema.jobEvents]) {
-    await s.execute(ddlFor(t));
-  }
-});
 
 beforeEach(async () => {
   await seedBooking("{}");

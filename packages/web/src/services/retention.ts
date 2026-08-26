@@ -25,12 +25,15 @@ const PING_RETENTION_DAYS = Number(process.env.PING_RETENTION_DAYS ?? 7);
 /** Delete tracking pings older than the retention window (in batches),
  *  skipping any ping whose booking has status = 'completed'. */
 export async function purgeOldPings(): Promise<number> {
-  const cutoff = Date.now() - PING_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  // A raw sql`` template bypasses drizzle's column serialization, so this must
+  // be a real Date (matching tracking_pings.created_at's timestamptz type) —
+  // not a ms-epoch number.
+  const cutoff = new Date(Date.now() - PING_RETENTION_DAYS * 24 * 60 * 60 * 1000);
   try {
-    // batch-delete to avoid long write locks on Turso
+    // batch-delete to avoid long write locks
     let total = 0;
     for (let i = 0; i < 50; i++) {
-      const res = await db.run(
+      const res = await db.execute(
         sql`DELETE FROM tracking_pings WHERE id IN (
           SELECT tp.id FROM tracking_pings tp
           LEFT JOIN bookings b ON b.id = tp.booking_id
@@ -39,7 +42,7 @@ export async function purgeOldPings(): Promise<number> {
           LIMIT 5000
         )`,
       );
-      const n = Number((res as any)?.rowsAffected ?? 0);
+      const n = Number((res as any)?.rowCount ?? 0);
       total += n;
       if (n < 5000) break;
     }
@@ -53,9 +56,9 @@ export async function purgeOldPings(): Promise<number> {
 
 /** Expire idempotency keys older than 24h (replay protection window). */
 export async function purgeOldIdempotencyKeys(): Promise<void> {
-  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
   try {
-    await db.run(sql`DELETE FROM idempotency_keys WHERE created_at < ${cutoff}`);
+    await db.execute(sql`DELETE FROM idempotency_keys WHERE created_at < ${cutoff}`);
   } catch (e) {
     captureException(e, { job: "purgeOldIdempotencyKeys" });
   }

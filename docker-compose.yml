@@ -2,8 +2,8 @@
 #
 # Purpose:
 #   1. Prove the production image runs outside Runable (`docker compose up app`).
-#   2. Give every developer a local Postgres, so the Turso → Postgres migration
-#      (Phase D) can be developed and rehearsed without touching a hosted DB.
+#   2. Give every developer a local Postgres — the app's database — without
+#      touching a hosted instance.
 #   3. Give every developer a local Redis, so the realtime bus and rate limiter
 #      run in their multi-node code path locally instead of the in-memory
 #      fallback — that fallback is what hides multi-instance bugs today.
@@ -34,17 +34,21 @@ services:
     environment:
       NODE_ENV: production
       PORT: 4200
-      # Point the app at the containerised Redis rather than Redis Cloud so
-      # local runs exercise the multi-node path without touching shared infra.
+      # Point the app at the containerised Postgres/Redis rather than hosted
+      # equivalents so local runs exercise the real multi-node/DB path
+      # without touching shared infra.
+      DATABASE_URL: postgresql://nvc360:nvc360_local@postgres:5432/nvc360
       REDIS_URL: redis://redis:6379
     ports:
       - "4200:4200"
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
     restart: unless-stopped
 
-  # Postgres 16 — target of the Phase D migration. Nothing reads this yet.
+  # Postgres 16 — the app's database.
   postgres:
     image: postgres:16-alpine
     environment:

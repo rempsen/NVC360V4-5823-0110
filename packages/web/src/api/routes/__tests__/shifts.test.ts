@@ -15,13 +15,11 @@
  */
 import { describe, it, expect, beforeAll, beforeEach } from "bun:test";
 import { Hono } from "hono";
-import { getTableConfig, type SQLiteColumn } from "drizzle-orm/sqlite-core";
+import { ensureSchema } from "../../database/__tests__/setup";
 
-process.env.DATABASE_URL = ":memory:";
-process.env.DATABASE_AUTH_TOKEN = "";
+await ensureSchema();
 
 const { db } = await import("../../database/index");
-const schema = await import("../../database/schema");
 const { shiftsRoutes } = await import("../shifts");
 const { AppError } = await import("../../lib/errors");
 
@@ -44,27 +42,6 @@ app.onError((err, c) => {
   return c.json({ error: { code: "internal", message: String((err as Error).message) } }, 500);
 });
 
-function ddlFor(table: any): string {
-  const cfg = getTableConfig(table);
-  const cols = cfg.columns.map((col: SQLiteColumn) => {
-    const parts = [`"${col.name}"`, col.getSQLType()];
-    if (col.primary) parts.push("PRIMARY KEY");
-    const dflt = (col as any).default;
-    let lit: string | null = null;
-    if (dflt !== undefined) {
-      lit =
-        typeof dflt === "string" ? `'${dflt.replace(/'/g, "''")}'`
-        : typeof dflt === "boolean" ? (dflt ? "1" : "0")
-        : typeof dflt === "number" ? String(dflt)
-        : null;
-    }
-    if (col.notNull && (lit !== null || col.primary)) parts.push("NOT NULL");
-    if (lit !== null) parts.push(`DEFAULT ${lit}`);
-    return parts.join(" ");
-  });
-  return `CREATE TABLE IF NOT EXISTS "${cfg.name}" (${cols.join(", ")})`;
-}
-
 const sqlClient = () => (db as any).$client;
 
 function req(path: string, opts: { method?: string; json?: unknown; role?: string } = {}) {
@@ -78,35 +55,32 @@ function req(path: string, opts: { method?: string; json?: unknown; role?: strin
 const post = (json: unknown, role?: string) => req("/shifts", { method: "POST", json, role });
 
 async function rows() {
-  const r = await sqlClient().execute("SELECT * FROM tech_shifts");
+  const r = await sqlClient().query("SELECT * FROM tech_shifts");
   return r.rows as any[];
 }
 
 beforeAll(async () => {
   const s = sqlClient();
-  for (const t of [schema.techShifts, schema.riders, schema.user, schema.companySettings]) {
-    await s.execute(ddlFor(t));
-  }
-  await s.execute({
-    sql: "INSERT OR IGNORE INTO user (id, company_id, name, email, role, email_verified) VALUES (?,?,?,?,?,0)",
-    args: ["sh-user", CO, "Mike", "mike@t.test", "rider"],
-  });
-  await s.execute({
-    sql: "INSERT OR IGNORE INTO riders (id, company_id, user_id, status) VALUES (?,?,?,?)",
-    args: [RIDER, CO, "sh-user", "available"],
-  });
-  await s.execute({
-    sql: "INSERT OR IGNORE INTO riders (id, company_id, user_id, status) VALUES (?,?,?,?)",
-    args: [OTHER_RIDER, OTHER_CO, "sh-user", "available"],
-  });
-  await s.execute({
-    sql: "INSERT OR IGNORE INTO company_settings (company_id, timezone) VALUES (?,?)",
-    args: [CO, "America/Winnipeg"],
-  });
+  await s.query(
+    `INSERT INTO "user" (id, company_id, name, email, role, email_verified) VALUES ($1,$2,$3,$4,$5,false) ON CONFLICT DO NOTHING`,
+    ["sh-user", CO, "Mike", "mike@t.test", "rider"],
+  );
+  await s.query(
+    "INSERT INTO riders (id, company_id, user_id, status) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+    [RIDER, CO, "sh-user", "available"],
+  );
+  await s.query(
+    "INSERT INTO riders (id, company_id, user_id, status) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+    [OTHER_RIDER, OTHER_CO, "sh-user", "available"],
+  );
+  await s.query(
+    "INSERT INTO company_settings (company_id, timezone) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+    [CO, "America/Winnipeg"],
+  );
 });
 
 beforeEach(async () => {
-  await sqlClient().execute("DELETE FROM tech_shifts");
+  await sqlClient().query("DELETE FROM tech_shifts");
 });
 
 describe("POST /shifts — what it refuses to store", () => {

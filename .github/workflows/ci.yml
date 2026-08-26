@@ -16,6 +16,23 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Unit tests need a real Postgres to run against (no SQLite ":memory:"
+    # equivalent exists) — see packages/web/src/api/database/__tests__/setup.ts,
+    # which defaults to exactly this connection string.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: nvc360
+          POSTGRES_PASSWORD: nvc360_local
+          POSTGRES_DB: nvc360
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nvc360 -d nvc360"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -46,9 +63,8 @@ jobs:
       - name: Migration drift check (schema.ts must match committed drizzle/ migrations)
         working-directory: packages/web
         env:
-          # `generate` does not open a connection; placeholders satisfy the loader.
-          DATABASE_URL: "libsql://placeholder.invalid"
-          DATABASE_AUTH_TOKEN: "placeholder"
+          # `generate` does not open a connection; a placeholder satisfies the loader.
+          DATABASE_URL: "postgresql://placeholder:placeholder@localhost:5432/placeholder"
         run: |
           # Migration history is committed under packages/web/drizzle/ (baselined
           # 2026-07-03). If schema.ts drifts from the committed migrations without
@@ -99,8 +115,7 @@ jobs:
           # here. Deeper health checking belongs to the staging smoke test.
           docker run -d --name nvc360-smoke -p 4200:4200 \
             -e PORT=4200 \
-            -e DATABASE_URL="libsql://placeholder.invalid" \
-            -e DATABASE_AUTH_TOKEN="placeholder" \
+            -e DATABASE_URL="postgresql://placeholder:placeholder@localhost:5432/placeholder" \
             -e BETTER_AUTH_SECRET="ci-smoke-secret-not-a-real-key" \
             nvc360-web:ci
           for i in $(seq 1 30); do

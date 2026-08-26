@@ -30,10 +30,9 @@
  */
 import { describe, it, expect, beforeAll } from "bun:test";
 import { Hono } from "hono";
-import { getTableConfig, type SQLiteColumn } from "drizzle-orm/sqlite-core";
+import { ensureSchema } from "../../database/__tests__/setup";
 
-process.env.DATABASE_URL = ":memory:";
-process.env.DATABASE_AUTH_TOKEN = "";
+await ensureSchema();
 
 const { db } = await import("../../database/index");
 const schema = await import("../../database/schema");
@@ -55,51 +54,21 @@ app.onError((err, c) => {
   return c.json({ error: { code: "internal", message: String((err as Error).message) } }, 500);
 });
 
-function ddlFor(table: any): string {
-  const cfg = getTableConfig(table);
-  const cols = cfg.columns.map((col: SQLiteColumn) => {
-    const parts = [`"${col.name}"`, col.getSQLType()];
-    if (col.primary) parts.push("PRIMARY KEY");
-    const dflt = (col as any).default;
-    let lit: string | null = null;
-    if (dflt !== undefined) {
-      lit =
-        typeof dflt === "string" ? `'${dflt.replace(/'/g, "''")}'`
-        : typeof dflt === "boolean" ? (dflt ? "1" : "0")
-        : typeof dflt === "number" ? String(dflt)
-        : null;
-    }
-    if (col.notNull && (lit !== null || col.primary)) parts.push("NOT NULL");
-    if (lit !== null) parts.push(`DEFAULT ${lit}`);
-    return parts.join(" ");
-  });
-  return `CREATE TABLE IF NOT EXISTS "${cfg.name}" (${cols.join(", ")})`;
-}
-
 beforeAll(async () => {
   const sql = (db as any).$client;
-  for (const t of [
-    schema.companySettings, schema.bookings, schema.services, schema.invoices,
-    schema.serviceZones, schema.user, schema.memberships, schema.apiKeys,
-    schema.intakeForms, schema.intakeSubmissions, schema.jobEvents,
-    schema.notificationRules, schema.notificationChannels,
-    schema.notificationDeliveries, schema.notifications, schema.automationRules,
-  ]) {
-    await sql.execute(ddlFor(t));
-  }
 
-  await sql.execute({
-    sql: "INSERT OR IGNORE INTO api_keys (id, company_id, hashed_key, key_type, public_key) VALUES (?,?,?,?,?)",
-    args: ["intakebot-key", CO, await hashApiKey(PUB_KEY), "public", PUB_KEY],
-  });
-  await sql.execute({
-    sql: "INSERT OR IGNORE INTO services (id, company_id, name, category, base_price, active) VALUES (?,?,?,?,?,?)",
-    args: ["intakebot-svc", CO, "Intake service", "hvac", 100, 1],
-  });
-  await sql.execute({
-    sql: "INSERT OR IGNORE INTO intake_forms (id, company_id, slug, title, active, default_service_id, success_message) VALUES (?,?,?,?,?,?,?)",
-    args: ["intakebot-form", CO, SLUG, "Request Service", 1, "intakebot-svc", "Thanks! We'll be in touch."],
-  });
+  await sql.query(
+    "INSERT INTO api_keys (id, company_id, hashed_key, key_type, public_key) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
+    ["intakebot-key", CO, await hashApiKey(PUB_KEY), "public", PUB_KEY],
+  );
+  await sql.query(
+    "INSERT INTO services (id, company_id, name, category, base_price, active) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING",
+    ["intakebot-svc", CO, "Intake service", "hvac", 100, true],
+  );
+  await sql.query(
+    "INSERT INTO intake_forms (id, company_id, slug, title, active, default_service_id, success_message) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING",
+    ["intakebot-form", CO, SLUG, "Request Service", true, "intakebot-svc", "Thanks! We'll be in touch."],
+  );
 });
 
 function submit(body: Record<string, unknown>) {

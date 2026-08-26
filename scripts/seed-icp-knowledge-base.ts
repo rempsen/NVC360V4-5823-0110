@@ -13,12 +13,9 @@
 // (Claude Projects/NVC360-Hub/ICPs/<slug>/03-Workflows-and-Best-Practices.md
 // and 04-NVC360-App-Customization.md), approved by Dan 2026-07-27.
 
-import { createClient } from "@libsql/client";
+import { Pool } from "pg";
 
-const client = createClient({
-  url: process.env.DATABASE_URL!,
-  authToken: process.env.DATABASE_AUTH_TOKEN,
-});
+const client = new Pool({ connectionString: process.env.DATABASE_URL! });
 
 const now = Date.now();
 
@@ -194,20 +191,20 @@ const rows: Row[] = [
 async function main() {
   console.log(`Deleting stale rows: ${STALE_IDS.join(", ")}`);
   for (const id of STALE_IDS) {
-    await client.execute({
-      sql: "DELETE FROM icp_knowledge_base WHERE industry = ?",
-      args: [id],
-    });
+    await client.query(
+      "DELETE FROM icp_knowledge_base WHERE industry = $1",
+      [id],
+    );
   }
 
   for (const r of rows) {
     console.log(`Upserting icp_knowledge_base row: ${r.industry}`);
-    await client.execute({
-      sql: `INSERT INTO icp_knowledge_base
+    await client.query(
+      `INSERT INTO icp_knowledge_base
               (industry, summary, best_practices, workflow_notes, terminology_notes,
                tone_refinement, notification_refinement, compliance_notes, sources,
                researched_by, researched_at, updated_at, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             ON CONFLICT(industry) DO UPDATE SET
               summary = excluded.summary,
               best_practices = excluded.best_practices,
@@ -220,7 +217,7 @@ async function main() {
               researched_by = excluded.researched_by,
               researched_at = excluded.researched_at,
               updated_at = excluded.updated_at`,
-      args: [
+      [
         r.industry,
         r.summary,
         JSON.stringify(r.bestPractices),
@@ -235,10 +232,10 @@ async function main() {
         now,
         now,
       ],
-    });
+    );
   }
 
-  const { rows: check } = await client.execute("SELECT industry FROM icp_knowledge_base ORDER BY industry");
+  const { rows: check } = await client.query("SELECT industry FROM icp_knowledge_base ORDER BY industry");
   console.log("icp_knowledge_base now contains:", check.map((row) => row.industry));
 }
 

@@ -27,14 +27,11 @@
  */
 import { describe, it, expect, beforeAll } from "bun:test";
 import { Hono } from "hono";
-import { getTableConfig, type SQLiteColumn } from "drizzle-orm/sqlite-core";
+import { ensureSchema } from "../../database/__tests__/setup";
 
-// Must be set BEFORE importing the database module (it reads env at import).
-process.env.DATABASE_URL = ":memory:";
-process.env.DATABASE_AUTH_TOKEN = "";
+await ensureSchema();
 
 const { db } = await import("../../database/index");
-const schema = await import("../../database/schema");
 const { pricingRoutes } = await import("../pricing");
 const { recomputeBooking } = await import("../../../services/billing");
 const { AppError } = await import("../../lib/errors");
@@ -67,52 +64,31 @@ app.onError((err, c) => {
   return c.json({ error: { code: "internal", message: "error" } }, 500);
 });
 
-function ddlFor(table: any): string {
-  const cfg = getTableConfig(table);
-  const cols = cfg.columns.map((col: SQLiteColumn) => {
-    const parts = [`"${col.name}"`, col.getSQLType()];
-    if (col.primary) parts.push("PRIMARY KEY");
-    const dflt = (col as any).default;
-    let lit: string | null = null;
-    if (dflt !== undefined) {
-      lit =
-        typeof dflt === "string" ? `'${dflt.replace(/'/g, "''")}'`
-        : typeof dflt === "boolean" ? (dflt ? "1" : "0")
-        : typeof dflt === "number" ? String(dflt)
-        : null;
-    }
-    if (col.notNull && (lit !== null || col.primary)) parts.push("NOT NULL");
-    if (lit !== null) parts.push(`DEFAULT ${lit}`);
-    return parts.join(" ");
-  });
-  return `CREATE TABLE IF NOT EXISTS "${cfg.name}" (${cols.join(", ")})`;
-}
-
 beforeAll(async () => {
   const sql = (db as any).$client;
-  await sql.execute(ddlFor(schema.companySettings));
-  await sql.execute(ddlFor(schema.bookings));
-  await sql.execute(ddlFor(schema.services));
-  await sql.execute(ddlFor(schema.invoices));
 
   // Company default is deliberately NOT Ontario, so an Ontario-hardcoded quote
   // can't pass by accident.
-  await sql.execute({
-    sql: "INSERT OR IGNORE INTO company_settings (id, company_id, default_region) VALUES (?,?,?)",
-    args: ["taxquote-settings", C, "SK"],
-  });
-  await sql.execute({
-    sql: "INSERT OR IGNORE INTO services (id, company_id, name, category, base_price) VALUES (?,?,?,?,?)",
-    args: ["svc-tq", C, "Tax quote service", "hvac", PRICE],
-  });
+  await sql.query(
+    "INSERT INTO company_settings (id, company_id, default_region) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+    ["taxquote-settings", C, "SK"],
+  );
+  await sql.query(
+    "INSERT INTO services (id, company_id, name, category, base_price) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
+    ["svc-tq", C, "Tax quote service", "hvac", PRICE],
+  );
+  await sql.query(
+    `INSERT INTO "user" (id, name, email, role, company_id) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
+    ["cust-tq", "Tax Quote Customer", "cust-tq@t.test", "customer", C],
+  );
 
   // One booking per case, at the same price the customer was quoted, with no
   // explicit region — exactly what POST /api/bookings creates from the page.
   for (const c of CASES) {
-    await sql.execute({
-      sql: "INSERT OR IGNORE INTO bookings (id, company_id, customer_id, service_id, title, status, address, price) VALUES (?,?,?,?,?,?,?,?)",
-      args: [`bk-tq-${c.key}`, C, "cust-tq", "svc-tq", "Tax quote job", "pending", c.address, PRICE],
-    });
+    await sql.query(
+      "INSERT INTO bookings (id, company_id, customer_id, service_id, title, status, address, price, scheduled_at, public_token) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING",
+      [`bk-tq-${c.key}`, C, "cust-tq", "svc-tq", "Tax quote job", "pending", c.address, PRICE, new Date(), `taxtok-${c.key}`],
+    );
   }
 });
 

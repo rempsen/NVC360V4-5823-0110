@@ -25,6 +25,7 @@
     "@expo/ngrok": "^4.1.0",
     "@tursodatabase/api": "^1.9.2",
     "@types/bun": "latest",
+    "@types/pg": "^8.15.6",
     "oxlint": "^1.66.0",
     "turbo": "^2"
   },
@@ -32,10 +33,10 @@
     "typescript": "^5"
   },
   "dependencies": {
-    "@libsql/client": "^0.17.2",
     "@stripe/react-stripe-js": "^6.5.0",
     "@stripe/stripe-js": "^9.7.0",
     "cloudflare": "^5.2.0",
+    "pg": "^8.16.3",
     "pm2": "^7.0.1",
     "stripe": "^22.2.0"
   }

@@ -13,8 +13,7 @@ import { describe, it, expect } from "bun:test";
 
 // The module pulls in the DB client at import time; keep it ephemeral so this
 // pure-copy test never reaches for real credentials.
-process.env.DATABASE_URL = ":memory:";
-process.env.DATABASE_AUTH_TOKEN = "";
+process.env.DATABASE_URL = "postgresql://placeholder:placeholder@localhost:5432/placeholder"; // never queried by this pure-logic test
 const { maintenanceReminderCopy } = await import("../maintenance");
 
 // Due Aug 17, 2026 at 8:00 PM Winnipeg = Aug 18, 01:00 UTC.

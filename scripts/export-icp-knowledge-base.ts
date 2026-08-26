@@ -11,14 +11,11 @@
 // Run from the repo root:
 //   bun --env-file=.env scripts/export-icp-knowledge-base.ts
 
-import { createClient } from "@libsql/client";
+import { Pool } from "pg";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-const client = createClient({
-  url: process.env.DATABASE_URL!,
-  authToken: process.env.DATABASE_AUTH_TOKEN,
-});
+const client = new Pool({ connectionString: process.env.DATABASE_URL! });
 
 const COLS = [
   "industry",
@@ -34,9 +31,10 @@ const COLS = [
   "researched_at",
 ] as const;
 
-const res = await client.execute(
+const res = await client.query(
   `SELECT ${COLS.join(", ")} FROM icp_knowledge_base ORDER BY industry`,
 );
+await client.end();
 
 const rows = res.rows.map((r) =>
   Object.fromEntries(COLS.map((c) => [c, (r as any)[c] ?? null])),

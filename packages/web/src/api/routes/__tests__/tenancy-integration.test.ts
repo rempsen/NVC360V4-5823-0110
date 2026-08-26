@@ -15,13 +15,11 @@
  */
 import { describe, it, expect, beforeAll } from "bun:test";
 import { Hono } from "hono";
-import { getTableConfig, type SQLiteColumn } from "drizzle-orm/sqlite-core";
+import { ensureSchema } from "../../database/__tests__/setup";
 
-process.env.DATABASE_URL = ":memory:";
-process.env.DATABASE_AUTH_TOKEN = "";
+await ensureSchema();
 
 const { db } = await import("../../database/index");
-const schema = await import("../../database/schema");
 const { bookingsRoutes } = await import("../bookings");
 
 const A = "tenint-company-a";
@@ -37,44 +35,19 @@ const app = new Hono().use("*", async (c, next) => {
 });
 app.route("/bookings", bookingsRoutes);
 
-function ddlFor(table: any): string {
-  const cfg = getTableConfig(table);
-  const cols = cfg.columns.map((col: SQLiteColumn) => {
-    const parts = [`"${col.name}"`, col.getSQLType()];
-    if (col.primary) parts.push("PRIMARY KEY");
-    const dflt = (col as any).default;
-    let lit: string | null = null;
-    if (dflt !== undefined) {
-      lit =
-        typeof dflt === "string" ? `'${dflt.replace(/'/g, "''")}'`
-        : typeof dflt === "boolean" ? (dflt ? "1" : "0")
-        : typeof dflt === "number" ? String(dflt)
-        : null;
-    }
-    if (col.notNull && (lit !== null || col.primary)) parts.push("NOT NULL");
-    if (lit !== null) parts.push(`DEFAULT ${lit}`);
-    return parts.join(" ");
-  });
-  return `CREATE TABLE IF NOT EXISTS "${cfg.name}" (${cols.join(", ")})`;
-}
-
 beforeAll(async () => {
   const sql = (db as any).$client;
-  await sql.execute(ddlFor(schema.bookings));
-  await sql.execute(ddlFor(schema.services));
-  await sql.execute(ddlFor(schema.riders));
-  await sql.execute(ddlFor(schema.user));
 
   // Admin users (one per company) so isAdminRole gates pass for the owner.
-  await sql.execute({ sql: "INSERT OR IGNORE INTO user (id, name, email, email_verified, role, company_id) VALUES (?,?,?,?,?,?)", args: ["ten-owner-a", "Owner A", "oa@t.test", 1, "admin", A] });
-  await sql.execute({ sql: "INSERT OR IGNORE INTO user (id, name, email, email_verified, role, company_id) VALUES (?,?,?,?,?,?)", args: ["ten-owner-b", "Owner B", "ob@t.test", 1, "admin", B] });
+  await sql.query("INSERT INTO \"user\" (id, name, email, email_verified, role, company_id) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING", ["ten-owner-a", "Owner A", "oa@t.test", true, "admin", A]);
+  await sql.query("INSERT INTO \"user\" (id, name, email, email_verified, role, company_id) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING", ["ten-owner-b", "Owner B", "ob@t.test", true, "admin", B]);
 
-  await sql.execute({ sql: "INSERT OR IGNORE INTO services (id, company_id, name, category, base_price) VALUES (?,?,?,?,?)", args: ["ten-svc-a", A, "A service", "hvac", 100] });
-  await sql.execute({ sql: "INSERT OR IGNORE INTO services (id, company_id, name, category, base_price) VALUES (?,?,?,?,?)", args: ["ten-svc-b", B, "B service", "hvac", 100] });
+  await sql.query("INSERT INTO services (id, company_id, name, category, base_price) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING", ["ten-svc-a", A, "A service", "hvac", 100]);
+  await sql.query("INSERT INTO services (id, company_id, name, category, base_price) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING", ["ten-svc-b", B, "B service", "hvac", 100]);
 
   // One booking per company.
-  await sql.execute({ sql: "INSERT OR IGNORE INTO bookings (id, company_id, customer_id, service_id, title, status, address, price) VALUES (?,?,?,?,?,?,?,?)", args: ["ten-bk-a", A, "ten-owner-a", "ten-svc-a", "A job", "confirmed", "1 A St", 100] });
-  await sql.execute({ sql: "INSERT OR IGNORE INTO bookings (id, company_id, customer_id, service_id, title, status, address, price) VALUES (?,?,?,?,?,?,?,?)", args: ["ten-bk-b", B, "ten-owner-b", "ten-svc-b", "B job", "confirmed", "1 B St", 100] });
+  await sql.query("INSERT INTO bookings (id, company_id, customer_id, service_id, title, status, address, price, scheduled_at, public_token) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING", ["ten-bk-a", A, "ten-owner-a", "ten-svc-a", "A job", "confirmed", "1 A St", 100, new Date(), "tenint-tok-a"]);
+  await sql.query("INSERT INTO bookings (id, company_id, customer_id, service_id, title, status, address, price, scheduled_at, public_token) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING", ["ten-bk-b", B, "ten-owner-b", "ten-svc-b", "B job", "confirmed", "1 B St", 100, new Date(), "tenint-tok-b"]);
 });
 
 function call(path: string, opts: { company?: string; user?: string; role?: string; method?: string; body?: unknown } = {}) {

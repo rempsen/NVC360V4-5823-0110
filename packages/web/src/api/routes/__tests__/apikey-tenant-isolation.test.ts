@@ -17,10 +17,9 @@
  */
 import { describe, it, expect, beforeAll } from "bun:test";
 import { eq } from "drizzle-orm";
-import { getTableConfig, type SQLiteColumn } from "drizzle-orm/sqlite-core";
+import { ensureSchema } from "../../database/__tests__/setup";
 
-process.env.DATABASE_URL = ":memory:";
-process.env.DATABASE_AUTH_TOKEN = "";
+await ensureSchema();
 
 const { db } = await import("../../database/index");
 const schema = await import("../../database/schema");
@@ -31,27 +30,6 @@ const { issueDefaultTenantKey, hasActiveSecretKey, ensureDefaultTenantKey } =
 
 const A = "akiso-company-a";
 const B = "akiso-company-b";
-
-function ddlFor(table: any): string {
-  const cfg = getTableConfig(table);
-  const cols = cfg.columns.map((col: SQLiteColumn) => {
-    const parts = [`"${col.name}"`, col.getSQLType()];
-    if (col.primary) parts.push("PRIMARY KEY");
-    const dflt = (col as any).default;
-    let lit: string | null = null;
-    if (dflt !== undefined) {
-      lit =
-        typeof dflt === "string" ? `'${dflt.replace(/'/g, "''")}'`
-        : typeof dflt === "boolean" ? (dflt ? "1" : "0")
-        : typeof dflt === "number" ? String(dflt)
-        : null;
-    }
-    if (col.notNull && (lit !== null || col.primary)) parts.push("NOT NULL");
-    if (lit !== null) parts.push(`DEFAULT ${lit}`);
-    return parts.join(" ");
-  });
-  return `CREATE TABLE IF NOT EXISTS "${cfg.name}" (${cols.join(", ")})`;
-}
 
 /** Build a header-bearing context shim that resolveApiKey() understands. */
 function ctxWithBearer(token: string) {
@@ -68,18 +46,16 @@ let keyB: { raw: string };
 
 beforeAll(async () => {
   const sql = (db as any).$client;
-  await sql.execute(ddlFor(schema.apiKeys));
-  await sql.execute(ddlFor(schema.services));
 
   // Seed one service per company so we have something to (not) leak.
-  await sql.execute({
-    sql: "INSERT OR IGNORE INTO services (id, company_id, name, category) VALUES (?,?,?,?)",
-    args: ["akiso-svc-a", A, "A service", "hvac"],
-  });
-  await sql.execute({
-    sql: "INSERT OR IGNORE INTO services (id, company_id, name, category) VALUES (?,?,?,?)",
-    args: ["akiso-svc-b", B, "B service", "hvac"],
-  });
+  await sql.query(
+    "INSERT INTO services (id, company_id, name, category) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+    ["akiso-svc-a", A, "A service", "hvac"],
+  );
+  await sql.query(
+    "INSERT INTO services (id, company_id, name, category) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+    ["akiso-svc-b", B, "B service", "hvac"],
+  );
 
   keyA = await issueDefaultTenantKey({ companyId: A, createdByName: "test" });
   keyB = await issueDefaultTenantKey({ companyId: B, createdByName: "test" });
