@@ -44,7 +44,7 @@ output "database_endpoint" {
 }
 
 output "better_auth_secret" {
-  description = "Generated BETTER_AUTH_SECRET value — read with -raw and set it as that key in the app-config secret."
+  description = "Generated BETTER_AUTH_SECRET value. Terraform keeps this in sync in the app-config-managed secret automatically; exposed here for reference."
   value       = random_password.better_auth_secret.result
   sensitive   = true
 }

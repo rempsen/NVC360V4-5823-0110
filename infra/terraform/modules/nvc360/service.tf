@@ -20,16 +20,23 @@
 locals {
   container_name = "web"
 
-  # Config keys pulled from Secrets Manager into the container environment.
-  # One secret holding a JSON object, injected key by key using ECS's
-  # "<secret-arn>:<json-key>::" syntax — Secrets Manager bills per secret per
+  # Config keys pulled from Secrets Manager into the container environment,
+  # injected key by key using ECS's "<secret-arn>:<json-key>::" syntax across
+  # two JSON-object secrets (main.tf) — Secrets Manager bills per secret per
   # month, and this app needs ~25 keys.
+  #
+  # managed_secret_keys: Terraform generates or derives these itself and keeps
+  # them in sync. manual_secret_keys: developers set these by hand via the AWS
+  # console; Terraform only seeds placeholders so the task can start.
   #
   # Deliberately absent: S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY (the task role
   # supplies credentials) and S3_ENDPOINT (unset = real AWS S3).
-  secret_keys = [
+  managed_secret_keys = [
     "DATABASE_URL",
     "BETTER_AUTH_SECRET",
+  ]
+
+  manual_secret_keys = [
     "GOOGLE_CLIENT_ID",
     "GOOGLE_CLIENT_SECRET",
     "GOOGLE_MAPS_API_KEY",
@@ -204,7 +211,7 @@ data "aws_iam_policy_document" "execution_secrets" {
     sid       = "ReadInjectedSecrets"
     effect    = "Allow"
     actions   = ["secretsmanager:GetSecretValue"]
-    resources = [aws_secretsmanager_secret.app_config.arn]
+    resources = [aws_secretsmanager_secret.app_config.arn, aws_secretsmanager_secret.app_config_managed.arn]
   }
 }
 
@@ -297,12 +304,20 @@ resource "aws_ecs_task_definition" "web" {
         { name = "WEBSITE_URL", value = var.staging_url },
       ]
 
-      secrets = [
-        for k in local.secret_keys : {
-          name      = k
-          valueFrom = "${aws_secretsmanager_secret.app_config.arn}:${k}::"
-        }
-      ]
+      secrets = concat(
+        [
+          for k in local.manual_secret_keys : {
+            name      = k
+            valueFrom = "${aws_secretsmanager_secret.app_config.arn}:${k}::"
+          }
+        ],
+        [
+          for k in local.managed_secret_keys : {
+            name      = k
+            valueFrom = "${aws_secretsmanager_secret.app_config_managed.arn}:${k}::"
+          }
+        ],
+      )
 
       logConfiguration = {
         logDriver = "awslogs"

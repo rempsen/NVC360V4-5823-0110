@@ -1,7 +1,8 @@
 data "aws_caller_identity" "current" {}
 
 locals {
-  account_id = data.aws_caller_identity.current.account_id
+  account_id   = data.aws_caller_identity.current.account_id
+  database_url = "postgresql://${var.db_username}:${random_password.db.result}@${aws_db_instance.postgres.endpoint}/nvc360?sslmode=require"
 }
 
 # ---------------------------------------------------------------------------
@@ -114,45 +115,61 @@ resource "aws_s3_bucket_cors_configuration" "uploads" {
 }
 
 # ---------------------------------------------------------------------------
-# Runtime configuration. ONE Secrets Manager secret holding a JSON blob rather
-# than one secret per key: Secrets Manager bills per secret per month, and this
-# app has ~30 config keys. The container reads the whole blob at boot.
+# Runtime configuration, split across two Secrets Manager secrets so
+# Terraform-managed values can be updated normally while hand-entered ones are
+# never reverted. Both are JSON blobs (not one secret per key) because
+# Secrets Manager bills per secret per month and this app has ~30 config keys;
+# the container reads both at boot.
 #
-# Terraform seeds this once — every key local.secret_keys expects (service.tf)
-# gets a "" placeholder so the ECS task can actually pull secrets and start,
-# plus a real generated BETTER_AUTH_SECRET — but does not manage it afterward.
-# Developers update real values (Stripe, Twilio, Turso, etc.) directly via the
-# AWS console or `aws secretsmanager put-secret-value`, never through this
-# file or a tfvars file; ignore_changes keeps Terraform from reverting those
-# edits back to placeholders on the next apply.
+# app_config: everything developers set by hand (Stripe, Twilio, Turso, etc.)
+# directly via the AWS console or `aws secretsmanager put-secret-value`, never
+# through this file or a tfvars file. Terraform seeds "" placeholders once so
+# the ECS task can pull secrets and start, then ignore_changes keeps it from
+# reverting those edits back to placeholders on the next apply.
+#
+# app_config_managed: values Terraform can generate or derive itself
+# (BETTER_AUTH_SECRET, DATABASE_URL). No ignore_changes — Terraform writes a
+# new secret version whenever either value changes.
 # ---------------------------------------------------------------------------
 resource "aws_secretsmanager_secret" "app_config" {
   name        = "${var.name_prefix}/app-config"
-  description = "Runtime env for the staging container, as a JSON object. Update via the AWS console or `aws secretsmanager put-secret-value`, not Terraform."
+  description = "Hand-entered runtime env for the staging container, as a JSON object. Update via the AWS console or `aws secretsmanager put-secret-value`, not Terraform."
 
   # Staging secrets should be re-creatable immediately, not held for 30 days.
   recovery_window_in_days = 0
 }
 
+resource "aws_secretsmanager_secret_version" "app_config" {
+  secret_id = aws_secretsmanager_secret.app_config.id
+
+  secret_string = jsonencode({ for k in local.manual_secret_keys : k => "" }) # every key the container expects exists
+
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
+}
+
+resource "aws_secretsmanager_secret" "app_config_managed" {
+  name        = "${var.name_prefix}/app-config-managed"
+  description = "Terraform-managed runtime env for the staging container, as a JSON object."
+
+  recovery_window_in_days = 0
+}
+
 # better-auth's session/cookie signing key. Pure random material — unlike the
-# other app-config keys, it needs no third-party account, so Terraform
-# generates it as part of the initial seed value below.
+# app_config keys, it needs no third-party account, so Terraform generates it.
 resource "random_password" "better_auth_secret" {
   length  = 44
   special = false # avoids escaping pitfalls in shell/JSON handling downstream
 }
 
-resource "aws_secretsmanager_secret_version" "app_config" {
-  secret_id = aws_secretsmanager_secret.app_config.id
+resource "aws_secretsmanager_secret_version" "app_config_managed" {
+  secret_id = aws_secretsmanager_secret.app_config_managed.id
 
-  secret_string = jsonencode(merge(
-    { for k in local.secret_keys : k => "" }, # every key the container expects exists
-    { BETTER_AUTH_SECRET = random_password.better_auth_secret.result },
-  ))
-
-  lifecycle {
-    ignore_changes = [secret_string]
-  }
+  secret_string = jsonencode({
+    BETTER_AUTH_SECRET = random_password.better_auth_secret.result,
+    DATABASE_URL       = local.database_url,
+  })
 }
 
 resource "aws_cloudwatch_log_group" "app" {
@@ -203,7 +220,7 @@ data "aws_iam_policy_document" "github_assume" {
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:*@${var.github_repository_owner_id}/*@${var.github_repository_id}:ref:refs/heads/main"]
+      values   = ["repo:*@${var.github_repository_owner_id}/*@${var.github_repository_id}:ref:refs/heads/*"]
     }
 
     condition {
@@ -219,9 +236,9 @@ data "aws_iam_policy_document" "github_assume" {
     }
 
     condition {
-      test     = "StringEquals"
+      test     = "StringLike"
       variable = "token.actions.githubusercontent.com:ref"
-      values   = ["refs/heads/main"]
+      values   = ["refs/heads/*"]
     }
   }
 }

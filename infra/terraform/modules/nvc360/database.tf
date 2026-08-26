@@ -92,20 +92,3 @@ resource "aws_db_instance" "postgres" {
 
   performance_insights_enabled = false # extra cost, not needed for staging
 }
-
-resource "aws_secretsmanager_secret" "db_url" {
-  name                    = "${var.name_prefix}/postgres-url"
-  description             = "libpq connection URL for the staging Postgres instance."
-  recovery_window_in_days = 0
-}
-
-resource "aws_secretsmanager_secret_version" "db_url" {
-  secret_id = aws_secretsmanager_secret.db_url.id
-  secret_string = format(
-    "postgresql://%s:%s@%s/%s?sslmode=require",
-    var.db_username,
-    random_password.db.result,
-    aws_db_instance.postgres.endpoint,
-    "nvc360",
-  )
-}
